@@ -1,0 +1,14 @@
+docling[tesserocr]
+fastapi
+uvicorn[standard]
+python-multipart
+# table_cv / flow_cv; already pulled in by docling, listed because they are imported directly
+opencv-python
+numpy
+# vlm_api: reads API keys from .env
+python-dotenv
+# rag.py: embeddings, vector store, answers
+cohere
+psycopg[binary]
+pgvector
+anthropic
