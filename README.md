@@ -40,6 +40,7 @@ npm run dev        # or: live-reloading UI on http://localhost:5173, API calls g
 ## Run
 
 ```bash
+brew services start postgresql@18   # the Ask tab needs Postgres running; skip if it already is
 ./run.sh              # http://localhost:8000  (PORT=9000 ./run.sh to change)
 ```
 
@@ -127,7 +128,14 @@ chunks, embeds each chunk with [Cohere Embed](https://docs.cohere.com/docs/coher
 has Claude answer from the best chunks, citing them.
 
 Needs a Postgres with the `vector` extension available (Homebrew's
-`postgresql@18` ships it) and three settings in `.env`:
+`postgresql@18` ships it). Start it before running the app, or searches fail
+to connect:
+
+```bash
+brew services start postgresql@18
+```
+
+It also needs three settings in `.env`:
 
 ```bash
 COHERE_API_KEY=...
