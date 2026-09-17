@@ -1,0 +1,101 @@
+@startuml system-workflow
+title Docling Studio — Workflow (upload a deck, index it, ask a question)
+
+skinparam backgroundColor #FFFFFF
+skinparam shadowing false
+skinparam sequenceMessageAlign center
+skinparam roundcorner 8
+skinparam ArrowColor #444444
+skinparam ArrowFontColor #333333
+skinparam responseMessageBelowArrow true
+skinparam NoteBackgroundColor #FFF7E0
+skinparam NoteBorderColor #E0C46C
+
+actor "User" as User
+participant "Web UI" as UI #E8F5E9
+participant "FastAPI\n(app.py)" as API #E3F2FD
+participant "converter.py\n+ Docling" as Conv #FFF3E0
+participant "Image readers\n(Tesseract · CV)" as Read #F3E5F5
+participant "rag.py" as RAG #E8F5E9
+participant "md_chunker.py" as Chunk #E3F2FD
+database "Files\n(workdir · knowledge_base)" as Files #ECEFF1
+boundary "Cohere Embed\n(embed-v4.0)" as Cohere #ECEFF1
+database "PostgreSQL\n(pgvector)" as PG #ECEFF1
+boundary "Anthropic Claude\n(claude-opus-5)" as Claude #ECEFF1
+
+User -> UI : 1. drops **Workshop.pptx**
+
+== Step 1 — Upload the document ==
+UI -> API : POST /api/upload
+activate API
+API -> Files : save **source.pptx** + name.txt
+API -> API : render page previews
+API --> UI : doc_id, pages
+deactivate API
+
+== Step 2 — Convert it to Markdown ==
+UI -> API : POST /api/convert/{doc_id}
+activate API
+API -> Conv : convert(src)
+activate Conv
+Conv -> Conv : Docling export_to_markdown()\n+ connector flows → Mermaid
+Conv -> Read : embedded pictures
+activate Read
+Read --> Conv : OCR text · tables · draft flows
+deactivate Read
+Conv -> Conv : splice into placeholders → **Markdown**
+Conv --> API : Result
+deactivate Conv
+API -> Files : write **output.md**
+API --> UI : Markdown + stats
+deactivate API
+
+== Step 3 — Chunk, embed and store ==
+UI -> API : POST /api/docs/{doc_id}/embed
+activate API
+API -> Files : copy to knowledge_base/Workshop_pptx.md
+API -> RAG : index_file()
+activate RAG
+RAG -> PG : fingerprint changed?
+PG --> RAG : new document
+RAG -> Chunk : chunk_file()
+Chunk --> RAG : **chunks** (~500 tokens, heading path)
+RAG -> Cohere : embed chunks (search_document)
+Cohere --> RAG : 1536-d **vectors**
+RAG -> PG : INSERT chunks · vectors · tsvector
+deactivate RAG
+API --> UI : 42 chunks indexed
+deactivate API
+
+== Step 4 — Retrieve the top-k chunks ==
+User -> UI : 2. "Who validated 7.1.12.3?"
+UI -> API : POST /api/ask (SSE)
+activate API
+API -> RAG : ask_events(question, k=8)
+activate RAG
+RAG -> Cohere : embed question (search_query)
+Cohere --> RAG : query vector
+RAG -> PG : vector search (cosine, top 40)
+PG --> RAG : nearest chunks
+RAG -> PG : BM25 keyword search (top 40)
+PG --> RAG : keyword matches
+RAG -> RAG : reciprocal rank fusion → **top 8 excerpts**
+
+== Step 5 — Generate the cited answer ==
+RAG -> Claude : excerpts + question (stream)
+activate Claude
+Claude --> RAG : answer tokens
+deactivate Claude
+RAG --> API : stage · sources · token events
+deactivate RAG
+API --> UI : SSE stream
+deactivate API
+UI --> User : 💬 answer with [n] citations + sources
+
+note across
+  Claude never touches the database: rag.py embeds the question with Cohere,
+  runs vector AND keyword search on the same Postgres table, fuses the rankings,
+  and sends Claude only the top-k chunks as numbered excerpts to cite.
+end note
+
+@enduml

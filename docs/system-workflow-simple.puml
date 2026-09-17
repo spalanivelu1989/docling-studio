@@ -1,0 +1,51 @@
+@startuml system-workflow-simple
+title Docling Studio — Workflow (simplified)
+
+skinparam backgroundColor #FFFFFF
+skinparam shadowing false
+skinparam sequenceMessageAlign center
+skinparam roundcorner 8
+skinparam ArrowColor #444444
+skinparam ArrowFontColor #333333
+skinparam responseMessageBelowArrow true
+skinparam NoteBackgroundColor #FFF7E0
+skinparam NoteBorderColor #E0C46C
+
+actor "User" as User
+participant "Web UI" as UI #E8F5E9
+participant "Converter" as Conv #FFF3E0
+participant "RAG" as RAG #F3E5F5
+boundary "Cohere Embed" as Cohere #ECEFF1
+database "PostgreSQL\n(pgvector)" as PG #ECEFF1
+boundary "Anthropic Claude" as Claude #ECEFF1
+
+== Step 1 — Upload and convert ==
+User -> UI : drops **Workshop.pptx**
+UI -> Conv : convert
+Conv -> Conv : Docling + OCR → **Markdown**
+
+== Step 2 — Chunk, embed, store ==
+UI -> RAG : embed the Markdown
+RAG -> RAG : split into **chunks**
+RAG -> Cohere : embed chunks
+Cohere --> RAG : vectors
+RAG -> PG : store chunks + vectors
+
+== Step 3 — Ask ==
+User -> UI : "Who validated 7.1.12.3?"
+UI -> RAG : ask (SSE)
+RAG -> Cohere : embed question
+RAG -> PG : vector + keyword search
+PG --> RAG : **top-k chunks**
+RAG -> Claude : excerpts + question
+Claude --> RAG : answer tokens
+RAG --> UI : SSE stream
+UI --> User : 💬 answer with [n] citations
+
+note across
+  Claude never touches the database: retrieval (vector + BM25, fused)
+  happens in rag.py, and Claude only sees the top-k excerpts.
+  Full sequence: system-workflow.png
+end note
+
+@enduml

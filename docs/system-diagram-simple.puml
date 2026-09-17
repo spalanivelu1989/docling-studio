@@ -1,0 +1,55 @@
+@startuml system-diagram-simple
+title Docling Studio — Architecture (simplified)
+
+skinparam backgroundColor #FFFFFF
+skinparam defaultTextAlignment center
+skinparam shadowing false
+skinparam roundcorner 8
+skinparam nodesep 50
+skinparam ranksep 60
+skinparam rectangle {
+  BorderColor #666666
+}
+skinparam cloud {
+  BackgroundColor #333333
+  FontColor #FFFFFF
+  BorderColor #111111
+}
+skinparam package {
+  BorderColor #888888
+  FontStyle bold
+}
+skinparam ArrowColor #444444
+
+actor "User / Browser" as User
+rectangle "Web UI\nExtract · Ask pages" as UI
+
+package "FastAPI app.py · :8000" {
+  rectangle "API routes\nupload · convert · embed · ask" as API
+  rectangle "Converter\nDocling · OCR · Mermaid flows" as Converter
+  rectangle "RAG\nchunk · hybrid search · prompt" as RAG
+}
+
+database "Markdown files\nknowledge_base/" as Files
+database "PostgreSQL + pgvector" as PG
+cloud "Cohere Embed" as Cohere
+cloud "Anthropic Claude" as Claude
+
+User -down-> UI : HTTPS
+UI -down-> API : REST · SSE
+API -down-> Converter : convert
+API -down-> Files : output.md
+API -down-> RAG : embed / ask
+RAG -down-> Files : read .md
+RAG -down-> Cohere : embeddings
+RAG -down-> PG : vectors + BM25
+RAG -down-> Claude : top-k excerpts
+
+note bottom of Claude
+  Omitted: preview renderer, image
+  readers, local Qwen3-VL and optional
+  GPT/Claude vision. Full view:
+  system-diagram.png
+end note
+
+@enduml
