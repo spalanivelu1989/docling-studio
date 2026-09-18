@@ -27,7 +27,7 @@ interface Step {
 }
 
 const STEPS: Omit<Step, "status" | "detail" | "ms">[] = [
-  { key: "embed", name: "Embed question", tech: "Cohere", idle: "Turn the question into a vector", icon: <Binary size={16} /> },
+  { key: "embed", name: "Embed question", tech: "Ollama · bge-m3", idle: "Turn the question into a 1024-d vector", icon: <Binary size={16} /> },
   { key: "vector", name: "Vector search", tech: "pgvector · cosine similarity", idle: "Chunks closest in meaning", icon: <BrainCircuit size={16} /> },
   { key: "keyword", name: "Keyword search", tech: "Postgres full text · BM25", idle: "Chunks containing the question's words and codes", icon: <TextSearch size={16} /> },
   { key: "fuse", name: "Merge rankings", tech: "Reciprocal rank fusion", idle: "Pick the best excerpts from both lists", icon: <GitMerge size={16} /> },
@@ -180,7 +180,7 @@ export default function AskPage({ active }: { active: boolean }) {
             <Typography sx={{ fontWeight: 650 }}>Ask the documents</Typography>
             <Box sx={{ flex: 1 }} />
             {status && !status.error && (
-              <Tooltip title={`Embeddings: Cohere ${status.embed_model} · Answers: ${status.answer_model}`}>
+              <Tooltip title={`Embeddings: Ollama ${status.embed_model} (${status.embed_dimension || 1024}d) · Answers: ${status.answer_model}`}>
                 <Chip
                   size="small"
                   variant="outlined"
@@ -272,7 +272,7 @@ export default function AskPage({ active }: { active: boolean }) {
             <CardHead title="Pipeline" />
             <Box component="ol" sx={{ listStyle: "none", m: 0, p: 0, py: 1 }}>
               {steps.map((s, i) => (
-                <PipelineStep key={s.key} step={{ ...s, tech: s.key === "embed" && status ? `Cohere ${status.embed_model}` : s.key === "answer" ? answerModel : s.tech }} last={i === steps.length - 1} next={steps[i + 1]?.status} />
+                <PipelineStep key={s.key} step={{ ...s, tech: s.key === "embed" && status ? `Ollama ${status.embed_model} (${status.embed_dimension || 1024}d)` : s.key === "answer" ? answerModel : s.tech }} last={i === steps.length - 1} next={steps[i + 1]?.status} />
               ))}
             </Box>
             <AnimatePresence>

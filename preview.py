@@ -25,7 +25,7 @@ PREVIEW_DPI = 90
 CONVERT_TIMEOUT = 300
 
 # A standalone image is already its own single page: no LibreOffice, no PDF.
-IMAGE_FORMATS = {".png", ".jpg", ".jpeg"}
+IMAGE_FORMATS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tiff", ".tif"}
 
 
 class PreviewError(RuntimeError):

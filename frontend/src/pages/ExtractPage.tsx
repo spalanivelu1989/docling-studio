@@ -13,7 +13,7 @@ import { Group, Panel, Separator } from "react-resizable-panels";
 import { api, type Conversion, type EmbedResult, type Upload } from "../api";
 import Markdown from "../components/Markdown";
 
-const ACCEPT = ".pptx,.ppt,.docx,.doc,.xlsx,.xls,.pdf,.png,.jpg,.jpeg";
+const ACCEPT = ".pptx,.ppt,.docx,.doc,.xlsx,.xls,.pdf,.html,.htm,.xml,.png,.jpg,.jpeg";
 const PROVIDERS = [
   { value: "claude", label: "Claude (Anthropic API)" },
   { value: "openai", label: "GPT (OpenAI API)" },
@@ -153,7 +153,7 @@ export default function ExtractPage({ onAsk }: { onAsk: () => void }) {
       : provider === "qwen"
         ? "Extracting — reading images with the local vision model"
         : `Extracting — sending images to ${PROVIDERS.find((p) => p.value === provider)?.label}`,
-    embed: "Adding to knowledge base — chunking and embedding with Cohere",
+    embed: "Adding to knowledge base — chunking and embedding with Ollama bge-m3",
   };
 
   return (
@@ -298,7 +298,7 @@ export default function ExtractPage({ onAsk }: { onAsk: () => void }) {
                       </IconButton>
                     </span>
                   </Tooltip>
-                  <Tooltip title="Chunk this Markdown, embed it with Cohere and store it in the vector database, so the Ask page can answer from it">
+                  <Tooltip title="Chunk this Markdown, embed it with Ollama bge-m3 (1024d) and store it in PostgreSQL pgvector, so the Ask page can answer from it">
                     <span>
                       <Button
                         size="small"

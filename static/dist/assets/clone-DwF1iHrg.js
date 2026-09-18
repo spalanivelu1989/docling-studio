@@ -1,0 +1,1 @@
+import{S as e}from"./graphlib-CC0k3srt.js";var t=4;function n(n){return e(n,t)}export{n as t};

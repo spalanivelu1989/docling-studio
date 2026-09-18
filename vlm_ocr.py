@@ -55,11 +55,28 @@ MAX_EDGE = 2400
 # away wholesale. Big enough that the common case finishes cleanly.
 FLOW_MAX_TOKENS = 4096
 
-DOC_PROMPT = (
-    "Convert this image to Markdown. Preserve tables as Markdown tables with "
-    "their real rows and columns. Do not miss any text and output only the bare "
-    "Markdown."
-)
+DOC_PROMPT = """Convert this document image into clean, accurate Markdown.
+
+Follow these formatting rules:
+1. OUTPUT PURITY:
+   - Output ONLY the direct Markdown.
+   - Do NOT include conversational text, greetings, explanations, or closing comments.
+   - Do NOT wrap the entire response in ```markdown ... ``` code fences.
+
+2. TABLES & DATA STRUCTURES:
+   - Preserve all tables in standard GitHub Flavored Markdown (GFM) table format with their real rows and columns.
+   - If a cell contains multiple lines of text, join them with <br> (never insert a raw newline inside a table row).
+   - Escape any literal pipe symbols inside cells as \\|.
+   - Preserve empty cells (| |) so columns stay properly aligned; do not shift values left.
+   - For multi-level headers, flatten into "Category - Subheader" or repeat parent headers.
+
+3. VERBATIM ACCURACY:
+   - Transcribe all text, numbers, codes, dates, and amounts exactly as shown without rounding or autocorrecting.
+   - If text is partially obscured or illegible, write [illegible] instead of hallucinating.
+
+4. HIERARCHY & FORMATTING:
+   - Use Markdown headings (#, ##, ###) for visual section titles.
+   - Preserve bullet points, numbered lists, and checkboxes ([ ] / [x])."""
 
 # Asked for a flowchart, this model will draw one out of anything -- shown a SAP
 # table it happily chains the cells together into a process that does not exist.

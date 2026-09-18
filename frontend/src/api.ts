@@ -40,6 +40,8 @@ export interface EmbedResult {
 export interface RagStatus {
   missing: string[];
   embed_model: string;
+  embed_provider?: string;
+  embed_dimension?: number;
   answer_model: string;
   default_k: number;
   documents: number;
@@ -100,6 +102,8 @@ export const api = {
   ragStatus: () => fetch("/api/rag/status").then((r) => json<RagStatus>(r)),
   previewUrl: (id: string, page: number) => `/api/docs/${id}/preview/${page}`,
   downloadUrl: (id: string) => `/api/docs/${id}/download`,
+  kbFiles: () => fetch("/api/kb/files").then((r) => json<{ name: string; title: string; size: number }[]>(r)),
+  kbFileContent: (filename: string) => fetch(`/api/kb/files/${encodeURIComponent(filename)}`).then((r) => r.text()),
 };
 
 export interface AskHandlers {
@@ -150,4 +154,24 @@ export async function ask(
       else if (event === "error") on.error(payload.message);
     }
   }
+}
+
+export interface BatchEmbedFileResult {
+  filename: string;
+  title: string;
+  status: "added" | "updated" | "unchanged";
+  chunks: number;
+  tokens: number;
+  duplicates: string[];
+}
+
+export interface BatchEmbedSummary {
+  total: number;
+  succeeded: number;
+  failed: number;
+  total_chunks: number;
+  total_tokens: number;
+  db_documents: number;
+  db_chunks: number;
+  seconds: number;
 }

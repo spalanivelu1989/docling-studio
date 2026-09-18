@@ -48,10 +48,11 @@ from md_chunker import Chunk, chunk_file, with_context
 
 load_dotenv(Path(__file__).with_name(".env"), override=False)
 
-EMBED_MODEL = os.environ.get("RAG_EMBED_MODEL", "embed-v4.0")
-EMBED_DIMENSION = int(os.environ.get("RAG_EMBED_DIMENSION", "1536"))
+OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
+EMBED_MODEL = os.environ.get("RAG_EMBED_MODEL", "bge-m3")
+EMBED_DIMENSION = int(os.environ.get("RAG_EMBED_DIMENSION", "1024"))
 ANSWER_MODEL = os.environ.get("RAG_ANSWER_MODEL", "claude-opus-5")
-EMBED_BATCH = 96  # Cohere's limit on texts per embed call
+EMBED_BATCH = int(os.environ.get("RAG_EMBED_BATCH", "32"))
 DEFAULT_K = 8
 # Each search method proposes this many chunks before the rankings are fused.
 CANDIDATES = 40
@@ -82,28 +83,40 @@ on such text."""
 # --- embedding ----------------------------------------------------------------
 
 
-def _cohere():
-    import cohere
+def embed(texts: list[str], input_type: str = "") -> list[np.ndarray]:
+    """Embed texts using Ollama bge-m3."""
+    if not texts:
+        return []
+    import httpx
 
-    key = os.environ.get("COHERE_API_KEY") or os.environ.get("CO_API_KEY")
-    if not key:
-        sys.exit("COHERE_API_KEY is not set (add it to .env)")
-    return cohere.ClientV2(api_key=key, max_retries=5, timeout=120)
-
-
-def embed(texts: list[str], input_type: str) -> list[np.ndarray]:
-    """input_type is "search_document" for chunks, "search_query" for questions."""
-    client = _cohere()
+    url = f"{OLLAMA_HOST}/api/embed"
     vectors: list[np.ndarray] = []
     for start in range(0, len(texts), EMBED_BATCH):
-        response = client.embed(
-            texts=texts[start : start + EMBED_BATCH],
-            model=EMBED_MODEL,
-            input_type=input_type,
-            embedding_types=["float"],
-            output_dimension=EMBED_DIMENSION,
-        )
-        vectors += [np.asarray(v, dtype=np.float32) for v in response.embeddings.float_]
+        batch = texts[start : start + EMBED_BATCH]
+        try:
+            with httpx.Client(timeout=120.0, trust_env=False) as client:
+                res = client.post(url, json={"model": EMBED_MODEL, "input": batch})
+                if res.status_code == 200:
+                    data = res.json()
+                    embs = data.get("embeddings", [])
+                    vectors += [np.asarray(v, dtype=np.float32) for v in embs]
+                elif res.status_code == 404:
+                    # Fallback to older Ollama /api/embeddings endpoint
+                    for t in batch:
+                        single_res = client.post(
+                            f"{OLLAMA_HOST}/api/embeddings",
+                            json={"model": EMBED_MODEL, "prompt": t},
+                        )
+                        single_res.raise_for_status()
+                        vectors.append(np.asarray(single_res.json()["embedding"], dtype=np.float32))
+                else:
+                    res.raise_for_status()
+        except Exception as exc:
+            raise RuntimeError(
+                f"Failed to generate embeddings from Ollama ({EMBED_MODEL}): {exc}. "
+                f"Make sure Ollama is running and '{EMBED_MODEL}' is downloaded (`ollama pull {EMBED_MODEL}`)."
+            ) from exc
+
     return vectors
 
 
@@ -133,10 +146,9 @@ def create_schema(conn, rebuild: bool = False) -> None:
         " WHERE attrelid = 'rag_chunks'::regclass AND attname = 'embedding'"
     ).fetchone()[0]
     if stored != EMBED_DIMENSION:
-        sys.exit(
-            f"rag_chunks holds {stored}-dimension vectors but RAG_EMBED_DIMENSION is "
-            f"{EMBED_DIMENSION}; run `python rag.py index <folder> --rebuild`"
-        )
+        # Schema dimension changed (e.g. from Cohere 1536 to bge-m3 1024), automatically rebuild
+        with conn.transaction():
+            _create_tables(conn, rebuild=True)
 
 
 def _create_tables(conn, rebuild: bool) -> None:
@@ -271,14 +283,38 @@ def index(folder: Path, rebuild: bool = False, force: bool = False) -> None:
     # Files deleted from the folder leave the index too.
     current = {str(p) for p in files}
     gone = [s for s in known if Path(s).parent == folder.resolve() and s not in current]
+    with conn.transaction():
+        for s in gone:
+            conn.execute("DELETE FROM rag_documents WHERE source = %s", (s,))
     if gone:
-        conn.execute("DELETE FROM rag_documents WHERE source = ANY(%s)", (gone,))
-        print(f"Removed {len(gone)} deleted file(s) from the index")
+        print(f"Removed {len(gone)} deleted file{'s' if len(gone) != 1 else ''} from the index")
 
     docs, chunks = conn.execute(
         "SELECT (SELECT count(*) FROM rag_documents), (SELECT count(*) FROM rag_chunks)"
     ).fetchone()
     print(f"Index holds {chunks} chunks from {docs} documents")
+    conn.close()
+
+
+def clear_index() -> None:
+    """Delete all indexed documents and chunks from pgvector."""
+    conn = connect()
+    try:
+        with conn.transaction():
+            conn.execute("TRUNCATE TABLE rag_documents CASCADE")
+        print("✓ Successfully cleared pgvector: all documents and chunks removed.")
+    finally:
+        conn.close()
+
+
+def reset_schema() -> None:
+    """Drop existing tables and recreate them cleanly with the configured vector dimensions."""
+    conn = connect()
+    try:
+        create_schema(conn, rebuild=True)
+        print(f"✓ Successfully reset schema: tables recreated with vector({EMBED_DIMENSION}).")
+    finally:
+        conn.close()
 
 
 # --- retrieval and answering --------------------------------------------------
@@ -458,9 +494,9 @@ def ask_events(question: str, k: int = DEFAULT_K, mode: str = "hybrid"):
         keyword: list[tuple[int, float]] = []
         if mode in ("hybrid", "vector"):
             t0 = time.perf_counter()
-            yield stage("embed", "running", f"Cohere {EMBED_MODEL}")
+            yield stage("embed", "running", f"Ollama {EMBED_MODEL}")
             [query_vector] = embed([question], "search_query")
-            yield stage("embed", "done", f"{len(query_vector)}-dimension vector from Cohere {EMBED_MODEL}", t0)
+            yield stage("embed", "done", f"{len(query_vector)}-dimension vector from Ollama {EMBED_MODEL}", t0)
 
             t0 = time.perf_counter()
             yield stage("vector", "running", "Nearest chunks by cosine similarity")
@@ -565,9 +601,16 @@ def main() -> None:
     p = sub.add_parser("chunks", help="print how a file is chunked (no API calls)")
     p.add_argument("file", type=Path)
 
+    sub.add_parser("clear", help="delete all indexed documents and chunks from pgvector")
+    sub.add_parser("reset", help="drop tables and recreate schema cleanly with vector(1024)")
+
     args = parser.parse_args()
     if args.command == "index":
         index(args.folder, rebuild=args.rebuild, force=args.force)
+    elif args.command == "clear":
+        clear_index()
+    elif args.command == "reset":
+        reset_schema()
     elif args.command == "search":
         for n, h in enumerate(search(args.question, args.k, mode=args.mode), 1):
             print(f"\n[{n}] {h.title} -- {h.heading_path or '(top)'}  ({h.ranks()})")

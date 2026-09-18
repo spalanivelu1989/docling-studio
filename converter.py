@@ -27,6 +27,7 @@ import vlm_ocr
 from preview import IMAGE_FORMATS, image_to_png
 from pptx_flow import slide_flows
 from pptx_ocr import DEFAULT_SCALE, OcrResult, default_tessdata, gray_image, read, read_image
+from xml_tables import xml_to_markdown
 from xlsx_tables import sheet_count, workbook_to_markdown
 
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -431,9 +432,18 @@ def convert(
             lang=lang, tessdata=tessdata, scale=scale,
         )
 
+    if src.suffix.lower() == ".xml":
+        return Result(
+            markdown=xml_to_markdown(src, title=title),
+            pages=1,
+            pictures=0,
+            unit="files",
+            elapsed=time.perf_counter() - started,
+        )
+
     doc = _docling().convert(src).document
     md = doc.export_to_markdown()
-    result = Result(markdown=md, pages=len(doc.pages), pictures=len(doc.pictures))
+    result = Result(markdown=md, pages=len(doc.pages) or 1, pictures=len(doc.pictures))
 
     # PowerPoint records each arrow's endpoints, so a deck's flowcharts can be
     # rebuilt exactly rather than guessed at from the rendered pixels. Do this

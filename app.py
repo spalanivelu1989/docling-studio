@@ -16,8 +16,10 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import tempfile
 import time
 import uuid
+import zipfile
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, UploadFile
@@ -41,7 +43,7 @@ DIST = STATIC / "dist"
 KNOWLEDGE_BASE = BASE / "knowledge_base"
 # Docling handles more than these, but these are the formats this pipeline has
 # actually been exercised against.
-ACCEPTED = {".pptx", ".ppt", ".docx", ".doc", ".xlsx", ".xls", ".pdf"} | preview.IMAGE_FORMATS
+ACCEPTED = {".pptx", ".ppt", ".docx", ".doc", ".xlsx", ".xls", ".pdf", ".html", ".htm", ".xml"} | preview.IMAGE_FORMATS
 
 app = FastAPI(title="Docling Extraction UI")
 
@@ -260,9 +262,395 @@ def cleanup(doc_id: str) -> dict:
 # --- question answering (rag.py) ------------------------------------------------
 
 
+@app.get("/convert", response_class=HTMLResponse)
+@app.get("/extract", response_class=HTMLResponse)
+def convert_page() -> HTMLResponse:
+    return _spa()
+
+
 @app.get("/ask", response_class=HTMLResponse)
 def ask_page() -> HTMLResponse:
     return _spa()
+
+
+@app.get("/md-viewer", response_class=HTMLResponse)
+@app.get("/viewer", response_class=HTMLResponse)
+def md_viewer_page() -> HTMLResponse:
+    return _spa()
+
+
+@app.get("/batch", response_class=HTMLResponse)
+def batch_page() -> HTMLResponse:
+    return _spa()
+
+
+@app.get("/review", response_class=HTMLResponse)
+@app.get("/doc-md-viewer", response_class=HTMLResponse)
+def review_page() -> HTMLResponse:
+    return _spa()
+
+
+@app.get("/about", response_class=HTMLResponse)
+@app.get("/landing", response_class=HTMLResponse)
+def about_page() -> HTMLResponse:
+    return _spa()
+
+
+@app.get("/api/kb/files")
+def list_kb_files() -> list[dict]:
+    """List converted Markdown files stored in knowledge_base/ for selection in the viewer."""
+    if not KNOWLEDGE_BASE.is_dir():
+        return []
+    files = sorted(KNOWLEDGE_BASE.glob("*.md"))
+    return [
+        {
+            "name": f.name,
+            "title": f.stem,
+            "size": f.stat().st_size,
+        }
+        for f in files
+        if not f.name.startswith((".", "~$"))
+    ]
+
+
+@app.get("/api/kb/files/{filename}")
+def get_kb_file(filename: str) -> FileResponse:
+    target = (KNOWLEDGE_BASE / Path(filename).name).resolve()
+    if not target.is_file() or KNOWLEDGE_BASE.resolve() not in target.parents:
+        raise HTTPException(404, "File not found")
+    return FileResponse(target, media_type="text/markdown")
+
+
+# --- batch conversion -----------------------------------------------------------
+
+
+@app.post("/api/batch/upload")
+def upload_batch(files: list[UploadFile]) -> dict:
+    if not files:
+        raise HTTPException(400, "No files uploaded")
+
+    batch_id = uuid.uuid4().hex[:12]
+    batch_dir = WORKDIR / "batches" / batch_id
+    src_dir = batch_dir / "sources"
+    src_dir.mkdir(parents=True, exist_ok=True)
+    (batch_dir / "markdown").mkdir(parents=True, exist_ok=True)
+
+    file_list = []
+    for f in files:
+        fname = Path(f.filename or "document").name
+        if fname.startswith(("~$", ".")):
+            continue
+        suffix = Path(fname).suffix.lower()
+        if suffix not in ACCEPTED:
+            continue
+        dest = src_dir / fname
+        with open(dest, "wb") as out:
+            shutil.copyfileobj(f.file, out)
+        file_list.append({
+            "name": fname,
+            "format": suffix.lstrip("."),
+            "size": dest.stat().st_size,
+        })
+
+    if not file_list:
+        raise HTTPException(400, f"No supported files found in upload. Supported: {sorted(ACCEPTED)}")
+
+    return {
+        "batch_id": batch_id,
+        "total": len(file_list),
+        "files": file_list,
+    }
+
+
+class BatchConvertRequest(BaseModel):
+    vlm: bool = False
+    provider: str = "claude"
+
+
+@app.post("/api/batch/convert/{batch_id}")
+def convert_batch(batch_id: str, body: BatchConvertRequest) -> StreamingResponse:
+    batch_dir = (WORKDIR / "batches" / batch_id).resolve()
+    if not batch_dir.is_dir() or WORKDIR.resolve() not in batch_dir.parents:
+        raise HTTPException(404, "Batch not found")
+
+    src_dir = batch_dir / "sources"
+    md_dir = batch_dir / "markdown"
+    md_dir.mkdir(parents=True, exist_ok=True)
+
+    sources = sorted(
+        [
+            p
+            for p in src_dir.iterdir()
+            if p.is_file() and p.suffix.lower() in ACCEPTED and not p.name.startswith(("~$", "."))
+        ]
+    )
+    if not sources:
+        raise HTTPException(404, "No source files found in this batch")
+
+    def sse(event: str, data: dict) -> str:
+        return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+    def events():
+        total = len(sources)
+        converted_count = 0
+        failed_count = 0
+
+        for i, src in enumerate(sources, 1):
+            yield sse(
+                "progress",
+                {
+                    "type": "start",
+                    "index": i,
+                    "total": total,
+                    "filename": src.name,
+                },
+            )
+
+            suffix = src.suffix.lower()
+            try:
+                with tempfile.TemporaryDirectory() as media_temp:
+                    result = convert(
+                        src,
+                        media_dir=Path(media_temp),
+                        use_vlm=body.vlm,
+                        vlm_provider=body.provider,
+                        title=src.stem,
+                    )
+
+                if suffix in {".xlsx", ".xlsm", ".xls"}:
+                    primary_engine = "openpyxl (xlsx_tables.py)"
+                elif suffix == ".xml":
+                    primary_engine = "xml.etree.ElementTree (xml_tables.py)"
+                elif suffix in {".html", ".htm"}:
+                    primary_engine = "Docling Native Engine (HTML)"
+                elif suffix == ".pdf":
+                    primary_engine = "Docling Native Engine (PDF)"
+                elif suffix in {".docx", ".doc"}:
+                    primary_engine = "Docling Native Engine (OOXML Word)"
+                elif suffix in {".pptx", ".ppt"}:
+                    primary_engine = "Docling Native Engine (OOXML PPT) + pptx_flow"
+                else:
+                    primary_engine = "PIL / Image Processor"
+
+                tools_info = {
+                    "primary_engine": primary_engine,
+                    "format": suffix.lstrip("."),
+                    "vlm_used": bool(body.vlm and result.vlm_images > 0),
+                    "vlm_provider": body.provider if (body.vlm and result.vlm_images > 0) else None,
+                    "claude_vlm_images": result.vlm_images if body.provider == "claude" else 0,
+                    "vlm_images": result.vlm_images,
+                    "tesseract_ocr_images": len(result.ocr_blocks),
+                    "table_cv_tables": result.table_images,
+                    "flowcharts": result.flows,
+                    "skipped_images": result.skipped_images,
+                    "total_pictures": result.pictures,
+                    "pages_or_sheets": result.pages,
+                    "unit": result.unit,
+                    "elapsed": round(result.elapsed, 2),
+                    "markdown_length": len(result.markdown),
+                }
+
+                dest = md_dir / f"{src.stem}{suffix.replace('.', '_')}.md"
+                dest.write_text(result.markdown, encoding="utf-8")
+                converted_count += 1
+
+                yield sse(
+                    "file_done",
+                    {
+                        "type": "done",
+                        "index": i,
+                        "total": total,
+                        "filename": src.name,
+                        "dest_name": dest.name,
+                        "markdown": result.markdown,
+                        "tools": tools_info,
+                    },
+                )
+            except Exception as exc:
+                failed_count += 1
+                yield sse(
+                    "file_error",
+                    {
+                        "type": "error",
+                        "index": i,
+                        "total": total,
+                        "filename": src.name,
+                        "error": str(exc),
+                    },
+                )
+
+        yield sse(
+            "batch_done",
+            {
+                "type": "batch_done",
+                "total": total,
+                "converted": converted_count,
+                "failed": failed_count,
+                "download_url": f"/api/batch/{batch_id}/download",
+            },
+        )
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.get("/api/batch/{batch_id}/download")
+def download_batch_zip(batch_id: str) -> FileResponse:
+    batch_dir = (WORKDIR / "batches" / batch_id).resolve()
+    if not batch_dir.is_dir() or WORKDIR.resolve() not in batch_dir.parents:
+        raise HTTPException(404, "Batch not found")
+
+    md_dir = batch_dir / "markdown"
+    if not md_dir.is_dir():
+        raise HTTPException(404, "No converted files found for this batch")
+
+    md_files = list(md_dir.glob("*.md"))
+    if not md_files:
+        raise HTTPException(404, "No markdown files found")
+
+    zip_path = batch_dir / f"batch_{batch_id}_markdown.zip"
+    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for f in md_files:
+            zf.write(f, arcname=f.name)
+
+    return FileResponse(
+        zip_path,
+        media_type="application/zip",
+        filename=f"converted_markdown_{batch_id}.zip",
+    )
+
+
+@app.post("/api/batch/{batch_id}/embed")
+def embed_batch(batch_id: str) -> StreamingResponse:
+    batch_dir = (WORKDIR / "batches" / batch_id).resolve()
+    if not batch_dir.is_dir() or WORKDIR.resolve() not in batch_dir.parents:
+        raise HTTPException(404, "Batch not found")
+
+    md_dir = batch_dir / "markdown"
+    if not md_dir.is_dir():
+        raise HTTPException(404, "No converted markdown found for this batch")
+
+    md_files = sorted([p for p in md_dir.iterdir() if p.is_file() and p.suffix.lower() == ".md"])
+    if not md_files:
+        raise HTTPException(404, "No markdown files found to embed")
+
+    missing = [
+        name
+        for name, present in (
+            ("DATABASE_URL", os.environ.get("DATABASE_URL")),
+        )
+        if not present
+    ]
+    if missing:
+        raise HTTPException(400, f"Cannot embed: missing {', '.join(missing)} in environment or .env")
+
+    def sse(event: str, data: dict) -> str:
+        return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+    def events():
+        started = time.perf_counter()
+        KNOWLEDGE_BASE.mkdir(exist_ok=True)
+        total = len(md_files)
+        succeeded = 0
+        failed = 0
+        total_chunks = 0
+        total_tokens = 0
+
+        try:
+            with rag.connect() as conn:
+                rag.create_schema(conn)
+
+                for i, md_file in enumerate(md_files, 1):
+                    yield sse(
+                        "progress",
+                        {
+                            "type": "start",
+                            "index": i,
+                            "total": total,
+                            "filename": md_file.name,
+                        },
+                    )
+
+                    try:
+                        dest = KNOWLEDGE_BASE / md_file.name
+                        dest.write_text(md_file.read_text(encoding="utf-8"), encoding="utf-8")
+
+                        res = rag.index_file(conn, dest)
+                        succeeded += 1
+                        chunks = res.get("chunks", 0)
+                        tokens = res.get("tokens", 0)
+                        total_chunks += chunks
+                        total_tokens += tokens
+
+                        duplicates = [
+                            _display_path(r[0])
+                            for r in conn.execute(
+                                "SELECT source FROM rag_documents WHERE title = %s AND source <> %s",
+                                (res["title"], str(dest.resolve())),
+                            ).fetchall()
+                        ]
+
+                        yield sse(
+                            "file_done",
+                            {
+                                "type": "done",
+                                "index": i,
+                                "total": total,
+                                "filename": md_file.name,
+                                "title": res["title"],
+                                "status": res["status"],
+                                "chunks": chunks,
+                                "tokens": tokens,
+                                "duplicates": duplicates,
+                            },
+                        )
+                    except Exception as exc:
+                        failed += 1
+                        yield sse(
+                            "file_error",
+                            {
+                                "type": "error",
+                                "index": i,
+                                "total": total,
+                                "filename": md_file.name,
+                                "error": str(exc),
+                            },
+                        )
+
+                try:
+                    row = conn.execute(
+                        "SELECT (SELECT count(*) FROM rag_documents), (SELECT count(*) FROM rag_chunks)"
+                    ).fetchone()
+                    docs_count = int(row[0]) if row and row[0] is not None else succeeded
+                    chunks_count = int(row[1]) if row and row[1] is not None else total_chunks
+                except Exception:
+                    docs_count, chunks_count = (succeeded, total_chunks)
+
+                yield sse(
+                    "batch_done",
+                    {
+                        "type": "batch_done",
+                        "total": total,
+                        "succeeded": succeeded,
+                        "failed": failed,
+                        "total_chunks": total_chunks,
+                        "total_tokens": total_tokens,
+                        "db_documents": docs_count,
+                        "db_chunks": chunks_count,
+                        "seconds": round(time.perf_counter() - started, 2),
+                    },
+                )
+        except Exception as exc:
+            yield sse("error", {"type": "error", "error": str(exc)})
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.get("/api/rag/status")
@@ -271,7 +659,6 @@ def rag_status() -> dict:
     missing = [
         name
         for name, present in (
-            ("COHERE_API_KEY", os.environ.get("COHERE_API_KEY") or os.environ.get("CO_API_KEY")),
             ("ANTHROPIC_API_KEY", os.environ.get("ANTHROPIC_API_KEY")),
             ("DATABASE_URL", os.environ.get("DATABASE_URL")),
         )
@@ -280,6 +667,8 @@ def rag_status() -> dict:
     info = {
         "missing": missing,
         "embed_model": rag.EMBED_MODEL,
+        "embed_provider": "ollama",
+        "embed_dimension": rag.EMBED_DIMENSION,
         "answer_model": rag.ANSWER_MODEL,
         "default_k": rag.DEFAULT_K,
         "documents": 0,

@@ -122,10 +122,16 @@ production integration.
 ## Ask questions about the Markdown (RAG)
 
 `rag.py` answers questions from the converted `.md` files: it splits them into
-chunks, embeds each chunk with [Cohere Embed](https://docs.cohere.com/docs/cohere-embed)
-(`embed-v4.0`), stores text and vectors in Postgres with
+chunks, embeds each chunk locally using **BGE-M3** via [Ollama](https://ollama.com)
+(`1024` dimensions), stores text and vectors in Postgres with
 [pgvector](https://github.com/pgvector/pgvector) next to a full-text index, and
 has Claude answer from the best chunks, citing them.
+
+Make sure **Ollama** is running with `bge-m3` pulled:
+
+```bash
+ollama pull bge-m3
+```
 
 Needs a Postgres with the `vector` extension available (Homebrew's
 `postgresql@18` ships it). Start it before running the app, or searches fail
@@ -135,41 +141,72 @@ to connect:
 brew services start postgresql@18
 ```
 
-It also needs three settings in `.env`:
+Settings in `.env`:
 
 ```bash
-COHERE_API_KEY=...
-DATABASE_URL=postgresql://user:password@localhost:5432/docling
-ANTHROPIC_API_KEY=...     # already there for the vision model
+DATABASE_URL=postgresql://user:password@localhost:5433/docling
+ANTHROPIC_API_KEY=...     # for Claude answer synthesis
+# Optional overrides (defaults shown):
+OLLAMA_HOST=http://127.0.0.1:11434
+RAG_EMBED_MODEL=bge-m3
+RAG_EMBED_DIMENSION=1024
+RAG_ANSWER_MODEL=claude-opus-5
 ```
 
 **In the browser:** `./run.sh`, then open <http://localhost:8000/ask> (or the
 **Ask** tab in the header). Type a question and the page shows each step as it
-runs: embedding the question, vector search, keyword search, merging the
+runs: embedding the question with Ollama, vector search, keyword search, merging the
 rankings (with timings and what each step found), then Claude's answer as it
 is written, with citations that jump to their source. The **Sources** section
 at the bottom lists the excerpts Claude received, with the matched words
 highlighted and three scores for each: combined (the order used), semantic
 similarity and keyword score; the buttons re-sort by any of them, highest first.
 
-**Adding a document from the Extract page:** after **Convert to Markdown**,
-**Add to knowledge base** chunks and embeds that Markdown and stores it in the
-same index, so the Ask page can answer from it straight away. The Markdown is
-saved to `knowledge_base/<name>_<ext>.md` (git-ignored), and clicking again
-after re-converting replaces that document's chunks; an unchanged file makes no
-Cohere call. If the same document was already indexed from another folder
-(say `solvay-spark/markdown`), the status line warns that answers may cite both
-copies. `rag.py index knowledge_base` re-indexes everything added this way.
+**Adding documents to the knowledge base:**
+- **From the Convert page:** After converting, click **Add to knowledge base** to chunk and embed that Markdown into PostgreSQL `pgvector`.
+- **From the Batch Convert page:** Click **Insert into Knowledge Base** to queue and embed all converted documents in one go with real-time SSE progress.
+- Files are stored in `knowledge_base/<name>_<ext>.md`.
 
 **From the command line:**
 
 ```bash
 createdb docling                                           # once
-.venv/bin/python rag.py index solvay-spark/markdown        # chunk + embed + store
+.venv/bin/python rag.py index solvay-spark/markdown        # chunk + embed with bge-m3 + store
 .venv/bin/python rag.py search "Who owns 7.1.12.3 Production Declaration?"
 .venv/bin/python rag.py ask "Who owns 7.1.12.3 Production Declaration?"
 .venv/bin/python rag.py chunks "solvay-spark/markdown/deck_pptx.md"  # preview chunking, no API calls
 ```
+
+### Removing or Resetting Data in pgvector
+
+If you want to clear old records or switch embedding models:
+
+1. **Reset schema for BGE-M3 (1024d) — Recommended:**
+   Drops existing tables and recreates clean tables matching `vector(1024)`:
+   ```bash
+   .venv/bin/python rag.py reset
+   ```
+
+2. **Clear all documents and chunks (keep schema):**
+   Truncates all stored documents and chunks:
+   ```bash
+   .venv/bin/python rag.py clear
+   ```
+
+3. **Wipe and immediately re-index a folder:**
+   Recreates the schema and re-embeds all files in one step:
+   ```bash
+   .venv/bin/python rag.py index knowledge_base --rebuild
+   ```
+
+4. **Via direct SQL / `psql`:**
+   ```sql
+   -- Option A: Empty all records
+   TRUNCATE TABLE rag_documents CASCADE;
+
+   -- Option B: Completely drop tables
+   DROP TABLE IF EXISTS rag_chunks, rag_documents CASCADE;
+   ```
 
 **Retrieval is hybrid.** Each question is looked up two ways, and the two
 rankings are merged with reciprocal rank fusion (each chunk scores
@@ -259,7 +296,7 @@ won't render.
 | `vlm_api.py` | GPT / Claude through Docling's VLM pipeline: table structure |
 | `pptx_to_md.py` | CLI wrapper |
 | `folder_to_md.py` | CLI: convert every supported file in a folder |
-| `rag.py` | CLI: index the Markdown in pgvector (Cohere embeddings) and answer questions with Claude |
+| `rag.py` | CLI: index the Markdown in pgvector (BGE-M3 Ollama embeddings) and answer questions with Claude |
 | `md_chunker.py` | Splits the Markdown into heading-aware chunks for `rag.py` |
 | `frontend/` | Web UI source (React + MUI + Lucide + Framer Motion): `src/pages/ExtractPage.tsx`, `src/pages/AskPage.tsx` |
 | `static/dist/` | The built web UI that `app.py` serves (`npm run build`) |
