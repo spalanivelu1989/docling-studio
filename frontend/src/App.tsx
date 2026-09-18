@@ -1,23 +1,24 @@
 import { AppBar, Box, CssBaseline, GlobalStyles, IconButton, Tab, Tabs, ThemeProvider, Toolbar, Tooltip, Typography } from "@mui/material";
-import { alpha } from "@mui/material/styles";
 import { AnimatePresence, MotionConfig, motion } from "framer-motion";
-import { Columns2, DatabaseZap, FileText, FolderArchive, MessageSquareText, Moon, ScanEye, Sun } from "lucide-react";
+import { Columns2, DatabaseZap, FileText, FolderArchive, MessageSquareText, Moon, Network, ScanEye, Sun } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import AddToKnowledgeBasePage from "./pages/AddToKnowledgeBasePage";
 import AskPage from "./pages/AskPage";
 import BatchConvertPage from "./pages/BatchConvertPage";
 import DocMdViewerPage from "./pages/DocMdViewerPage";
 import ExtractPage from "./pages/ExtractPage";
+import KnowledgeGraphPage from "./pages/KnowledgeGraphPage";
 import LandingPage from "./pages/LandingPage";
 import MdViewerPage from "./pages/MdViewerPage";
 import { makeTheme, type Mode } from "./theme";
 
-type Page = "extract" | "batch" | "add-kb" | "review" | "viewer" | "ask" | "landing";
+type Page = "extract" | "batch" | "add-kb" | "graph" | "review" | "viewer" | "ask" | "landing";
 const PATHS: Record<Page, string> = {
   landing: "/",
   extract: "/convert",
   batch: "/batch",
   "add-kb": "/add-kb",
+  graph: "/graph",
   review: "/review",
   viewer: "/md-viewer",
   ask: "/ask",
@@ -27,6 +28,7 @@ const pageFromPath = (): Page => {
   if (location.pathname.startsWith("/convert") || location.pathname.startsWith("/extract")) return "extract";
   if (location.pathname.startsWith("/batch")) return "batch";
   if (location.pathname.startsWith("/add-kb") || location.pathname.startsWith("/add-to-knowledge-base")) return "add-kb";
+  if (location.pathname.startsWith("/graph") || location.pathname.startsWith("/knowledge-graph")) return "graph";
   if (location.pathname.startsWith("/ask")) return "ask";
   if (location.pathname.startsWith("/md-viewer") || location.pathname.startsWith("/viewer")) return "viewer";
   if (location.pathname.startsWith("/review") || location.pathname.startsWith("/doc-md-viewer")) return "review";
@@ -76,9 +78,11 @@ export default function App() {
               ? "Docling Batch Convert"
               : page === "add-kb"
                 ? "Docling Add to Knowledge Base"
-                : page === "review"
-                  ? "Docling Doc vs MD Review"
-                  : "Docling Convert Studio";
+                : page === "graph"
+                  ? "Docling Knowledge Graph"
+                  : page === "review"
+                    ? "Docling Doc vs MD Review"
+                    : "Docling Convert Studio";
   }, [page]);
 
   const go = (next: Page) => {
@@ -101,27 +105,30 @@ export default function App() {
       />
       {/* Honour the OS "reduce motion" setting for every animation below. */}
       <MotionConfig reducedMotion="user">
-        <Box sx={{ height: "100vh", display: "flex", flexDirection: "column" }}>
-          <AppBar position="static" color="inherit" sx={{ flex: "none" }}>
-            <Toolbar variant="dense" sx={{ gap: 2, minHeight: 52 }}>
+        <Box sx={{ height: "100vh", display: "flex", flexDirection: "column", bgcolor: "background.default" }}>
+          <AppBar
+            position="static"
+            color="default"
+            elevation={0}
+            sx={{
+              borderBottom: 1,
+              borderColor: "divider",
+              bgcolor: "background.paper",
+            }}
+          >
+            <Toolbar variant="dense" disableGutters sx={{ minHeight: 52, px: 2, gap: 2 }}>
               {/* Brand Logo & Title — Clickable link to Landing Page */}
-              <Tooltip title="About Docling Studio (Overview & Platform Services)">
+              <Tooltip title="Home / About Docling Studio">
                 <Box
                   onClick={() => go("landing")}
                   sx={{
                     display: "flex",
                     alignItems: "center",
-                    gap: 1,
+                    gap: 1.25,
                     cursor: "pointer",
                     userSelect: "none",
-                    py: 0.5,
-                    px: 1,
-                    borderRadius: 2,
-                    transition: "all 0.15s ease",
-                    bgcolor: (t) => (page === "landing" ? alpha(t.palette.primary.main, 0.12) : "transparent"),
-                    "&:hover": {
-                      bgcolor: (t) => alpha(t.palette.primary.main, 0.08),
-                    },
+                    "&:hover": { opacity: 0.8 },
+                    transition: "opacity 0.15s ease",
                   }}
                 >
                   <Box
@@ -156,6 +163,7 @@ export default function App() {
                 <Tab value="extract" label="Convert" icon={<FileText size={16} />} iconPosition="start" />
                 <Tab value="batch" label="Batch Convert" icon={<FolderArchive size={16} />} iconPosition="start" />
                 <Tab value="add-kb" label="Add to knowledge base" icon={<DatabaseZap size={16} />} iconPosition="start" />
+                <Tab value="graph" label="Knowledge Graph" icon={<Network size={16} />} iconPosition="start" />
                 <Tab value="review" label="Doc vs MD" icon={<ScanEye size={16} />} iconPosition="start" />
                 <Tab value="viewer" label="MD Viewer" icon={<Columns2 size={16} />} iconPosition="start" />
                 <Tab value="ask" label="Ask" icon={<MessageSquareText size={16} />} iconPosition="start" />
@@ -183,7 +191,7 @@ export default function App() {
           {/* All pages stay mounted so switching tabs keeps an upload, its
               Markdown or an answer in place. */}
           <Box sx={{ flex: 1, minHeight: 0, position: "relative" }}>
-            {(["extract", "batch", "add-kb", "review", "viewer", "ask", "landing"] as Page[]).map((p) => (
+            {(["extract", "batch", "add-kb", "graph", "review", "viewer", "ask", "landing"] as Page[]).map((p) => (
               <Box
                 key={p}
                 component={motion.div}
@@ -198,6 +206,8 @@ export default function App() {
                   <BatchConvertPage />
                 ) : p === "add-kb" ? (
                   <AddToKnowledgeBasePage active={page === "add-kb"} />
+                ) : p === "graph" ? (
+                  <KnowledgeGraphPage active={page === "graph"} onNavigate={(next) => go(next as Page)} />
                 ) : p === "review" ? (
                   <DocMdViewerPage />
                 ) : p === "viewer" ? (

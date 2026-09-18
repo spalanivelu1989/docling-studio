@@ -27,6 +27,7 @@ from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+import knowledge_graph
 import preview
 import rag
 import vlm_api
@@ -300,6 +301,37 @@ def about_page() -> HTMLResponse:
 @app.get("/add-to-knowledge-base", response_class=HTMLResponse)
 def add_kb_page() -> HTMLResponse:
     return _spa()
+
+
+@app.get("/graph", response_class=HTMLResponse)
+@app.get("/knowledge-graph", response_class=HTMLResponse)
+def graph_page() -> HTMLResponse:
+    return _spa()
+
+
+@app.get("/api/graph/data")
+def get_graph_data() -> dict:
+    return knowledge_graph.extract_graph(force=False)
+
+
+@app.post("/api/graph/rebuild")
+def rebuild_graph() -> dict:
+    return knowledge_graph.extract_graph(force=True)
+
+
+class GraphQueryRequest(BaseModel):
+    query: str = ""
+    source_id: str | None = None
+    target_id: str | None = None
+
+
+@app.post("/api/graph/query")
+def query_graph_endpoint(req: GraphQueryRequest) -> dict:
+    return knowledge_graph.query_graph(
+        query=req.query,
+        source_id=req.source_id,
+        target_id=req.target_id,
+    )
 
 
 @app.get("/api/kb/files")

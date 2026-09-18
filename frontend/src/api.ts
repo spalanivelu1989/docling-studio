@@ -117,7 +117,85 @@ export const api = {
   kbFileContent: (filename: string) => fetch(`/api/kb/files/${encodeURIComponent(filename)}`).then((r) => r.text()),
   deleteKbFile: (filename: string) =>
     fetch(`/api/kb/files/${encodeURIComponent(filename)}`, { method: "DELETE" }).then((r) => json<{ status: string }>(r)),
+  graphData: () => fetch("/api/graph/data").then((r) => json<GraphData>(r)),
+  rebuildGraph: () => fetch("/api/graph/rebuild", { method: "POST" }).then((r) => json<GraphData>(r)),
+  queryGraph: (req: { query?: string; source_id?: string; target_id?: string }) =>
+    fetch("/api/graph/query", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(req),
+    }).then((r) => json<GraphQueryResult>(r)),
 };
+
+export interface GraphNode {
+  id: string;
+  label: string;
+  type: "stream" | "system" | "document" | "process" | "spec";
+  color?: string;
+  size?: number;
+  degree?: number;
+  description?: string;
+  code?: string;
+  ticket?: string;
+  filename?: string;
+  source?: string;
+  format?: string;
+  chars?: number;
+  is_primary?: boolean;
+}
+
+export interface GraphEdge {
+  id: string;
+  source: string | GraphNode;
+  target: string | GraphNode;
+  relation: string;
+  label: string;
+}
+
+export interface GraphData {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  stats: {
+    total_nodes: number;
+    total_edges: number;
+    types: Record<string, number>;
+    streams: string[];
+    systems: string[];
+  };
+}
+
+export interface GraphPathStep {
+  from_id: string;
+  from: string;
+  from_type?: string;
+  to_id: string;
+  to: string;
+  to_type?: string;
+  relation: string;
+}
+
+export interface GraphPath {
+  start_id: string;
+  end_id: string;
+  hops: number;
+  nodes: string[];
+  edges: string[];
+  steps: GraphPathStep[];
+}
+
+export interface GraphQueryResult {
+  query: string;
+  mode: "path" | "subgraph";
+  summary: string;
+  answer?: string;
+  node_ids: string[];
+  edge_ids: string[];
+  path?: GraphPath;
+  stats: {
+    nodes_count: number;
+    edges_count: number;
+  };
+}
 
 export interface KbBatchInsertHandlers {
   onProgress?: (data: { type: "start"; index: number; total: number; filename: string }) => void;
