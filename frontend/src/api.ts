@@ -89,6 +89,17 @@ async function json<T>(res: Response): Promise<T> {
   return data as T;
 }
 
+export interface KbFileItem {
+  name: string;
+  title: string;
+  size: number;
+  source?: string;
+  full_path?: string;
+  chunks?: number;
+  tokens?: number;
+  is_indexed?: boolean;
+}
+
 export const api = {
   health: () => fetch("/api/health").then((r) => json<{ preview_available: boolean }>(r)),
   upload: (file: File) => {
@@ -102,9 +113,97 @@ export const api = {
   ragStatus: () => fetch("/api/rag/status").then((r) => json<RagStatus>(r)),
   previewUrl: (id: string, page: number) => `/api/docs/${id}/preview/${page}`,
   downloadUrl: (id: string) => `/api/docs/${id}/download`,
-  kbFiles: () => fetch("/api/kb/files").then((r) => json<{ name: string; title: string; size: number }[]>(r)),
+  kbFiles: () => fetch("/api/kb/files").then((r) => json<KbFileItem[]>(r)),
   kbFileContent: (filename: string) => fetch(`/api/kb/files/${encodeURIComponent(filename)}`).then((r) => r.text()),
+  deleteKbFile: (filename: string) =>
+    fetch(`/api/kb/files/${encodeURIComponent(filename)}`, { method: "DELETE" }).then((r) => json<{ status: string }>(r)),
 };
+
+export interface KbBatchInsertHandlers {
+  onProgress?: (data: { type: "start"; index: number; total: number; filename: string }) => void;
+  onFileDone?: (data: {
+    type: "done";
+    index: number;
+    total: number;
+    filename: string;
+    title: string;
+    status: string;
+    chunks: number;
+    tokens: number;
+    duplicates: string[];
+  }) => void;
+  onFileError?: (data: { type: "error"; index: number; total: number; filename: string; error: string }) => void;
+  onComplete?: (data: {
+    total: number;
+    succeeded: number;
+    failed: number;
+    total_chunks: number;
+    total_tokens: number;
+    total_documents_in_db: number;
+    total_chunks_in_db: number;
+    seconds: number;
+  }) => void;
+  onError?: (err: string) => void;
+}
+
+export async function batchInsertKb(
+  files: File[],
+  handlers: KbBatchInsertHandlers,
+  signal?: AbortSignal
+): Promise<void> {
+  const formData = new FormData();
+  for (const f of files) {
+    formData.append("files", f);
+  }
+
+  const res = await fetch("/api/kb/batch-insert", {
+    method: "POST",
+    body: formData,
+    signal,
+  });
+
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error((data as { detail?: string }).detail || `Request failed (${res.status})`);
+  }
+
+  const reader = res.body?.getReader();
+  if (!reader) throw new Error("No response body");
+
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const events = buffer.split("\n\n");
+    buffer = events.pop() ?? "";
+
+    for (const raw of events) {
+      if (!raw.trim()) continue;
+      let eventType = "message";
+      let dataStr = "";
+
+      for (const line of raw.split("\n")) {
+        if (line.startsWith("event: ")) eventType = line.slice(7).trim();
+        else if (line.startsWith("data: ")) dataStr = line.slice(6).trim();
+      }
+
+      if (!dataStr) continue;
+      try {
+        const payload = JSON.parse(dataStr);
+        if (eventType === "progress" && handlers.onProgress) handlers.onProgress(payload);
+        else if (eventType === "file_done" && handlers.onFileDone) handlers.onFileDone(payload);
+        else if (eventType === "file_error" && handlers.onFileError) handlers.onFileError(payload);
+        else if (eventType === "complete" && handlers.onComplete) handlers.onComplete(payload);
+        else if (eventType === "error" && handlers.onError) handlers.onError(payload.message || "Embedding error");
+      } catch (e) {
+        console.error("Failed to parse SSE payload", e);
+      }
+    }
+  }
+}
 
 export interface AskHandlers {
   stage: (e: StageEvent) => void;

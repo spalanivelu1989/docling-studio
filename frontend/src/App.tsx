@@ -1,8 +1,9 @@
 import { AppBar, Box, CssBaseline, GlobalStyles, IconButton, Tab, Tabs, ThemeProvider, Toolbar, Tooltip, Typography } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import { AnimatePresence, MotionConfig, motion } from "framer-motion";
-import { Columns2, FileText, FolderArchive, MessageSquareText, Moon, ScanEye, Sun } from "lucide-react";
+import { Columns2, DatabaseZap, FileText, FolderArchive, MessageSquareText, Moon, ScanEye, Sun } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import AddToKnowledgeBasePage from "./pages/AddToKnowledgeBasePage";
 import AskPage from "./pages/AskPage";
 import BatchConvertPage from "./pages/BatchConvertPage";
 import DocMdViewerPage from "./pages/DocMdViewerPage";
@@ -11,11 +12,12 @@ import LandingPage from "./pages/LandingPage";
 import MdViewerPage from "./pages/MdViewerPage";
 import { makeTheme, type Mode } from "./theme";
 
-type Page = "extract" | "batch" | "review" | "viewer" | "ask" | "landing";
+type Page = "extract" | "batch" | "add-kb" | "review" | "viewer" | "ask" | "landing";
 const PATHS: Record<Page, string> = {
   landing: "/",
   extract: "/convert",
   batch: "/batch",
+  "add-kb": "/add-kb",
   review: "/review",
   viewer: "/md-viewer",
   ask: "/ask",
@@ -23,9 +25,10 @@ const PATHS: Record<Page, string> = {
 
 const pageFromPath = (): Page => {
   if (location.pathname.startsWith("/convert") || location.pathname.startsWith("/extract")) return "extract";
+  if (location.pathname.startsWith("/batch")) return "batch";
+  if (location.pathname.startsWith("/add-kb") || location.pathname.startsWith("/add-to-knowledge-base")) return "add-kb";
   if (location.pathname.startsWith("/ask")) return "ask";
   if (location.pathname.startsWith("/md-viewer") || location.pathname.startsWith("/viewer")) return "viewer";
-  if (location.pathname.startsWith("/batch")) return "batch";
   if (location.pathname.startsWith("/review") || location.pathname.startsWith("/doc-md-viewer")) return "review";
   if (location.pathname.startsWith("/about") || location.pathname.startsWith("/landing")) return "landing";
   return "landing";
@@ -71,9 +74,11 @@ export default function App() {
             ? "Docling MD Viewer"
             : page === "batch"
               ? "Docling Batch Convert"
-              : page === "review"
-                ? "Docling Doc vs MD Review"
-                : "Docling Convert Studio";
+              : page === "add-kb"
+                ? "Docling Add to Knowledge Base"
+                : page === "review"
+                  ? "Docling Doc vs MD Review"
+                  : "Docling Convert Studio";
   }, [page]);
 
   const go = (next: Page) => {
@@ -150,6 +155,7 @@ export default function App() {
               >
                 <Tab value="extract" label="Convert" icon={<FileText size={16} />} iconPosition="start" />
                 <Tab value="batch" label="Batch Convert" icon={<FolderArchive size={16} />} iconPosition="start" />
+                <Tab value="add-kb" label="Add to knowledge base" icon={<DatabaseZap size={16} />} iconPosition="start" />
                 <Tab value="review" label="Doc vs MD" icon={<ScanEye size={16} />} iconPosition="start" />
                 <Tab value="viewer" label="MD Viewer" icon={<Columns2 size={16} />} iconPosition="start" />
                 <Tab value="ask" label="Ask" icon={<MessageSquareText size={16} />} iconPosition="start" />
@@ -177,7 +183,7 @@ export default function App() {
           {/* All pages stay mounted so switching tabs keeps an upload, its
               Markdown or an answer in place. */}
           <Box sx={{ flex: 1, minHeight: 0, position: "relative" }}>
-            {(["extract", "batch", "review", "viewer", "ask", "landing"] as Page[]).map((p) => (
+            {(["extract", "batch", "add-kb", "review", "viewer", "ask", "landing"] as Page[]).map((p) => (
               <Box
                 key={p}
                 component={motion.div}
@@ -190,6 +196,8 @@ export default function App() {
                   <ExtractPage onAsk={() => go("ask")} />
                 ) : p === "batch" ? (
                   <BatchConvertPage />
+                ) : p === "add-kb" ? (
+                  <AddToKnowledgeBasePage active={page === "add-kb"} />
                 ) : p === "review" ? (
                   <DocMdViewerPage />
                 ) : p === "viewer" ? (

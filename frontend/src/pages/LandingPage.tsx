@@ -25,7 +25,7 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 
-type Page = "extract" | "batch" | "review" | "viewer" | "ask" | "landing";
+type Page = "extract" | "batch" | "add-kb" | "review" | "viewer" | "ask" | "landing";
 
 export default function LandingPage({ onNavigate }: { onNavigate: (page: Page) => void }) {
   return (

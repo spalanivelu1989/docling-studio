@@ -296,29 +296,286 @@ def about_page() -> HTMLResponse:
     return _spa()
 
 
+@app.get("/add-kb", response_class=HTMLResponse)
+@app.get("/add-to-knowledge-base", response_class=HTMLResponse)
+def add_kb_page() -> HTMLResponse:
+    return _spa()
+
+
 @app.get("/api/kb/files")
 def list_kb_files() -> list[dict]:
-    """List converted Markdown files stored in knowledge_base/ for selection in the viewer."""
-    if not KNOWLEDGE_BASE.is_dir():
-        return []
-    files = sorted(KNOWLEDGE_BASE.glob("*.md"))
-    return [
-        {
-            "name": f.name,
-            "title": f.stem,
-            "size": f.stat().st_size,
-        }
-        for f in files
-        if not f.name.startswith((".", "~$"))
-    ]
+    """List all documents in the knowledge base, combining documents indexed in pgvector
+    (from any source folder, such as solvay-spark/pkg/markdown) with any Markdown files
+    stored in knowledge_base/."""
+    items: dict[str, dict] = {}
+
+    # 1. Primary source of truth: documents indexed in PostgreSQL rag_documents
+    try:
+        with rag.connect() as conn:
+            rows = conn.execute(
+                "SELECT d.id, d.source, d.title, count(c.id), coalesce(sum(c.tokens), 0), d.indexed_at"
+                " FROM rag_documents d LEFT JOIN rag_chunks c ON c.document_id = d.id"
+                " GROUP BY d.id, d.source, d.title, d.indexed_at"
+                " ORDER BY d.indexed_at DESC, d.title ASC"
+            ).fetchall()
+            for r in rows:
+                doc_id, source_path_str, title, chunk_count, token_count, indexed_at = r
+                p = Path(source_path_str)
+                name = p.name
+                size = 0
+                if p.is_file():
+                    try:
+                        size = p.stat().st_size
+                    except Exception:
+                        pass
+                elif (KNOWLEDGE_BASE / name).is_file():
+                    try:
+                        size = (KNOWLEDGE_BASE / name).stat().st_size
+                    except Exception:
+                        pass
+
+                try:
+                    rel_source = str(p.relative_to(BASE))
+                except Exception:
+                    rel_source = str(p)
+
+                items[name] = {
+                    "name": name,
+                    "title": title or p.stem,
+                    "source": rel_source,
+                    "full_path": str(p),
+                    "size": size,
+                    "chunks": int(chunk_count),
+                    "tokens": int(token_count),
+                    "is_indexed": True,
+                    "indexed_at": indexed_at.isoformat() if hasattr(indexed_at, "isoformat") else str(indexed_at),
+                }
+    except Exception:
+        pass
+
+    # 2. Also check files in knowledge_base/ directory
+    if KNOWLEDGE_BASE.is_dir():
+        for f in sorted(KNOWLEDGE_BASE.glob("*.md")):
+            if f.name.startswith((".", "~$")):
+                continue
+            if f.name not in items:
+                items[f.name] = {
+                    "name": f.name,
+                    "title": f.stem,
+                    "source": f"knowledge_base/{f.name}",
+                    "full_path": str(f.resolve()),
+                    "size": f.stat().st_size,
+                    "chunks": 0,
+                    "tokens": 0,
+                    "is_indexed": False,
+                    "indexed_at": None,
+                }
+
+    # 3. Also check solvay-spark/pkg/markdown if it exists
+    pkg_md = BASE / "solvay-spark" / "pkg" / "markdown"
+    if pkg_md.is_dir():
+        for f in sorted(pkg_md.glob("*.md")):
+            if f.name.startswith((".", "~$")):
+                continue
+            if f.name not in items:
+                items[f.name] = {
+                    "name": f.name,
+                    "title": f.stem,
+                    "source": f"solvay-spark/pkg/markdown/{f.name}",
+                    "full_path": str(f.resolve()),
+                    "size": f.stat().st_size,
+                    "chunks": 0,
+                    "tokens": 0,
+                    "is_indexed": False,
+                    "indexed_at": None,
+                }
+
+    return sorted(items.values(), key=lambda x: (not x["is_indexed"], x["title"].lower()))
 
 
 @app.get("/api/kb/files/{filename}")
 def get_kb_file(filename: str) -> FileResponse:
-    target = (KNOWLEDGE_BASE / Path(filename).name).resolve()
-    if not target.is_file() or KNOWLEDGE_BASE.resolve() not in target.parents:
-        raise HTTPException(404, "File not found")
-    return FileResponse(target, media_type="text/markdown")
+    fname = Path(filename).name
+    # 1. Check knowledge_base/
+    target = (KNOWLEDGE_BASE / fname).resolve()
+    if target.is_file() and KNOWLEDGE_BASE.resolve() in target.parents:
+        return FileResponse(target, media_type="text/markdown")
+
+    # 2. Check solvay-spark/pkg/markdown/
+    target_pkg = (BASE / "solvay-spark" / "pkg" / "markdown" / fname).resolve()
+    if target_pkg.is_file():
+        return FileResponse(target_pkg, media_type="text/markdown")
+
+    # 3. Check rag_documents source in database
+    try:
+        with rag.connect() as conn:
+            row = conn.execute(
+                "SELECT source FROM rag_documents WHERE source LIKE %s LIMIT 1",
+                (f"%/{fname}",),
+            ).fetchone()
+            if row:
+                db_path = Path(row[0]).resolve()
+                if db_path.is_file():
+                    return FileResponse(db_path, media_type="text/markdown")
+    except Exception:
+        pass
+
+    raise HTTPException(404, f"File '{filename}' not found")
+
+
+@app.delete("/api/kb/files/{filename}")
+def delete_kb_file(filename: str) -> dict:
+    fname = Path(filename).name
+    deleted_db = False
+    try:
+        with rag.connect() as conn:
+            with conn.transaction():
+                res = conn.execute(
+                    "DELETE FROM rag_documents WHERE source LIKE %s OR source = %s RETURNING id",
+                    (f"%/{fname}", fname),
+                ).fetchall()
+                deleted_db = bool(res)
+    except Exception:
+        pass
+
+    target = (KNOWLEDGE_BASE / fname).resolve()
+    if target.is_file() and KNOWLEDGE_BASE.resolve() in target.parents:
+        target.unlink(missing_ok=True)
+
+    return {"status": "deleted", "filename": filename, "deleted_from_db": deleted_db}
+
+
+@app.post("/api/kb/batch-insert")
+def kb_batch_insert(files: list[UploadFile]) -> StreamingResponse:
+    """Upload multiple .md files, save them to knowledge_base/, and embed them into pgvector."""
+    if not files:
+        raise HTTPException(400, "No files uploaded")
+
+    missing = [
+        name
+        for name, present in (
+            ("DATABASE_URL", os.environ.get("DATABASE_URL")),
+        )
+        if not present
+    ]
+    if missing:
+        raise HTTPException(400, f"Cannot embed: missing {', '.join(missing)} in environment or .env")
+
+    valid_files = []
+    for f in files:
+        name = Path(f.filename or "document.md").name
+        if name.startswith((".", "~$")):
+            continue
+        suffix = Path(name).suffix.lower()
+        if suffix in (".md", ".markdown", ".txt"):
+            valid_files.append((name, f))
+
+    if not valid_files:
+        raise HTTPException(400, "No valid Markdown (.md, .markdown, .txt) files found in upload")
+
+    def sse(event: str, data: dict) -> str:
+        return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+    def events():
+        started = time.perf_counter()
+        KNOWLEDGE_BASE.mkdir(exist_ok=True)
+        total = len(valid_files)
+        succeeded = 0
+        failed = 0
+        total_chunks = 0
+        total_tokens = 0
+
+        try:
+            with rag.connect() as conn:
+                rag.create_schema(conn)
+
+                for i, (name, upload_file) in enumerate(valid_files, 1):
+                    yield sse(
+                        "progress",
+                        {
+                            "type": "start",
+                            "index": i,
+                            "total": total,
+                            "filename": name,
+                        },
+                    )
+
+                    try:
+                        dest = KNOWLEDGE_BASE / name
+                        content = upload_file.file.read()
+                        if isinstance(content, bytes):
+                            dest.write_bytes(content)
+                        else:
+                            dest.write_text(content, encoding="utf-8")
+
+                        res = rag.index_file(conn, dest)
+                        succeeded += 1
+                        chunks = res.get("chunks", 0)
+                        tokens = res.get("tokens", 0)
+                        total_chunks += chunks
+                        total_tokens += tokens
+
+                        duplicates = [
+                            _display_path(r[0])
+                            for r in conn.execute(
+                                "SELECT source FROM rag_documents WHERE title = %s AND source <> %s",
+                                (res["title"], str(dest.resolve())),
+                            ).fetchall()
+                        ]
+
+                        yield sse(
+                            "file_done",
+                            {
+                                "type": "done",
+                                "index": i,
+                                "total": total,
+                                "filename": name,
+                                "title": res["title"],
+                                "status": res["status"],
+                                "chunks": chunks,
+                                "tokens": tokens,
+                                "duplicates": duplicates,
+                            },
+                        )
+                    except Exception as exc:
+                        failed += 1
+                        yield sse(
+                            "file_error",
+                            {
+                                "type": "error",
+                                "index": i,
+                                "total": total,
+                                "filename": name,
+                                "error": str(exc),
+                            },
+                        )
+
+                try:
+                    row = conn.execute(
+                        "SELECT (SELECT count(*) FROM rag_documents), (SELECT count(*) FROM rag_chunks)"
+                    ).fetchone()
+                    docs_count = int(row[0]) if row and row[0] is not None else succeeded
+                    chunks_count = int(row[1]) if row and row[1] is not None else total_chunks
+                except Exception:
+                    docs_count, chunks_count = (succeeded, total_chunks)
+
+                yield sse(
+                    "complete",
+                    {
+                        "total": total,
+                        "succeeded": succeeded,
+                        "failed": failed,
+                        "total_chunks": total_chunks,
+                        "total_tokens": total_tokens,
+                        "total_documents_in_db": docs_count,
+                        "total_chunks_in_db": chunks_count,
+                        "seconds": round(time.perf_counter() - started, 2),
+                    },
+                )
+        except Exception as exc:
+            yield sse("error", {"message": str(exc)})
+
+    return StreamingResponse(events(), media_type="text/event-stream")
 
 
 # --- batch conversion -----------------------------------------------------------
