@@ -1,5 +1,5 @@
 @startuml system-diagram-simple
-title Docling Studio — Architecture (simplified)
+title Docling Studio — System Architecture (simplified)
 
 skinparam backgroundColor #FFFFFF
 skinparam defaultTextAlignment center
@@ -15,41 +15,53 @@ skinparam cloud {
   FontColor #FFFFFF
   BorderColor #111111
 }
-skinparam package {
-  BorderColor #888888
-  FontStyle bold
+skinparam database {
+  BorderColor #666666
 }
 skinparam ArrowColor #444444
 
-actor "User / Browser" as User
-rectangle "Web UI\nExtract · Ask pages" as UI
+actor "User" as User
 
-package "FastAPI app.py · :8000" {
-  rectangle "API routes\nupload · convert · embed · ask" as API
-  rectangle "Converter\nDocling · OCR · Mermaid flows" as Converter
-  rectangle "RAG\nchunk · hybrid search · prompt" as RAG
-}
+rectangle "Web UI\nExtract · Ask · Graph" as UI
+rectangle "FastAPI\napp.py · :8000" as API
+rectangle "Converter\nDocling · OCR · CV · VLM" as CONV
+rectangle "RAG engine\nchunk · hybrid search · answer" as RAG
+rectangle "Graph engine\nregex extract · BFS · 2-hop" as KG
 
-database "Markdown files\nknowledge_base/" as Files
-database "PostgreSQL + pgvector" as PG
-cloud "Cohere Embed" as Cohere
-cloud "Anthropic Claude" as Claude
+database "Markdown corpus\npkg/markdown · knowledge_base" as FILES
+database "PostgreSQL\npgvector · full-text" as PG
+database "knowledge_graph.json" as KGJSON
+
+rectangle "Ollama\nbge-m3 · local · 1024-d" as OLLAMA
+
+cloud "Anthropic Claude\nclaude-opus-5" as CLAUDE
 
 User -down-> UI : HTTPS
 UI -down-> API : REST · SSE
-API -down-> Converter : convert
-API -down-> Files : output.md
-API -down-> RAG : embed / ask
-RAG -down-> Files : read .md
-RAG -down-> Cohere : embeddings
-RAG -down-> PG : vectors + BM25
-RAG -down-> Claude : top-k excerpts
+API -right-> CONV : convert(src)
+CONV -down-> FILES : output.md
 
-note bottom of Claude
-  Omitted: preview renderer, image
-  readers, local Qwen3-VL and optional
-  GPT/Claude vision. Full view:
-  system-diagram.png
+API -down-> RAG : embed · ask
+API -down-> KG : query_graph()
+
+RAG -down-> FILES : read .md
+RAG -down-> OLLAMA : embed (local)
+RAG -down-> PG : store · search
+RAG -down-> CLAUDE : excerpts → answer
+
+KG -down-> FILES : read .md · regex
+KG -down-> KGJSON : cache
+
+note bottom of FILES
+  Both engines read the SAME Markdown corpus
+  and never call each other.
+end note
+
+note bottom of CLAUDE
+  Omitted here: preview rendering, the individual
+  image readers (Tesseract · table_cv · flow_cv ·
+  Qwen3-VL), md_chunker, and the optional cloud
+  vision provider. Full view: system-diagram.png
 end note
 
 @enduml

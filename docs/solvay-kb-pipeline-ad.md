@@ -5,13 +5,16 @@ to finish. The diagram for this walkthrough is
 [`system-workflow-simple.png`](system-workflow-simple.png). The full step-by-step
 sequence is in [`system-workflow.png`](system-workflow.png).
 
-The pipeline has three stages:
+The pipeline has four stages:
 
 1. **Upload and convert:** turn the document into plain text (Markdown).
 2. **Chunk, embed, store:** cut the text into small pieces and save them in a
    searchable database.
 3. **Ask:** find the pieces that match a question and have an AI write the answer
    from them.
+4. **Ask the graph:** answer a different kind of question — how things connect —
+   by reading the *same* Markdown files into a knowledge graph and walking it.
+   This stage uses no AI and no database.
 
 ---
 
@@ -80,11 +83,16 @@ is skipped.
 ### Step 4: Each chunk is turned into a vector (embedding)
 
 Each chunk, with its title and headings in front, is sent to an embedding model.
-The model returns a **vector**: a list of 1,536 numbers that represents what the
+The model returns a **vector**: a list of 1,024 numbers that represents what the
 chunk means. Chunks with similar meaning get similar vectors, which is what makes
 search by meaning possible later.
 
-**Technologies:** Cohere Embed (`embed-v4.0` model, over the internet with an API key)
+The model runs **on the same machine as the app**, so chunk text is never sent
+anywhere to be embedded. (This replaced Cohere `embed-v4.0`, which returned 1,536
+numbers per chunk and required sending the text over the internet.)
+
+**Technologies:** Ollama serving the `bge-m3` model on `localhost:11434`, 1,024
+dimensions, in batches of 32
 
 ### Step 5: Chunks and vectors are stored in the database
 
@@ -115,10 +123,10 @@ the browser)
 
 ### Step 7: The question is turned into a vector
 
-The question is sent to the same embedding model used for the chunks, so the
+The question is sent to the same local embedding model used for the chunks, so the
 question and the chunks can be compared.
 
-**Technologies:** Cohere Embed (`embed-v4.0`)
+**Technologies:** Ollama `bge-m3` (local)
 
 ### Step 8: The database finds the most relevant chunks
 
@@ -160,6 +168,84 @@ it came from: the document, the section, and how each search ranked it.
 
 ---
 
+## Stage 4: Ask the graph
+
+Stages 2 and 3 answer questions about what a document *says*. Some questions are about
+how things *connect*: *"How does eCommerce reach S/4HANA?"*, *"Which specifications
+touch Salesforce?"*, *"What sits under BPML process O-020-090?"*. Those are answered by
+a second engine that reads the **same Markdown files** and shares nothing else with the
+first — no vectors, no database, and no AI.
+
+### Step 11: The graph is built from the same Markdown
+
+Every `.md` file is scanned with pattern matching, and four kinds of thing are pulled
+out and joined up:
+
+- **Business streams** — L2C (Lead to Cash), I2D (Idea to Delivery), R2R (Record to
+  Report) and P2P (Procure to Pay). A document belongs to a stream when the stream's
+  code appears in its filename or near the top of its text.
+- **Core systems** — SAP S/4HANA, SAP ECC, Salesforce, SOVOS, SAP Fiori and
+  Solvay@eCommerce. A document is linked to a system when it mentions it.
+- **BPML process codes** — patterns like `O-020-090` or `M-090-030-010`. Each code
+  becomes a node, and its parent code is worked out from the code itself, so the
+  process hierarchy builds itself.
+- **SPARK tickets** — patterns like `SPARK-21999`. A ticket found in a document's
+  *filename* is treated as that document's primary specification; a ticket found only
+  in the body is a reference.
+
+The result is a graph of **720 entities joined by 842 relationships** (4 streams,
+6 systems, 83 documents, 79 processes, 548 specifications). It is saved to
+`knowledge_graph.json` so it doesn't have to be rebuilt on every question.
+
+**Technologies:** Python regular expressions and a hand-written list of streams and
+systems. No AI model, no database.
+
+### Step 12: The question is matched to the graph
+
+The question is read for its shape, not its meaning:
+
+- *"How does X connect to Y"*, *"path between X and Y"*, *"X to Y"* → a **path**
+  question.
+- *"What specs are linked to X"*, *"processes in L2C"* → a **neighbourhood** question,
+  with the kind of thing wanted (specs, processes, documents) taken from the wording.
+
+The names in the question are then matched to entities in the graph, exactly first and
+by partial match second.
+
+**Technologies:** Python regular expressions
+
+### Step 13: The graph is walked
+
+- For a **path** question, the engine does a breadth-first search across the graph and
+  returns the shortest route, hop by hop, with the name of each relationship along the
+  way — for example `Solvay@eCommerce` → *(interface spec document)* → `SAP S/4HANA`.
+- For a **neighbourhood** question, it expands **two hops**, not one. A platform like
+  Salesforce is usually separated from a concrete ticket by a specification document,
+  so a one-hop search would return only the document. The second hop reaches the
+  tickets themselves, and everything unrelated is pruned away.
+
+Both take a few milliseconds, because the whole graph is already in memory.
+
+**Technologies:** breadth-first search over an in-memory adjacency list (`Python`)
+
+### Step 14: The answer is written and drawn
+
+The answer is assembled **from the graph itself**, not generated: the direct answer, the
+integration path step by step, the systems and streams involved with what each one does,
+the SPARK tickets, the BPML processes, and the source documents each fact came from.
+
+At the same time, the matching part of the graph lights up on screen: matched entities
+glow, everything else fades to near-invisible, and the view pans and zooms to frame the
+answer.
+
+Because nothing is generated, the answer can never invent a system or a ticket that
+isn't in the documents. The flip side is that it is only as good as the patterns used in
+Step 11 — a document that merely mentions "ECC" in passing still gets linked to it.
+
+**Technologies:** Python (text assembly) · D3 force-directed canvas in the browser
+
+---
+
 ## Summary
 
 | Step | What happens | Technologies |
@@ -167,15 +253,20 @@ it came from: the document, the section, and how each search ranked it.
 | 1 | Upload the document | React, FastAPI, LibreOffice, pdftoppm |
 | 2 | Convert it to Markdown | Docling, Tesseract, OpenCV, Claude for dense pictures (optional; GPT or Qwen3-VL also available) |
 | 3 | Split the Markdown into chunks | Python (`md_chunker.py`) |
-| 4 | Turn each chunk into a vector | Cohere Embed `embed-v4.0` |
+| 4 | Turn each chunk into a vector | Ollama `bge-m3` (local, 1,024-d) |
 | 5 | Store chunks and vectors | PostgreSQL, pgvector, full-text search |
 | 6 | User asks a question | React, FastAPI, Server-Sent Events |
-| 7 | Turn the question into a vector | Cohere Embed `embed-v4.0` |
+| 7 | Turn the question into a vector | Ollama `bge-m3` (local) |
 | 8 | Find the top 8 chunks | pgvector, BM25 keyword search, reciprocal rank fusion |
 | 9 | Write the answer from those chunks | Anthropic Claude `claude-opus-5` |
 | 10 | Stream the answer back with sources | FastAPI, Server-Sent Events, React |
+| 11 | Build the knowledge graph from the same files | Python regular expressions (no AI, no database) |
+| 12 | Match the question to entities in the graph | Python regular expressions |
+| 13 | Walk the graph (shortest path / 2-hop expansion) | Breadth-first search, in memory |
+| 14 | Write the answer and highlight the subgraph | Python, D3 force-directed canvas |
 
-**What leaves the machine:** the chunk text (when embedding) and the question go to
-Cohere, and the question plus the 8 chunks go to Anthropic. If a cloud vision model
-is used in Step 2, pictures from the document go to Anthropic (or OpenAI) too.
-Everything else, including the database, runs locally.
+**What leaves the machine:** the question plus the 8 chunks go to Anthropic in Step 9.
+If a cloud vision model is used in Step 2, pictures from the document go to Anthropic
+(or OpenAI) too. That is all. Embedding, the database and the whole knowledge-graph
+stage run locally — chunk text no longer leaves the machine, as it did when Cohere
+did the embedding.

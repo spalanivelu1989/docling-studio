@@ -1,0 +1,333 @@
+{
+  "nodes": [
+    {
+      "id": "n0",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "caption": "SPARK_FS_L2C__SPARK-22877_Interface_Salesforce Complaints_docx",
+      "labels": [
+        "Document"
+      ],
+      "properties": {
+        "filename": "SPARK_FS_L2C__SPARK-22877_Interface_Salesforce Complaints_docx.md",
+        "source": "solvay-spark/pkg/markdown/SPARK_FS_L2C__SPARK-22877_Interface_Salesforce Complaints_docx.md",
+        "format": "DOCX",
+        "chars": "52800"
+      },
+      "style": {
+        "node-color": "#F1F5F9",
+        "border-color": "#64748B",
+        "radius": 130
+      }
+    },
+    {
+      "id": "n1",
+      "position": {
+        "x": 0,
+        "y": -420
+      },
+      "caption": "Lead to Cash (L2C)",
+      "labels": [
+        "Stream"
+      ],
+      "properties": {
+        "code": "L2C",
+        "description": "End-to-end sales order management, pricing, billing, logistics, and customer collections."
+      },
+      "style": {
+        "node-color": "#EDE9FE",
+        "border-color": "#8B5CF6",
+        "radius": 100
+      }
+    },
+    {
+      "id": "n2",
+      "position": {
+        "x": -620,
+        "y": -160
+      },
+      "caption": "SPARK-22877",
+      "labels": [
+        "Spec"
+      ],
+      "properties": {
+        "ticket": "SPARK-22877",
+        "is_primary": "True"
+      },
+      "style": {
+        "node-color": "#FFEDD5",
+        "border-color": "#F97316",
+        "radius": 100
+      }
+    },
+    {
+      "id": "n3",
+      "position": {
+        "x": 620,
+        "y": -800
+      },
+      "caption": "Salesforce (CRM)",
+      "labels": [
+        "System"
+      ],
+      "properties": {
+        "code": "Salesforce",
+        "description": "Customer relationship management platform handling customer complaints, accounts, and order intake."
+      },
+      "style": {
+        "node-color": "#E0F2FE",
+        "border-color": "#0284C7",
+        "radius": 100
+      }
+    },
+    {
+      "id": "n4",
+      "position": {
+        "x": 620,
+        "y": -480
+      },
+      "caption": "SAP CPI",
+      "labels": [
+        "System"
+      ],
+      "properties": {
+        "code": "CPI",
+        "description": "Cloud integration middleware brokering interfaces between SAP and third parties."
+      },
+      "style": {
+        "node-color": "#E0F2FE",
+        "border-color": "#0284C7",
+        "radius": 100
+      }
+    },
+    {
+      "id": "n5",
+      "position": {
+        "x": 620,
+        "y": -160
+      },
+      "caption": "SAP ECC",
+      "labels": [
+        "System"
+      ],
+      "properties": {
+        "code": "ECC",
+        "description": "Legacy ERP environment being migrated to SAP S/4HANA under Solvay SPARK."
+      },
+      "style": {
+        "node-color": "#E0F2FE",
+        "border-color": "#0284C7",
+        "radius": 100
+      }
+    },
+    {
+      "id": "n6",
+      "position": {
+        "x": 620,
+        "y": 160
+      },
+      "caption": "M3 (Legacy ERP)",
+      "labels": [
+        "System"
+      ],
+      "properties": {
+        "code": "M3",
+        "description": "Infor M3 ERP used by parts of the business, with order management being retired."
+      },
+      "style": {
+        "node-color": "#E0F2FE",
+        "border-color": "#0284C7",
+        "radius": 100
+      }
+    },
+    {
+      "id": "n7",
+      "position": {
+        "x": -620,
+        "y": 160
+      },
+      "caption": "SPARK-52846",
+      "labels": [
+        "Spec"
+      ],
+      "properties": {
+        "ticket": "SPARK-52846",
+        "is_primary": "False"
+      },
+      "style": {
+        "node-color": "#FFEDD5",
+        "border-color": "#F97316",
+        "radius": 100
+      }
+    },
+    {
+      "id": "n8",
+      "position": {
+        "x": 620,
+        "y": 480
+      },
+      "caption": "SAP S/4HANA",
+      "labels": [
+        "System"
+      ],
+      "properties": {
+        "code": "S4HANA",
+        "description": "Target ERP platform for global sales, billing, master data, and central finance."
+      },
+      "style": {
+        "node-color": "#E0F2FE",
+        "border-color": "#0284C7",
+        "radius": 100
+      }
+    },
+    {
+      "id": "n9",
+      "position": {
+        "x": 620,
+        "y": 800
+      },
+      "caption": "SAP Fiori",
+      "labels": [
+        "System"
+      ],
+      "properties": {
+        "code": "Fiori",
+        "description": "Modern UX role-based applications for custom enhancements and business user dashboards."
+      },
+      "style": {
+        "node-color": "#E0F2FE",
+        "border-color": "#0284C7",
+        "radius": 100
+      }
+    }
+  ],
+  "relationships": [
+    {
+      "id": "r0",
+      "type": "BELONGS_TO",
+      "fromId": "n0",
+      "toId": "n1",
+      "properties": {},
+      "style": {}
+    },
+    {
+      "id": "r1",
+      "type": "IMPLEMENTS_TICKET",
+      "fromId": "n0",
+      "toId": "n2",
+      "properties": {},
+      "style": {}
+    },
+    {
+      "id": "r2",
+      "type": "INTEGRATES_WITH",
+      "fromId": "n0",
+      "toId": "n3",
+      "properties": {},
+      "style": {}
+    },
+    {
+      "id": "r3",
+      "type": "INTEGRATES_WITH",
+      "fromId": "n0",
+      "toId": "n4",
+      "properties": {},
+      "style": {}
+    },
+    {
+      "id": "r4",
+      "type": "INTERACTS_WITH",
+      "fromId": "n0",
+      "toId": "n5",
+      "properties": {},
+      "style": {}
+    },
+    {
+      "id": "r5",
+      "type": "INTERACTS_WITH",
+      "fromId": "n0",
+      "toId": "n6",
+      "properties": {},
+      "style": {}
+    },
+    {
+      "id": "r6",
+      "type": "REFERENCES_TICKET",
+      "fromId": "n0",
+      "toId": "n7",
+      "properties": {},
+      "style": {}
+    },
+    {
+      "id": "r7",
+      "type": "RUNS_ON",
+      "fromId": "n0",
+      "toId": "n8",
+      "properties": {},
+      "style": {}
+    },
+    {
+      "id": "r8",
+      "type": "USES_UI",
+      "fromId": "n0",
+      "toId": "n9",
+      "properties": {},
+      "style": {}
+    }
+  ],
+  "style": {
+    "font-family": "sans-serif",
+    "background-color": "#ffffff",
+    "background-image": "",
+    "background-size": "100%",
+    "node-color": "#ffffff",
+    "border-width": 4,
+    "border-color": "#000000",
+    "radius": 50,
+    "node-padding": 5,
+    "node-margin": 2,
+    "outside-position": "auto",
+    "node-icon-image": "",
+    "node-background-image": "",
+    "icon-position": "inside",
+    "icon-size": 64,
+    "caption-position": "inside",
+    "caption-max-width": 200,
+    "caption-color": "#000000",
+    "caption-font-size": 50,
+    "caption-font-weight": "normal",
+    "label-position": "inside",
+    "label-display": "pill",
+    "label-color": "#000000",
+    "label-background-color": "#ffffff",
+    "label-border-color": "#000000",
+    "label-border-width": 4,
+    "label-font-size": 40,
+    "label-padding": 5,
+    "label-margin": 4,
+    "directionality": "directed",
+    "detail-position": "inline",
+    "detail-orientation": "parallel",
+    "arrow-width": 5,
+    "arrow-color": "#000000",
+    "margin-start": 5,
+    "margin-end": 5,
+    "margin-peer": 20,
+    "attachment-start": "normal",
+    "attachment-end": "normal",
+    "relationship-icon-image": "",
+    "type-color": "#000000",
+    "type-background-color": "#ffffff",
+    "type-border-color": "#000000",
+    "type-border-width": 0,
+    "type-font-size": 16,
+    "type-padding": 5,
+    "property-position": "outside",
+    "property-alignment": "colon",
+    "property-color": "#000000",
+    "property-font-size": 16,
+    "property-font-weight": "normal"
+  }
+}

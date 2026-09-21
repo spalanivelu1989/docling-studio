@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Docling Studio — Document to Answer — ArchFlow Demo</title>
+    <title>Docling Studio — Two Engines, One Corpus — ArchFlow Demo</title>
 
     <!-- Self-contained viewer: no build step, no internet connection required.
      React/ReactDOM/Babel are vendored locally in ./vendor (see skill setup
@@ -1279,16 +1279,16 @@
     "title": "User",
     "sub": "Browser",
     "color": "#6366f1",
-    "desc": "A consultant with project documents (slides, specs, spreadsheets) who wants to ask questions about them."
+    "desc": "A consultant with Solvay SPARK project documents (decks, specs, spreadsheets) who wants to ask questions about them — by meaning, or by structure."
   },
   "UI": {
     "x": 320,
     "y": 340,
     "icon": "🖥️",
     "title": "Web UI",
-    "sub": "Extract · Ask pages",
+    "sub": "Extract · Ask · Graph",
     "color": "#0ea5e9",
-    "desc": "React SPA served by FastAPI. The Extract page uploads, converts and embeds a document; the Ask page streams answers."
+    "desc": "React 19 SPA served by FastAPI. Extract uploads/converts/embeds a document, Ask streams a cited answer, Graph draws the knowledge graph on a D3 force canvas."
   },
   "API": {
     "x": 600,
@@ -1297,43 +1297,52 @@
     "title": "FastAPI",
     "sub": "app.py · :8000",
     "color": "#10b981",
-    "desc": "HTTP API: /api/upload, /api/convert/{id}, /api/docs/{id}/embed and the server-sent-events /api/ask endpoint."
+    "desc": "HTTP API: /api/upload, /api/convert/{id}, /api/docs/{id}/embed, the server-sent-events /api/ask, and /api/graph/data · rebuild · query."
   },
   "FILES": {
     "x": 880,
     "y": 340,
     "icon": "📁",
-    "title": "Workdir files",
-    "sub": "source · output.md",
-    "color": "#64748b",
-    "desc": "Per-upload job folder holding the source file, page previews and output.md; embedded Markdown is copied to knowledge_base/."
+    "title": "Markdown corpus",
+    "sub": "pkg/markdown · knowledge_base",
+    "color": "#f59e0b",
+    "desc": "The 84 converted .md files. This is the shared substrate: rag.py embeds them into Postgres and knowledge_graph.py scans them with regex. Nothing else is shared between the two engines."
   },
   "CONV": {
     "x": 880,
     "y": 124,
-    "icon": "📄",
+    "icon": "🔄",
     "title": "Converter",
     "sub": "converter.py · Docling",
-    "color": "#f59e0b",
-    "desc": "Runs Docling to export Markdown, rebuilds PowerPoint connector flowcharts as Mermaid, and splices image text into placeholders."
+    "color": "#8b5cf6",
+    "desc": "Docling reads the native OOXML/PDF text; spreadsheets take their own openpyxl path; PowerPoint connector shapes are rebuilt as exact Mermaid flowcharts."
   },
   "READ": {
     "x": 1160,
     "y": 124,
-    "icon": "🔍",
+    "icon": "👁️",
     "title": "Image readers",
     "sub": "Tesseract · table/flow CV",
     "color": "#a855f7",
-    "desc": "Reads each embedded picture: Tesseract OCR, ruled-table and flowchart detection, optionally a vision model (Qwen3-VL, GPT, Claude)."
+    "desc": "Every embedded picture is read: Tesseract OCR always, plus OpenCV table and flowchart detection, plus an optional vision model (local Qwen3-VL or cloud GPT/Claude)."
   },
-  "CHUNK": {
-    "x": 600,
+  "KG": {
+    "x": 320,
     "y": 556,
-    "icon": "✂️",
-    "title": "Chunker",
-    "sub": "md_chunker.py",
+    "icon": "🕸️",
+    "title": "Graph engine",
+    "sub": "knowledge_graph.py",
     "color": "#ec4899",
-    "desc": "Splits Markdown by headings into ~500-token chunks (max 1000), splits big tables by row with the header repeated, keeps the heading path."
+    "desc": "Builds a 720-node / 842-edge enterprise graph from the same .md files using regex and a hand-written ontology, then answers by BFS shortest path and 2-hop bridge expansion. No LLM, no database."
+  },
+  "KGJSON": {
+    "x": 320,
+    "y": 772,
+    "icon": "🗂️",
+    "title": "Graph cache",
+    "sub": "knowledge_graph.json",
+    "color": "#f472b6",
+    "desc": "The extracted graph, cached on disk (~410 KB). Loaded on every query; rebuilt only when POST /api/graph/rebuild forces a re-scan of the corpus."
   },
   "RAG": {
     "x": 880,
@@ -1341,37 +1350,45 @@
     "icon": "🧠",
     "title": "RAG engine",
     "sub": "rag.py",
-    "color": "#8b5cf6",
-    "desc": "Indexes chunks (embed + store) and answers questions: embeds the query, runs vector and BM25 search, fuses with RRF, prompts Claude."
+    "color": "#14b8a6",
+    "desc": "Indexes the Markdown into pgvector and answers a question by hybrid retrieval — vector plus BM25, fused with reciprocal rank fusion — then hands the top chunks to Claude."
   },
-  "COHERE": {
-    "x": 1160,
-    "y": 340,
-    "icon": "🧬",
-    "title": "Cohere Embed",
-    "sub": "embed-v4.0 · 1536-d",
-    "color": "#374151",
-    "external": true,
-    "desc": "External embedding API. Chunks are embedded as search_document, questions as search_query, in batches of up to 96."
+  "CHUNK": {
+    "x": 600,
+    "y": 772,
+    "icon": "✂️",
+    "title": "Chunker",
+    "sub": "md_chunker.py",
+    "color": "#06b6d4",
+    "desc": "Splits the Markdown on its headings into ~500-token sections (max 1000), repeating table headers across splits and prefixing every chunk with its document title and heading path."
   },
-  "PG": {
+  "OLLAMA": {
     "x": 1160,
     "y": 556,
+    "icon": "🦙",
+    "title": "Ollama bge-m3",
+    "sub": "local · :11434 · 1024-d",
+    "color": "#84cc16",
+    "desc": "Local embedding daemon. bge-m3 turns chunk text and questions into 1024-dimension vectors in batches of 32. This replaced Cohere embed-v4.0, so text no longer leaves the machine to be embedded."
+  },
+  "PG": {
+    "x": 880,
+    "y": 772,
     "icon": "🐘",
     "title": "PostgreSQL",
     "sub": "pgvector · tsvector",
-    "color": "#0f766e",
-    "desc": "Local Postgres with pgvector. rag_chunks holds content, a vector(1536) with an HNSW cosine index, and a tsvector with a GIN index for BM25."
+    "color": "#3b82f6",
+    "desc": "rag_documents and rag_chunks on :5433. Each chunk carries a vector(1024) indexed with HNSW for cosine search, and a tsvector indexed with GIN for BM25 keyword search."
   },
   "CLAUDE": {
     "x": 1160,
     "y": 772,
-    "icon": "✨",
+    "icon": "🤖",
     "title": "Claude",
     "sub": "claude-opus-5",
-    "color": "#374151",
+    "color": "#f97316",
     "external": true,
-    "desc": "External LLM. Receives only the top-k chunks as numbered excerpts plus the question, and streams back an answer citing [n]."
+    "desc": "Writes the final answer from the numbered excerpts only, citing them as [n], and flags when an answer rests on OCR'd or traced content. It never searches anything itself."
   }
 };
 
@@ -1402,7 +1419,11 @@
     "chat": [
       [
         "UI",
-        "POST /api/upload (multipart)"
+        "POST /api/upload — 18 MB, 144 slides."
+      ],
+      [
+        "API",
+        "Got it. Allocating a doc_id."
       ]
     ]
   },
@@ -1411,16 +1432,16 @@
     "t": "FILES",
     "ph": 0,
     "k": "call",
-    "route": "FastAPI → Workdir files",
-    "m": "Saved as workdir/<doc_id>/source.pptx with name.txt; page previews rendered via LibreOffice + pdftoppm.",
+    "route": "FastAPI → Markdown corpus",
+    "m": "Saved as workdir/<doc_id>/source.pptx with name.txt; LibreOffice renders page previews alongside.",
     "chat": [
       [
         "API",
-        "Saved as source.pptx, doc_id a3f9…"
+        "Saving source.pptx + rendering previews."
       ],
       [
         "FILES",
-        "14 page previews rendered."
+        "Stored. 144 preview PNGs ready."
       ]
     ]
   },
@@ -1433,8 +1454,12 @@
     "m": "The user hits Convert: POST /api/convert/{doc_id}.",
     "chat": [
       [
+        "USER",
+        "Convert it — AI reading on."
+      ],
+      [
         "UI",
-        "POST /api/convert/a3f9…"
+        "POST /api/convert/{doc_id}?vlm=true"
       ]
     ]
   },
@@ -1444,11 +1469,11 @@
     "ph": 1,
     "k": "call",
     "route": "FastAPI → Converter",
-    "m": "app.py calls converter.convert() with a media folder for extracted images.",
+    "m": "app.py calls converter.convert() with a media folder for the extracted pictures.",
     "chat": [
       [
         "API",
-        "convert(source.pptx, media_dir)"
+        "convert(src, use_vlm=True)"
       ]
     ]
   },
@@ -1457,16 +1482,16 @@
     "t": "CONV",
     "ph": 1,
     "k": "work",
-    "route": "Converter (Docling)",
-    "m": "Docling exports the native OOXML text to Markdown; PowerPoint connector shapes become Mermaid flowcharts.",
+    "route": "Converter internal",
+    "m": "Docling exports the native OOXML text to Markdown; PowerPoint connector shapes become exact Mermaid flowcharts.",
     "chat": [
       [
         "CONV",
-        "Docling → Markdown, 9 pictures as <!-- image -->"
+        "Docling export_to_markdown() — headings, lists, tables."
       ],
       [
         "CONV",
-        "3 slides' connectors rebuilt as Mermaid."
+        "9 pictures left as <!-- image --> placeholders."
       ]
     ]
   },
@@ -1475,9 +1500,8 @@
     "t": "CONV",
     "ph": 1,
     "k": "data",
-    "roundTrip": true,
     "route": "Converter ⇄ Image readers",
-    "m": "Each embedded picture is OCR'd; tables and flowcharts in images are detected.",
+    "m": "Each embedded picture is OCR'd; tables and flowcharts inside images are detected.",
     "chat": [
       [
         "CONV",
@@ -1485,9 +1509,10 @@
       ],
       [
         "READ",
-        "OCR text, 2 tables, 1 draft flow."
+        "OCR text, 2 ruled tables, 1 draft flow."
       ]
-    ]
+    ],
+    "roundTrip": true
   },
   {
     "f": "CONV",
@@ -1495,11 +1520,15 @@
     "ph": 1,
     "k": "data",
     "route": "Converter → FastAPI",
-    "m": "Image text is spliced into the placeholders; the Markdown is returned and written to output.md.",
+    "m": "Image text is spliced into the placeholders and the Markdown is returned with conversion stats.",
     "chat": [
       [
         "CONV",
-        "Markdown ready — image text spliced in."
+        "Spliced into placeholders. Markdown ready."
+      ],
+      [
+        "API",
+        "42 sections, 9 pictures read."
       ]
     ]
   },
@@ -1509,11 +1538,15 @@
     "ph": 1,
     "k": "data",
     "route": "FastAPI → Web UI",
-    "m": "The Markdown and conversion stats are shown side by side with the previews.",
+    "m": "The Markdown and conversion stats are shown next to the page previews, and written to output.md.",
     "chat": [
       [
         "API",
-        "output.md written. Markdown + stats."
+        "output.md written. Here's the Markdown."
+      ],
+      [
+        "UI",
+        "Rendering it beside the original."
       ]
     ]
   },
@@ -1526,8 +1559,12 @@
     "m": "The user hits Embed: POST /api/docs/{doc_id}/embed.",
     "chat": [
       [
+        "USER",
+        "Add it to the knowledge base."
+      ],
+      [
         "UI",
-        "POST /api/docs/a3f9…/embed"
+        "POST /api/docs/{doc_id}/embed"
       ]
     ]
   },
@@ -1537,55 +1574,70 @@
     "ph": 2,
     "k": "call",
     "route": "FastAPI → RAG engine",
-    "m": "output.md is copied to knowledge_base/Workshop_pptx.md and rag.index_file() runs; an unchanged fingerprint would skip the rest.",
+    "m": "output.md is copied to knowledge_base/Workshop_pptx.md and rag.index_file() is called on it.",
     "chat": [
       [
         "API",
         "index_file(knowledge_base/Workshop_pptx.md)"
-      ],
-      [
-        "RAG",
-        "Fingerprint is new — indexing."
       ]
     ]
+  },
+  {
+    "f": "FILES",
+    "t": "RAG",
+    "ph": 2,
+    "k": "data",
+    "route": "RAG engine ⇄ Markdown corpus",
+    "m": "The .md is read and fingerprinted (SHA-256 of the text plus the chunk and embed settings). An unchanged file costs no embedding call.",
+    "chat": [
+      [
+        "RAG",
+        "Read the file — fingerprint unchanged?"
+      ],
+      [
+        "FILES",
+        "New file. Nothing indexed under this path yet."
+      ]
+    ],
+    "roundTrip": true
   },
   {
     "f": "CHUNK",
     "t": "RAG",
     "ph": 2,
     "k": "data",
-    "roundTrip": true,
     "route": "RAG engine ⇄ Chunker",
-    "m": "The Markdown is split into heading-aware chunks, each keeping its title and heading path.",
+    "m": "The Markdown is split into heading-aware chunks, each keeping its document title and heading path.",
     "chat": [
       [
         "RAG",
-        "Chunk this Markdown."
+        "chunk_file() — cut it on the headings."
       ],
       [
         "CHUNK",
-        "42 chunks, ~500 tokens, heading paths kept."
+        "42 chunks, ~500 tokens each, no overlap."
       ]
-    ]
+    ],
+    "roundTrip": true
   },
   {
-    "f": "COHERE",
+    "f": "OLLAMA",
     "t": "RAG",
     "ph": 2,
     "k": "data",
-    "roundTrip": true,
-    "route": "RAG engine ⇄ Cohere Embed",
-    "m": "Title + heading path + content of each chunk is embedded as search_document.",
+    "route": "RAG engine ⇄ Ollama",
+    "m": "Title + heading path + content of each chunk is embedded by bge-m3 on localhost, in batches of 32.",
     "chat": [
       [
         "RAG",
-        "Embed 42 chunks (search_document)."
+        "POST /api/embed — 42 chunks, bge-m3."
       ],
       [
-        "COHERE",
-        "42 × 1536-d vectors."
+        "OLLAMA",
+        "42 vectors, 1024-d. Nothing left the machine."
       ]
-    ]
+    ],
+    "roundTrip": true
   },
   {
     "f": "RAG",
@@ -1593,7 +1645,7 @@
     "ph": 2,
     "k": "call",
     "route": "RAG engine → PostgreSQL",
-    "m": "In one transaction the document row is replaced and every chunk is inserted with its vector and tsvector.",
+    "m": "In one transaction the document row is replaced and every chunk is inserted with its vector and its tsvector.",
     "chat": [
       [
         "RAG",
@@ -1611,11 +1663,15 @@
     "ph": 2,
     "k": "data",
     "route": "RAG engine → FastAPI",
-    "m": "The index result (added, 42 chunks) goes back to the Extract page.",
+    "m": "The index result (added, 42 chunks) goes back to the Extract page, with any duplicate sources flagged.",
     "chat": [
       [
         "RAG",
-        "added: 42 chunks indexed."
+        "added — 42 chunks, 0 duplicates."
+      ],
+      [
+        "API",
+        "Index now holds 84 documents / 4,299 chunks."
       ]
     ]
   },
@@ -1643,7 +1699,11 @@
     "chat": [
       [
         "UI",
-        "POST /api/ask {k: 8, mode: hybrid}"
+        "POST /api/ask — k=8, mode=hybrid."
+      ],
+      [
+        "API",
+        "Opening an SSE stream."
       ]
     ]
   },
@@ -1653,82 +1713,86 @@
     "ph": 3,
     "k": "call",
     "route": "FastAPI → RAG engine",
-    "m": "rag.ask_events() runs the pipeline and yields stage events as it goes.",
+    "m": "rag.ask_events() runs the whole pipeline and yields stage events as each step starts and finishes.",
     "chat": [
       [
         "API",
-        "ask_events(question, k=8)"
+        "ask_events(question, k=8, hybrid)"
       ]
     ]
   },
   {
-    "f": "COHERE",
+    "f": "OLLAMA",
     "t": "RAG",
     "ph": 3,
     "k": "data",
-    "roundTrip": true,
-    "route": "RAG engine ⇄ Cohere Embed",
-    "m": "The question is embedded with input_type search_query.",
+    "route": "RAG engine ⇄ Ollama",
+    "m": "The question is embedded by the same local bge-m3 model, so question and chunks live in the same 1024-d space.",
     "chat": [
       [
         "RAG",
-        "Embed the question (search_query)."
+        "Embed the question — same model as the chunks."
       ],
       [
-        "COHERE",
-        "1536-d query vector."
+        "OLLAMA",
+        "1024-d query vector."
       ]
-    ]
+    ],
+    "roundTrip": true
   },
   {
     "f": "PG",
     "t": "RAG",
     "ph": 3,
     "k": "data",
-    "roundTrip": true,
-    "route": "RAG engine ⇄ PostgreSQL (vector)",
-    "m": "Nearest neighbours by cosine distance over the HNSW index: the 40 chunks closest in meaning.",
+    "route": "RAG engine ⇄ PostgreSQL",
+    "m": "Nearest neighbours by cosine distance over the HNSW index: the top 40 chunks closest in meaning.",
     "chat": [
       [
         "RAG",
-        "ORDER BY embedding <=> q LIMIT 40"
+        "ORDER BY embedding <=> query LIMIT 40"
       ],
       [
         "PG",
         "40 candidates, best similarity 0.71."
       ]
-    ]
+    ],
+    "roundTrip": true
   },
   {
     "f": "PG",
     "t": "RAG",
     "ph": 3,
     "k": "data",
-    "roundTrip": true,
-    "route": "RAG engine ⇄ PostgreSQL (BM25)",
-    "m": "BM25 over the tsvector index finds exact terms such as the code 7.1.12.3 that embeddings treat as noise.",
+    "route": "RAG engine ⇄ PostgreSQL",
+    "m": "BM25 over the tsvector index finds exact terms such as the code 7.1.12.3, which the embedding treats as noise.",
     "chat": [
       [
         "RAG",
-        "BM25 for: 7.1.12.3, validat"
+        "BM25 over the full-text index — keep codes whole."
       ],
       [
         "PG",
-        "40 keyword matches."
+        "40 matches. '7.1.12.3' appears in 6 chunks."
       ]
-    ]
+    ],
+    "roundTrip": true
   },
   {
     "f": "RAG",
     "t": "RAG",
     "ph": 3,
     "k": "work",
-    "route": "RAG engine (fusion)",
-    "m": "Reciprocal rank fusion (1 / (60 + rank)) merges both lists and keeps the top k = 8.",
+    "route": "RAG engine internal",
+    "m": "Reciprocal rank fusion (score = 1 / (60 + rank)) merges both rankings and keeps the best 8 chunks.",
     "chat": [
       [
         "RAG",
-        "RRF → top 8 chunks, 5 found by both searches."
+        "Fusing both rankings — 5 chunks found by both."
+      ],
+      [
+        "RAG",
+        "Top 8 excerpts from 3 documents."
       ]
     ]
   },
@@ -1737,19 +1801,19 @@
     "t": "RAG",
     "ph": 4,
     "k": "data",
-    "roundTrip": true,
     "route": "RAG engine ⇄ Claude",
-    "m": "Eight numbered <excerpt> blocks plus the question go to Claude, which answers only from them, citing [n].",
+    "m": "Eight numbered <excerpt> blocks plus the question go to Claude, which is told to answer only from them and cite [n].",
     "chat": [
       [
         "RAG",
-        "8 excerpts + question. Cite by [n]."
+        "8 excerpts + the question. Answer only from these."
       ],
       [
         "CLAUDE",
-        "It was validated by … [2][5]"
+        "Streaming. [3] names the validator."
       ]
-    ]
+    ],
+    "roundTrip": true
   },
   {
     "f": "RAG",
@@ -1757,11 +1821,11 @@
     "ph": 4,
     "k": "data",
     "route": "RAG engine → FastAPI",
-    "m": "Sources, stage updates and answer tokens are yielded as events.",
+    "m": "Sources, stage updates and answer tokens are yielded as events while Claude is still writing.",
     "chat": [
       [
         "RAG",
-        "sources · token · token · done"
+        "sources · stage · token events"
       ]
     ]
   },
@@ -1771,11 +1835,15 @@
     "ph": 4,
     "k": "data",
     "route": "FastAPI → Web UI",
-    "m": "Events are streamed to the browser as SSE while Claude is still writing.",
+    "m": "Events are streamed to the browser as SSE, so the answer appears word by word.",
     "chat": [
       [
         "API",
-        "event: token — streaming…"
+        "event: token — streaming to the browser."
+      ],
+      [
+        "UI",
+        "Rendering as it arrives."
       ]
     ]
   },
@@ -1785,15 +1853,175 @@
     "ph": 4,
     "k": "data",
     "route": "Web UI → User",
-    "m": "The answer appears with [n] citations and a sources panel showing each chunk's vector and keyword rank.",
+    "m": "The answer appears with [n] citations and a sources panel showing how each search ranked every chunk.",
     "chat": [
       [
         "UI",
-        "Answer with [2][5] + 8 sources."
+        "Answer with [n] citations + 8 sources."
       ],
       [
         "USER",
-        "Found it — with the slide it came from."
+        "And it flagged that [3] came from OCR. Good."
+      ]
+    ]
+  },
+  {
+    "f": "USER",
+    "t": "UI",
+    "ph": 5,
+    "k": "call",
+    "route": "User → Web UI",
+    "m": "The user switches to the Graph tab and asks a structural question instead.",
+    "chat": [
+      [
+        "USER",
+        "How does eCommerce connect to S/4HANA?"
+      ]
+    ]
+  },
+  {
+    "f": "UI",
+    "t": "API",
+    "ph": 5,
+    "k": "call",
+    "route": "Web UI → FastAPI",
+    "m": "POST /api/graph/query — a different endpoint entirely; no vectors and no SSE are involved.",
+    "chat": [
+      [
+        "UI",
+        "POST /api/graph/query"
+      ],
+      [
+        "API",
+        "This one doesn't touch the index at all."
+      ]
+    ]
+  },
+  {
+    "f": "API",
+    "t": "KG",
+    "ph": 5,
+    "k": "call",
+    "route": "FastAPI → Graph engine",
+    "m": "knowledge_graph.query_graph() parses the intent: 'how does X connect to Y' is a path query.",
+    "chat": [
+      [
+        "API",
+        "query_graph('How does eCommerce connect to S/4HANA?')"
+      ],
+      [
+        "KG",
+        "Path intent. Resolving both ends to nodes."
+      ]
+    ]
+  },
+  {
+    "f": "KGJSON",
+    "t": "KG",
+    "ph": 5,
+    "k": "data",
+    "route": "Graph engine ⇄ Graph cache",
+    "m": "The extracted graph is loaded from its JSON cache rather than rebuilt.",
+    "chat": [
+      [
+        "KG",
+        "Load the cached graph."
+      ],
+      [
+        "KGJSON",
+        "720 nodes, 842 edges — 4 streams, 6 systems, 83 docs."
+      ]
+    ],
+    "roundTrip": true
+  },
+  {
+    "f": "FILES",
+    "t": "KG",
+    "ph": 5,
+    "k": "data",
+    "route": "Graph engine ⇄ Markdown corpus",
+    "m": "On a rebuild the engine re-scans the SAME .md files with regex: streams, systems, BPML codes and SPARK tickets. This is the only thing the two engines share.",
+    "chat": [
+      [
+        "KG",
+        "On rebuild: re-scan every .md with regex."
+      ],
+      [
+        "FILES",
+        "Same 84 files rag.py embedded. One corpus, two readings."
+      ]
+    ],
+    "roundTrip": true
+  },
+  {
+    "f": "KG",
+    "t": "KG",
+    "ph": 5,
+    "k": "work",
+    "route": "Graph engine internal",
+    "m": "Breadth-first search over an undirected adjacency list finds the shortest path; a 2-hop bridge expansion pulls in the specs behind it.",
+    "chat": [
+      [
+        "KG",
+        "BFS over the adjacency list — no Cypher, no SQL."
+      ],
+      [
+        "KG",
+        "3 hops via an interface spec document."
+      ]
+    ]
+  },
+  {
+    "f": "KG",
+    "t": "API",
+    "ph": 5,
+    "k": "data",
+    "route": "Graph engine → FastAPI",
+    "m": "A templated Markdown answer plus the matched node and edge ids come back. Nothing was generated by a model.",
+    "chat": [
+      [
+        "KG",
+        "Path + templated answer. No LLM in this path."
+      ],
+      [
+        "API",
+        "node_ids, edge_ids, hop-by-hop steps."
+      ]
+    ]
+  },
+  {
+    "f": "API",
+    "t": "UI",
+    "ph": 5,
+    "k": "data",
+    "route": "FastAPI → Web UI",
+    "m": "The subgraph payload reaches the D3 canvas, which glows the matched nodes and dims everything else to 0.12.",
+    "chat": [
+      [
+        "API",
+        "Subgraph payload — 11 nodes, 10 edges."
+      ],
+      [
+        "UI",
+        "Framing it: pan and zoom onto the match."
+      ]
+    ]
+  },
+  {
+    "f": "UI",
+    "t": "USER",
+    "ph": 5,
+    "k": "data",
+    "route": "Web UI → User",
+    "m": "The integration path is shown hop by hop, cited to the source documents it was extracted from.",
+    "chat": [
+      [
+        "UI",
+        "eCommerce → spec doc → S/4HANA, 3 hops."
+      ],
+      [
+        "USER",
+        "Two questions, two engines, one set of files."
       ]
     ]
   }
@@ -1804,7 +2032,8 @@
   "2 · Convert to Markdown",
   "3 · Chunk, embed & store",
   "4 · Retrieve the top-k chunks",
-  "5 · Generate the cited answer"
+  "5 · Generate the cited answer",
+  "6 · Traverse the knowledge graph"
 ];
 
       function buildPath(f, t) {
@@ -1849,7 +2078,7 @@
         return { routes, stepIdxs };
       }
 
-      const BIDIRECTIONAL = new Set(["CONV|READ", "CHUNK|RAG", "COHERE|RAG", "PG|RAG", "CLAUDE|RAG"]);
+      const BIDIRECTIONAL = new Set(["CONV|READ", "FILES|RAG", "CHUNK|RAG", "OLLAMA|RAG", "PG|RAG", "CLAUDE|RAG", "KG|KGJSON", "FILES|KG"]);
 
       // Short text drawn on each connection — the protocol or payload that
       // crosses it ("HTTP POST /orders", "publishes OrderPaid"). Keyed by
@@ -1859,14 +2088,18 @@
       const LINK_LABELS = {
   "UI|USER": "HTTPS",
   "API|UI": "REST · SSE",
-  "API|FILES": "workdir/<doc_id>",
+  "API|FILES": "writes .md",
   "API|CONV": "convert()",
   "CONV|READ": "pictures → text",
   "API|RAG": "index · ask_events",
+  "FILES|RAG": "read .md",
   "CHUNK|RAG": "chunk_file()",
-  "COHERE|RAG": "HTTPS embed",
+  "OLLAMA|RAG": "HTTP · :11434",
   "PG|RAG": "SQL · pgvector",
-  "CLAUDE|RAG": "HTTPS stream"
+  "CLAUDE|RAG": "HTTPS stream",
+  "API|KG": "query_graph()",
+  "FILES|KG": "read .md · regex",
+  "KG|KGJSON": "cached graph"
 };
 
       // Free-text notes pinned under a card — the caveats a diagram can't
@@ -1874,32 +2107,43 @@
       // Usually {} at generation time: this is the viewer's own margin, and
       // the per-node `desc` already carries the description the inspector
       // shows. Keyed by node id.
-      const NODE_NOTES = {};
+      const NODE_NOTES = {
+  "OLLAMA": "replaced Cohere embed-v4.0 · 1536-d"
+};
 
       // Named boxes drawn around a set of cards — the deployment or ownership
       // boundaries the diagram has but the arrows can't show ("AWS VPC",
       // "Payments team", "Runs on-prem"). Authored per demo; viewers can draw
       // their own by selecting cards and hitting ▣ Group. [] is fine when the
       // architecture has no boundary worth boxing.
-      const GROUPS = [];
+      const GROUPS = [
+  {
+    "name": "Graph engine — no LLM, no SQL",
+    "members": [
+      "KG",
+      "KGJSON"
+    ],
+    "tone": 0
+  }
+];
 
       // OPTIONAL persistence-save flourish. Set DB_INGEST_TO to null to disable.
       const DB_INGEST_FROM = "RAG";
       const DB_INGEST_TO = "PG";
       const DB_INGEST_ICON = "🧠 ➔ 🐘";
       const DB_INGEST_TITLE = "Storing chunks in pgvector...";
-      const DB_INGEST_FILES = [{ name: "rag_documents: Workshop_pptx.md", size: "1 row" }, { name: "rag_chunks: content + heading_path", size: "42 rows" }, { name: "embedding vector(1536)", size: "42 × 6 KB" }, { name: "tsv tsvector (BM25)", size: "42 rows" }];
-      const DB_INGEST_CONSOLE_X = 640;
-      const DB_INGEST_CONSOLE_Y = 700;
+      const DB_INGEST_FILES = [{ name: "rag_documents: Workshop_pptx.md", size: "1 row" }, { name: "rag_chunks: content + heading_path", size: "42 rows" }, { name: "embedding vector(1024) — bge-m3", size: "42 \u00d7 4 KB" }, { name: "tsv tsvector (BM25)", size: "42 rows" }];
+      const DB_INGEST_CONSOLE_X = 60;
+      const DB_INGEST_CONSOLE_Y = 50;
       const DB_INGEST_PARTICLE_PATH = {
-        startX: 1060,
-        startY: 594,
-        endX: 1160,
-        endY: 594,
+        startX: 970,
+        startY: 645,
+        endX: 970,
+        endY: 760,
       };
 
-      const TITLE = "Docling Studio — Document to Answer";
-      const SUBTITLE = "Upload → Markdown → chunks in pgvector → hybrid retrieval → Claude answers from the top-k excerpts";
+      const TITLE = "Docling Studio — Two Engines, One Corpus";
+      const SUBTITLE = "One upload, indexed and answered two ways: hybrid RAG with Claude, and knowledge-graph traversal with neither.";
 
       // Dragged node positions persist per demo (keyed by TITLE) so a
       // decluttered layout survives reloads — but only once the viewer
@@ -1917,7 +2161,7 @@
       // bumped whenever that happens, which retires every previously saved
       // layout in every profile — otherwise a stale localStorage entry would
       // keep overriding the freshly baked one.
-      const LAYOUT_STAMP = "v1";
+      const LAYOUT_STAMP = "v2";
       const LAYOUT_KEY = 'archflow-layout:' + TITLE;
       (function loadLayout() {
         try {
@@ -3944,7 +4188,7 @@
                 <span><i className="dot" style={{ background: '#374151', border: '1px dashed #94a3b8' }}></i> external system</span>
                 <span><i className="dot" style={{ background: '#ef4444' }}></i> click a link to remove it</span>
               </div>
-              <p className="footer-note">Claude never searches the database. <b>rag.py does the retrieval</b>: it embeds the question with Cohere, runs <b>vector search and BM25 keyword search</b> against the same <code>rag_chunks</code> table in Postgres, fuses the two rankings with reciprocal rank fusion, and sends Claude <b>only the top-k chunks</b> as numbered excerpts to cite. Keyword search is what finds exact codes like 7.1.12.3 that embeddings treat as noise.</p>
+              One upload, two ways to ask. <b>rag.py</b> chunks the Markdown, embeds it with <b>Ollama bge-m3 on localhost</b> (1024-d, replacing Cohere embed-v4.0 — chunk text no longer leaves the machine), and answers by fusing a vector search and a BM25 keyword search over the same Postgres table, handing Claude only the top 8 excerpts to cite. <b>knowledge_graph.py</b> reads the <b>same .md files</b> with regex, builds a 720-node graph, and answers by traversing it — no embedding, no database, no model. The two engines share nothing but the corpus on disk.
             </footer>
           </div>
         );

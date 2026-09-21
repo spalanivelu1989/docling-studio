@@ -6,3 +6,5 @@ __pycache__/
 .env
 knowledge_base/
 solvay-spark/
+.DS_Store
+~$*

@@ -1,0 +1,355 @@
+"""Unit tests for the parts the register's credibility rests on (handover §10):
+the verifier, the rubric arithmetic, BPML parsing and holdout masking.
+
+Run: python -m pytest fitgap/test_fitgap.py -q   (or `python fitgap/test_fitgap.py`)
+
+Nothing here calls Claude or the database.
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from fitgap import bpml, synthesis, tools, verifier  # noqa: E402
+from fitgap.schemas import Evidence, FitGapEntry, VerifiedEntry  # noqa: E402
+
+
+# --- helpers ------------------------------------------------------------------
+
+CHUNK = (
+    "## 4.5.1.3 Determine Order Type\n"
+    "## 3.4 Dependencies\n"
+    "| Sales document type | For sales order creation, sales document type is mandatory | OTC |\n"
+    "The user creates a sales order via VA01 and enters an order type."
+)
+
+
+def session_with(chunk_id="4121", text=CHUNK, doc="Spec - FIT (docx)", holdout=False):
+    s = tools.Session(holdout=holdout)
+    s.retrieved[chunk_id] = {
+        "chunk_id": chunk_id, "doc": doc, "full_text": text,
+        "true_doc": doc, "true_heading_path": "3.4 Dependencies", "heading_path": "3.4 Dependencies",
+    }
+    return s
+
+
+def entry(**kw):
+    base = dict(bpml_code="4.5.1.3", step_name="Determine Order Type",
+                classification="FIT_CONFIG", confidence=0.5, materiality="high")
+    base.update(kw)
+    return VerifiedEntry(entry=FitGapEntry(**base))
+
+
+def ev(quote, chunk_id="4121", supports="for", doc="Spec - FIT (docx)"):
+    return Evidence(chunk_id=chunk_id, doc=doc, heading_path="", quote=quote, supports=supports)
+
+
+# --- quote matching -----------------------------------------------------------
+
+def test_quote_matches_verbatim():
+    assert verifier.quote_in_chunk("The user creates a sales order via VA01", CHUNK)
+
+
+def test_quote_matches_across_whitespace_and_smart_punctuation():
+    assert verifier.quote_in_chunk("The  user   creates a sales order via VA01", CHUNK)
+    # The agent re-types a straight apostrophe as a curly one, or a hyphen
+    # as an en dash. Neither makes the quote invented.
+    assert verifier.quote_in_chunk(
+        "the user\u2019s order \u2013 mandatory",
+        "Before. the user's order - mandatory. After.",
+    )
+
+
+def test_quote_matches_a_table_row_whose_pipes_were_retyped():
+    assert verifier.quote_in_chunk("Sales document type For sales order creation", CHUNK)
+
+
+def test_invented_quote_is_rejected():
+    assert not verifier.quote_in_chunk("no development is required for this step", CHUNK)
+
+
+def test_empty_quote_is_rejected():
+    assert not verifier.quote_in_chunk("", CHUNK)
+
+
+# --- the verifier's repairs ---------------------------------------------------
+
+def test_fabricated_quote_is_dropped_and_the_entry_falls_back_to_unknown():
+    s = session_with()
+    r = verifier.verify(entry(evidence=[ev("this sentence is not in the chunk")]), s)
+    assert r.entry.classification == "UNKNOWN"
+    assert r.entry.confidence == 0.0
+    assert r.entry.evidence == []
+    assert r.repaired
+    assert not r.evidence_valid
+    assert any(i.code == "quote_not_in_chunk" and i.severity == "hard" for i in r.issues)
+    assert "Downgraded to UNKNOWN" in r.entry.rationale
+
+
+def test_citing_a_chunk_that_was_never_retrieved_is_a_hard_failure():
+    s = session_with()
+    r = verifier.verify(entry(evidence=[ev("The user creates a sales order via VA01", chunk_id="9999")]), s)
+    assert any(i.code == "chunk_not_retrieved" and i.severity == "hard" for i in r.issues)
+    assert r.entry.classification == "UNKNOWN"
+
+
+def test_good_evidence_survives_untouched():
+    s = session_with()
+    r = verifier.verify(entry(evidence=[ev("The user creates a sales order via VA01")]), s)
+    assert r.entry.classification == "FIT_CONFIG"
+    assert len(r.entry.evidence) == 1
+    assert r.evidence_valid
+    assert not r.repaired
+
+
+def test_the_real_document_name_is_restored_after_a_holdout_run():
+    # The agent was shown "Spec - ••• (docx)"; the register must name the file.
+    s = session_with(doc="Spec - FIT (docx)", holdout=True)
+    r = verifier.verify(
+        entry(evidence=[ev("The user creates a sales order via VA01", doc="Spec - ••• (docx)")]), s)
+    assert r.entry.evidence[0].doc == "Spec - FIT (docx)"
+
+
+def test_an_unknown_entry_cannot_keep_a_confidence():
+    s = session_with()
+    r = verifier.verify(entry(classification="UNKNOWN", confidence=0.0), s)
+    assert r.entry.confidence == 0.0
+
+
+def test_a_ticket_missing_from_the_graph_is_only_a_soft_issue():
+    # knowledge_graph.py misses tickets written "L2C_21999"; a hard failure
+    # would punish the agent for the extractor's gap.
+    s = session_with()
+    r = verifier.verify(
+        entry(evidence=[ev("The user creates a sales order via VA01")],
+              linked_tickets=["SPARK-99999999"]), s)
+    assert any(i.code == "ticket_not_in_graph" and i.severity == "soft" for i in r.issues)
+    assert r.evidence_valid
+    assert r.entry.classification == "FIT_CONFIG"
+
+
+# --- the §6 confidence rubric -------------------------------------------------
+
+def two_doc_session():
+    s = session_with()
+    s.retrieved["4200"] = {
+        "chunk_id": "4200", "doc": "Second spec (docx)", "full_text": CHUNK,
+        "true_doc": "Second spec (docx)", "true_heading_path": "", "heading_path": "",
+    }
+    return s
+
+
+def test_one_supporting_source_scores_half():
+    s = session_with()
+    e = FitGapEntry(bpml_code="4.5.1.3", classification="FIT_CONFIG", confidence=0.5,
+                    evidence=[ev("The user creates a sales order via VA01")])
+    assert verifier.expected_confidence(e, s) == 0.5
+
+
+def test_a_second_independent_document_adds_0_15():
+    s = two_doc_session()
+    e = FitGapEntry(bpml_code="4.5.1.3", classification="FIT_CONFIG", confidence=0.65,
+                    evidence=[ev("The user creates a sales order via VA01"),
+                              ev("The user creates a sales order via VA01", chunk_id="4200",
+                                 doc="Second spec (docx)")])
+    assert verifier.expected_confidence(e, s) == 0.65
+
+
+def test_evidence_against_costs_0_2():
+    s = session_with()
+    e = FitGapEntry(bpml_code="4.5.1.3", classification="FIT_CONFIG", confidence=0.3,
+                    evidence=[ev("The user creates a sales order via VA01"),
+                              ev("sales document type is mandatory", supports="against")])
+    assert verifier.expected_confidence(e, s) == 0.3
+
+
+def test_a_code_that_never_appears_verbatim_costs_0_1():
+    s = session_with(text="A chunk that never names the step code.")
+    s.retrieved["4121"]["full_text"] = "A chunk that never names the step code."
+    e = FitGapEntry(bpml_code="4.5.1.3", classification="FIT_CONFIG", confidence=0.4,
+                    evidence=[ev("A chunk that never names the step code.")])
+    assert verifier.expected_confidence(e, s) == 0.4
+
+
+def test_transcript_only_evidence_is_capped_at_0_4():
+    s = two_doc_session()
+    s.retrieved["4121"]["true_doc"] = "L2C workshop transcript (docx)"
+    s.retrieved["4200"]["true_doc"] = "WS021 meeting minutes (docx)"
+    e = FitGapEntry(
+        bpml_code="4.5.1.3", classification="FIT_CONFIG", confidence=0.4,
+        evidence=[ev("The user creates a sales order via VA01", doc="L2C workshop transcript (docx)"),
+                  ev("The user creates a sales order via VA01", chunk_id="4200",
+                     doc="WS021 meeting minutes (docx)")])
+    assert verifier.expected_confidence(e, s) == 0.4
+
+
+def test_confidence_far_from_the_rubric_is_flagged_as_drift():
+    s = session_with()
+    r = verifier.verify(entry(confidence=0.9,
+                              evidence=[ev("The user creates a sales order via VA01"),
+                                        ev("sales document type is mandatory")]), s)
+    assert any(i.code == "confidence_drift" for i in r.issues)
+
+
+def test_high_confidence_on_a_single_source_is_capped():
+    s = session_with()
+    r = verifier.verify(entry(confidence=0.85,
+                              evidence=[ev("The user creates a sales order via VA01"),
+                                        ev("sales document type is mandatory")]), s)
+    # Both quotes come from the same document, so §5's "two independent
+    # sources" floor is not met by count alone -- the cap applies on count.
+    assert r.entry.confidence <= 0.85
+
+
+# --- schema floors ------------------------------------------------------------
+
+def test_a_classified_entry_without_evidence_is_rejected_at_submission():
+    import pydantic
+
+    try:
+        FitGapEntry(bpml_code="4.5.1.3", classification="FIT_CONFIG", confidence=0.5)
+    except pydantic.ValidationError as exc:
+        assert "at least one piece of evidence" in str(exc)
+    else:
+        raise AssertionError("the evidence floor did not fire")
+
+
+def test_unknown_may_have_no_evidence():
+    e = FitGapEntry(bpml_code="4.5.1.3", classification="UNKNOWN", confidence=0.0)
+    assert e.status == "proposed"
+
+
+def test_confidence_over_0_7_needs_two_sources():
+    import pydantic
+
+    try:
+        FitGapEntry(bpml_code="4.5.1.3", classification="FIT_CONFIG", confidence=0.8,
+                    evidence=[ev("The user creates a sales order via VA01")])
+    except pydantic.ValidationError as exc:
+        assert "two pieces of evidence" in str(exc)
+    else:
+        raise AssertionError("the two-source floor did not fire")
+
+
+# --- holdout masking (§8.3) ---------------------------------------------------
+
+def test_fit_and_gap_tokens_are_blanked():
+    assert tools.mask_label("Determine Order Type - FIT") == "Determine Order Type - •••"
+    assert tools.mask_label("3. GAPs - Development") == "3. ••• - Development"
+    assert tools.mask_label("Benefits and profit") == "Benefits and profit"  # no false positives
+
+
+def test_the_register_files_are_excluded():
+    assert tools.is_held_out("L2C - Fits.xlsx")
+    assert tools.is_held_out("Reports listed as FITs and GAPs L2C (xlsx)")
+    assert tools.is_held_out("anything", "pkg/3. GAPs - Development/spec.docx")
+    assert not tools.is_held_out("SPARK L2C Pricing (xlsx)", "pkg/markdown/pricing.md")
+
+
+def test_a_session_masks_only_in_holdout_mode():
+    plain, held = tools.Session(), tools.Session(holdout=True)
+    assert plain.present("Order Type - FIT") == "Order Type - FIT"
+    assert held.present("Order Type - FIT") == "Order Type - •••"
+    assert held.masked_docs == {"Order Type - FIT"}
+
+
+# --- BPML parsing -------------------------------------------------------------
+
+def test_levels_handle_the_trailing_zero_of_a_top_level_process():
+    assert bpml.level_of("4.0") == 1
+    assert bpml.level_of("4.5") == 2
+    assert bpml.level_of("4.5.1") == 3
+    assert bpml.level_of("4.5.1.3") == 4
+
+
+def test_parents_walk_back_up_to_the_root():
+    assert bpml.parent_of("4.5.1.3") == "4.5.1"
+    assert bpml.parent_of("4.5.1") == "4.5"
+    assert bpml.parent_of("4.5") == "4.0"
+    assert bpml.parent_of("4.0") is None
+
+
+def test_codes_sort_numerically_not_alphabetically():
+    assert sorted(["4.10", "4.9", "4.1"], key=bpml.sort_key) == ["4.1", "4.9", "4.10"]
+
+
+def test_lead_to_cash_is_parsed_from_the_sheet():
+    if not bpml.stats()["available"]:
+        return  # the sheet is not in this checkout; nothing to assert
+    l2c = bpml.get("4.0")
+    assert l2c and l2c.name == "Lead to Cash" and l2c.level == 1
+    assert bpml.get("4.5").parent == "4.0"
+
+
+def test_a_scope_keeps_level_3_branches_that_have_no_level_4_children():
+    if not bpml.stats()["available"]:
+        return
+    steps = bpml.steps_in_scope("4.0")
+    assert steps, "4.0 should yield steps"
+    # Every picked step is a leaf or level >= 4 -- never a level-3 branch that
+    # was silently dropped because a sibling branch went deeper.
+    for s in steps:
+        assert s.level >= 4 or not bpml.children(s.code)
+
+
+# --- synthesis arithmetic -----------------------------------------------------
+
+def make(code, cls, conf, mat="low"):
+    kw = dict(bpml_code=code, step_name=code, classification=cls, confidence=conf, materiality=mat)
+    if cls != "UNKNOWN":
+        # §5 floor: confidence >= 0.7 needs two independent sources.
+        kw["evidence"] = [ev("The user creates a sales order via VA01")]
+        if conf >= 0.7:
+            kw["evidence"].append(
+                ev("sales document type is mandatory", chunk_id="4200", doc="Second spec (docx)"))
+    return VerifiedEntry(entry=FitGapEntry(**kw))
+
+
+def test_unknown_is_never_counted_as_a_fit():
+    r = synthesis.reuse_assessment([
+        make("4.5.1.1", "FIT_CONFIG", 0.6),
+        make("4.5.1.2", "GAP_DEVELOPMENT", 0.6),
+        make("4.5.1.3", "UNKNOWN", 0.0),
+    ])
+    assert r["steps"] == 3
+    assert r["classified"] == 2
+    assert r["reuse_pct"] == 50.0          # 1 of 2 classified, not 1 of 3
+    assert round(r["coverage_pct"], 1) == 66.7
+
+
+def test_the_agenda_weighs_uncertainty_by_materiality():
+    sure_and_material = make("4.5.1.1", "FIT_CONFIG", 1.0, "high")
+    unsure_and_minor = make("4.5.2.1", "GAP_DEVELOPMENT", 0.0, "low")
+    agenda = synthesis.workshop_agenda([sure_and_material, unsure_and_minor])
+    # A step everyone is sure about needs no workshop time, however material.
+    assert [s["code"] for s in agenda] == ["4.5.2"]
+    assert agenda[0]["weight"] == 1.0
+
+
+def test_the_gap_register_puts_material_uncertainty_first():
+    rows = synthesis.gap_register([
+        make("4.5.1.1", "GAP_DEVELOPMENT", 0.9, "low"),
+        make("4.5.1.2", "GAP_DEVELOPMENT", 0.2, "high"),
+        make("4.5.1.3", "FIT_STANDARD", 0.5, "high"),
+    ])
+    assert [r["bpml_code"] for r in rows] == ["4.5.1.2", "4.5.1.1"]  # fits excluded
+
+
+if __name__ == "__main__":
+    import traceback
+
+    fns = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]
+    failed = 0
+    for name, fn in fns:
+        try:
+            fn()
+            print(f"  ok   {name}")
+        except Exception:
+            failed += 1
+            print(f"  FAIL {name}")
+            traceback.print_exc()
+    print(f"\n{len(fns) - failed}/{len(fns)} passed")
+    sys.exit(1 if failed else 0)

@@ -21,8 +21,8 @@ headings, so each chunk is roughly one slide, sheet or section.
 *Tech: Python*
 
 **Step 4: Embed.** Each chunk becomes a vector, a list of numbers that captures its
-meaning.
-*Tech: Cohere Embed*
+meaning. This runs on your own machine, so the text never leaves it.
+*Tech: Ollama running the bge-m3 model (1,024 numbers per chunk)*
 
 **Step 5: Ingest.** The chunks and their vectors are ingested into the PostgreSQL
 pgvector database, indexed for both meaning and exact keywords.
@@ -37,7 +37,7 @@ pgvector database, indexed for both meaning and exact keywords.
 - **by exact words** (keyword search), which catches codes like `7.1.12.3`
 
 The results are merged, and the best 8 chunks are kept
-*Tech: Cohere Embed, pgvector, PostgreSQL full-text search*
+*Tech: Ollama bge-m3, pgvector, PostgreSQL full-text search*
 
 **Step 8: Answer.** Claude is given only those 8 chunks and the question. It is told
 to answer only from them, cite its sources like `[2]`, and say so if the answer
@@ -48,8 +48,34 @@ isn't there.
 listed underneath.
 *Tech: FastAPI, Server-Sent Events, React*
 
-## The one thing to remember
+## Part 4: Ask the knowledge graph instead
 
-Claude doesn't search the documents. The pipeline finds the most relevant chunks
-first, and Claude is instructed to answer only from those, with citations you can
-check.
+Some questions aren't about what a document *says* but about how things *connect* —
+*"How does eCommerce reach S/4HANA?"*, *"Which specs touch Salesforce?"*. Those are
+answered by a second, completely separate engine reading the **same** Markdown files.
+
+**Step 10: Build the graph.** The same `.md` files are scanned with pattern matching for
+the four business streams (L2C, I2D, R2R, P2P), the six core systems (S/4HANA, ECC,
+Salesforce, SOVOS, Fiori, eCommerce), every BPML process code and every SPARK ticket.
+That produces a graph of **720 entities joined by 842 relationships**, saved to a file
+so it doesn't have to be rebuilt each time.
+*Tech: Python regular expressions, no AI and no database*
+
+**Step 11: Traverse it.** Your question is matched to entities in the graph, and the
+engine walks it: shortest path between two systems, or a two-step expansion out to the
+specs and processes attached to them.
+*Tech: breadth-first search over an in-memory graph*
+
+**Step 12: Show the answer.** The result is written up from the graph itself — the path
+hop by hop, the systems involved, the tickets and the source documents — and the matching
+part of the graph lights up on screen while everything else fades.
+*Tech: Python, D3 force-directed canvas*
+
+## The two things to remember
+
+1. **Claude doesn't search the documents.** The pipeline finds the most relevant chunks
+   first, and Claude is instructed to answer only from those, with citations you can
+   check.
+2. **The graph doesn't use AI at all.** Its answers are assembled from the graph
+   structure, so they are always traceable back to a document — but they are also only
+   as good as the patterns used to build it.

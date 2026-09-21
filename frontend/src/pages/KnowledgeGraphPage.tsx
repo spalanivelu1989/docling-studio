@@ -16,6 +16,8 @@ import {
   Typography,
 } from "@mui/material";
 import { alpha, useTheme } from "@mui/material/styles";
+import ModelView from "../components/ModelView";
+import ProcessFlowView from "../components/ProcessFlowView";
 import * as d3 from "d3";
 import {
   ArrowRight,
@@ -25,6 +27,7 @@ import {
   ChevronUp,
   Compass,
   Copy,
+  GitBranch,
   Cpu,
   Crosshair,
   Eye,
@@ -51,7 +54,14 @@ import {
   ZoomOut,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, type GraphData, type GraphNode, type GraphQueryResult } from "../api";
+import {
+  api,
+  type GraphData,
+  type GraphModel,
+  type GraphNode,
+  type GraphQueryResult,
+  type ModelNode,
+} from "../api";
 import Markdown from "../components/Markdown";
 
 interface SimNode extends d3.SimulationNodeDatum, GraphNode {
@@ -77,8 +87,26 @@ const TYPE_CONFIG: Record<
   system: { label: "Core Systems", color: "#0284c7", icon: Cpu, defaultVisible: true },
   document: { label: "Markdown Documents", color: "#64748b", icon: FileText, defaultVisible: true },
   process: { label: "BPML Processes", color: "#10b981", icon: Workflow, defaultVisible: true },
-  spec: { label: "SPARK Specifications", color: "#f97316", icon: FileCode, defaultVisible: true },
+  // Specs start hidden because there used to be 548 of them against 720 nodes,
+  // and drawing them all on first paint buried everything else. Since the
+  // process register's Lowest Level Key column stopped being read as specs
+  // there are 47 of 354, so that reason no longer holds -- left hidden for now
+  // only to avoid changing what the page does by default without asking.
+  spec: { label: "SPARK Specifications", color: "#f97316", icon: FileCode, defaultVisible: false },
 };
+
+/** The colour a node is drawn in.
+ *
+ *  TYPE_CONFIG wins over the node's own `color`. The extractor gives every
+ *  stream and every system its own hue, so the four streams came out purple,
+ *  pink, green and amber and the six systems blue, slate, sky, red, blue and
+ *  green — while the legend beside them showed one swatch per type. Worse, the
+ *  L2C green and the process green were the same value, so a stream and a BPML
+ *  step were indistinguishable. Keying off the type is what makes the canvas
+ *  agree with the legend, and it holds even against a stale cached graph. */
+function nodeColor(node: { type: string; color?: string }): string {
+  return TYPE_CONFIG[node.type]?.color || node.color || "#64748b";
+}
 
 const PRESET_QUERIES = [
   { label: "What specs are linked to Salesforce?", query: "What specs are linked to Salesforce and how does it integrate?" },
@@ -91,9 +119,12 @@ const PRESET_QUERIES = [
 interface KnowledgeGraphPageProps {
   active: boolean;
   onNavigate?: (page: string, params?: any) => void;
+  /** A query handed over from another page (the Fit-Gap Copilot's "show in
+   *  graph"). The nonce lets the same text be sent twice. */
+  incomingQuery?: { text: string; nonce: number } | null;
 }
 
-export default function KnowledgeGraphPage({ active, onNavigate }: KnowledgeGraphPageProps) {
+export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }: KnowledgeGraphPageProps) {
   const theme = useTheme();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -111,21 +142,39 @@ export default function KnowledgeGraphPage({ active, onNavigate }: KnowledgeGrap
   const [copiedAnswer, setCopiedAnswer] = useState(false);
 
   // Filter state
-  const [visibleTypes, setVisibleTypes] = useState<Record<string, boolean>>({
-    stream: true,
-    system: true,
-    document: true,
-    process: true,
-    spec: true,
-  });
+  // Derived from TYPE_CONFIG rather than repeated here, so `defaultVisible` is
+  // the single place a default lives.
+  const [visibleTypes, setVisibleTypes] = useState<Record<string, boolean>>(() =>
+    Object.fromEntries(Object.entries(TYPE_CONFIG).map(([k, v]) => [k, v.defaultVisible]))
+  );
   const [searchQuery, setSearchQuery] = useState("");
+  // The canvas shows the graph that was built; the model view shows the
+  // ontology it was meant to build, with each label and relationship marked
+  // built / partial / absent. The model is fetched the first time it is asked
+  // for -- most visits never open it.
+  const [viewMode, setViewMode] = useState<"graph" | "model" | "process">("graph");
+  const [model, setModel] = useState<GraphModel | null>(null);
+  const [modelError, setModelError] = useState<string | null>(null);
+  const [selectedModelNode, setSelectedModelNode] = useState<ModelNode | null>(null);
+  // Which label, if any, is currently opened into the nodes it stands for.
+  const [expandedLabel, setExpandedLabel] = useState<string | null>(null);
+
   const [selectedNode, setSelectedNode] = useState<SimNode | null>(null);
   const [hoveredNode, setHoveredNode] = useState<SimNode | null>(null);
+
+  useEffect(() => {
+    if (viewMode !== "model" || model || modelError) return;
+    api
+      .graphModel()
+      .then(setModel)
+      .catch((e: unknown) => setModelError(e instanceof Error ? e.message : String(e)));
+  }, [viewMode, model, modelError]);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [isFocusNeighborhoodMode, setIsFocusNeighborhoodMode] = useState(false);
   const [currentZoomLevel, setCurrentZoomLevel] = useState(0.85);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [isLegendMinimized, setIsLegendMinimized] = useState(false);
+  // Starts collapsed: it is a reference, not something to read every visit.
+  const [isLegendMinimized, setIsLegendMinimized] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const pageContainerRef = useRef<HTMLDivElement | null>(null);
 
@@ -184,6 +233,14 @@ export default function KnowledgeGraphPage({ active, onNavigate }: KnowledgeGrap
     fetcher
       .then((data) => {
         setGraphData(data);
+        // The model view's built/partial counts are read off the graph, so a
+        // rebuild makes them stale. Dropping it here lets the lazy fetch pick
+        // the new numbers up the next time the tab is opened.
+        if (force) {
+          setModel(null);
+          setModelError(null);
+          setSelectedModelNode(null);
+        }
       })
       .catch((err) => {
         console.error("Failed to load graph data", err);
@@ -521,7 +578,7 @@ export default function KnowledgeGraphPage({ active, onNavigate }: KnowledgeGrap
       const radius = (node.size || 12) * (isSelected ? 1.4 : isHovered ? 1.35 : isHoveredNeighbor ? 1.15 : isQueryMatch ? 1.2 : 1);
       const baseColor = isQueryMatch && isPathMode
         ? (node.type === "system" ? "#0284c7" : "#ea580c")
-        : (node.color || TYPE_CONFIG[node.type]?.color || "#64748b");
+        : nodeColor(node);
 
       ctx.save();
       ctx.beginPath();
@@ -880,6 +937,31 @@ export default function KnowledgeGraphPage({ active, onNavigate }: KnowledgeGrap
     []
   );
 
+  /** Jump from a label in the model view to one of its real nodes.
+   *
+   *  The simulation only holds the types the legend has switched on, so a
+   *  `spec` instance has no coordinates until `spec` is visible again. The
+   *  delay lets the filter re-run and d3 seed the node before the camera
+   *  moves; `zoomToNodes` is a no-op if it still is not there. */
+  const focusGraphNode = useCallback(
+    (id: string) => {
+      const type = id.split(":", 1)[0];
+      const asType: Record<string, string> = {
+        proc: "process",
+        doc: "document",
+        spec: "spec",
+        system: "system",
+        stream: "stream",
+      };
+      const nodeType = asType[type];
+      setViewMode("graph");
+      if (nodeType) setVisibleTypes((prev) => (prev[nodeType] ? prev : { ...prev, [nodeType]: true }));
+      window.setTimeout(() => zoomToNodes([id]), 320);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    []
+  );
+
   // Zoom to a collection of nodes (e.g. query results or path)
   const zoomToNodes = useCallback(
     (nodeIds: string[]) => {
@@ -1032,6 +1114,17 @@ export default function KnowledgeGraphPage({ active, onNavigate }: KnowledgeGrap
     [zoomToNodes]
   );
 
+  // A query handed over from the Fit-Gap Copilot: run it once the graph is
+  // loaded and this page is the visible one.
+  const lastIncoming = useRef<number>(0);
+  useEffect(() => {
+    if (!active || !incomingQuery || !graphData) return;
+    if (incomingQuery.nonce === lastIncoming.current) return;
+    lastIncoming.current = incomingQuery.nonce;
+    setQueryInput(incomingQuery.text);
+    handleRunQuery(incomingQuery.text);
+  }, [active, incomingQuery, graphData, handleRunQuery]);
+
   // Copy answer to clipboard
   const handleCopyAnswer = useCallback(() => {
     if (!activeQueryResult?.answer) return;
@@ -1148,6 +1241,47 @@ export default function KnowledgeGraphPage({ active, onNavigate }: KnowledgeGrap
 
         {/* Right: Actions */}
         <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
+          <Stack
+            direction="row"
+            sx={{
+              border: 1,
+              borderColor: "divider",
+              borderRadius: 1,
+              overflow: "hidden",
+              height: 30,
+            }}
+          >
+            {(["graph", "process", "model"] as const).map((mode) => (
+              <Button
+                key={mode}
+                size="small"
+                disableElevation
+                variant={viewMode === mode ? "contained" : "text"}
+                color={viewMode === mode ? "primary" : "inherit"}
+                onClick={() => setViewMode(mode)}
+                startIcon={
+                  mode === "graph" ? (
+                    <Network size={13} />
+                  ) : mode === "process" ? (
+                    <GitBranch size={13} />
+                  ) : (
+                    <Layers size={13} />
+                  )
+                }
+                sx={{
+                  textTransform: "none",
+                  fontWeight: 700,
+                  fontSize: 12,
+                  borderRadius: 0,
+                  px: 1.25,
+                  minWidth: 0,
+                }}
+              >
+                {mode === "graph" ? "Graph" : mode === "process" ? "Process" : "Model"}
+              </Button>
+            ))}
+          </Stack>
+
           {activeQueryResult?.answer && (
             <Button
               variant="contained"
@@ -1590,7 +1724,7 @@ export default function KnowledgeGraphPage({ active, onNavigate }: KnowledgeGrap
           </Box>
         )}
 
-        {(error || queryError) && (
+        {viewMode === "graph" && (error || queryError) && (
           <Box sx={{ position: "absolute", top: 20, left: 20, right: 20, zIndex: 20 }}>
             <Alert
               severity="error"
@@ -1605,7 +1739,7 @@ export default function KnowledgeGraphPage({ active, onNavigate }: KnowledgeGrap
         )}
 
         {/* Floating Query Results Banner */}
-        {activeQueryResult && (
+        {viewMode === "graph" && activeQueryResult && (
           <Paper
             elevation={4}
             sx={{
@@ -1790,7 +1924,246 @@ export default function KnowledgeGraphPage({ active, onNavigate }: KnowledgeGrap
 
         <canvas ref={canvasRef} style={{ width: "100%", height: "100%", display: "block" }} />
 
-        {/* Floating Zoom & Decipher Navigation Dock */}
+        {viewMode === "process" && graphData && (
+          <Box
+            sx={{
+              position: "absolute",
+              inset: 0,
+              bgcolor: "background.default",
+              zIndex: 5,
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
+            <ProcessFlowView graph={graphData} onFocusNode={focusGraphNode} />
+          </Box>
+        )}
+
+        {/* The model view sits over the canvas rather than replacing it: the d3
+            simulation owns the canvas element and unmounting it mid-run leaves
+            the ref dangling, so it keeps its size and is simply covered. */}
+        {viewMode === "model" && (
+          <Box
+            sx={{
+              position: "absolute",
+              inset: 0,
+              bgcolor: "background.default",
+              zIndex: 5,
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
+            {modelError ? (
+              <Alert severity="error" sx={{ m: 2 }}>
+                Could not load the model: {modelError}
+              </Alert>
+            ) : !model ? (
+              <Stack sx={{ flex: 1, alignItems: "center", justifyContent: "center" }} spacing={1}>
+                <CircularProgress size={22} />
+                <Typography variant="caption" color="text.secondary">
+                  Loading the target model…
+                </Typography>
+              </Stack>
+            ) : (
+              <Box sx={{ flex: 1, display: "flex", minHeight: 0 }}>
+                <Box sx={{ flex: 1, minWidth: 0 }}>
+                  <ModelView
+                    model={model}
+                    graph={graphData}
+                    expanded={expandedLabel}
+                    onExpandedChange={setExpandedLabel}
+                    onSelect={setSelectedModelNode}
+                    onFocusNode={focusGraphNode}
+                  />
+                </Box>
+
+                <Paper
+                  elevation={0}
+                  square
+                  sx={{
+                    width: 300,
+                    flexShrink: 0,
+                    borderLeft: 1,
+                    borderColor: "divider",
+                    p: 2,
+                    overflowY: "auto",
+                  }}
+                >
+                  {selectedModelNode ? (
+                    <Stack spacing={1.5}>
+                      <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
+                        <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>
+                          :{selectedModelNode.token}
+                        </Typography>
+                        <Chip
+                          size="small"
+                          label={`${selectedModelNode.count} nodes`}
+                          sx={{
+                            height: 20,
+                            fontSize: 11,
+                            fontWeight: 700,
+                            bgcolor: (t) => alpha(t.palette.primary.main, 0.16),
+                          }}
+                        />
+                      </Stack>
+
+                      {selectedModelNode.constraints.length > 0 && (
+                        <Stack spacing={0.25}>
+                          {selectedModelNode.constraints.map((c) => (
+                            <Typography
+                              key={`${c.type}-${c.property}`}
+                              variant="caption"
+                              color="text.secondary"
+                            >
+                              <strong>{c.type === "key" ? "key" : "must exist"}</strong>{" "}
+                              <code>{c.property}</code>
+                            </Typography>
+                          ))}
+                        </Stack>
+                      )}
+
+                      <Divider />
+                      <Typography variant="overline" sx={{ color: "text.secondary", fontWeight: 700 }}>
+                        Properties
+                      </Typography>
+                      <Stack spacing={0.5}>
+                        {selectedModelNode.properties.map((prop) => (
+                          <Stack key={prop.name} direction="row" spacing={1} sx={{ alignItems: "baseline" }}>
+                            <Typography variant="body2" sx={{ fontFamily: "monospace", fontWeight: 600 }}>
+                              {prop.name}
+                            </Typography>
+                            <Typography variant="caption" color="text.secondary">
+                              {prop.type}
+                              {prop.nullable ? "" : " · required"}
+                            </Typography>
+                          </Stack>
+                        ))}
+                      </Stack>
+
+                      {selectedModelNode.built_as && (
+                        <>
+                          <Divider />
+                          <Typography variant="caption" color="text.secondary">
+                            Built from node type{" "}
+                            <code>{selectedModelNode.built_as}</code>
+                          </Typography>
+                        </>
+                      )}
+
+                      {selectedModelNode.count > 0 && (
+                        <>
+                          <Divider />
+                          <Chip
+                            size="small"
+                            clickable
+                            color={expandedLabel === selectedModelNode.token ? "primary" : "default"}
+                            label={
+                              expandedLabel === selectedModelNode.token
+                                ? "Showing instances on the canvas"
+                                : `Show the ${selectedModelNode.count} nodes on the canvas`
+                            }
+                            onClick={() =>
+                              setExpandedLabel(
+                                expandedLabel === selectedModelNode.token
+                                  ? null
+                                  : selectedModelNode.token
+                              )
+                            }
+                            sx={{ height: 24, fontSize: 11, fontWeight: 700, alignSelf: "flex-start" }}
+                          />
+                        </>
+                      )}
+
+                      {selectedModelNode.instances.length > 0 && (
+                        <>
+                          <Divider />
+                          <Stack
+                            direction="row"
+                            spacing={1}
+                            sx={{ alignItems: "baseline", justifyContent: "space-between" }}
+                          >
+                            <Typography
+                              variant="overline"
+                              sx={{ color: "text.secondary", fontWeight: 700 }}
+                            >
+                              In the graph
+                            </Typography>
+                            <Typography variant="caption" color="text.secondary">
+                              {selectedModelNode.instances.length} of {selectedModelNode.count}
+                            </Typography>
+                          </Stack>
+                          <Stack spacing={0.25}>
+                            {selectedModelNode.instances.map((inst) => (
+                              <Box
+                                key={inst.id}
+                                onClick={() => focusGraphNode(inst.id)}
+                                sx={{
+                                  px: 1,
+                                  py: 0.6,
+                                  borderRadius: 1,
+                                  cursor: "pointer",
+                                  "&:hover": { bgcolor: (t) => alpha(t.palette.primary.main, 0.1) },
+                                }}
+                              >
+                                <Typography
+                                  variant="body2"
+                                  sx={{ fontFamily: "monospace", fontWeight: 700, lineHeight: 1.3 }}
+                                >
+                                  {inst.label}
+                                </Typography>
+                                {inst.detail && (
+                                  <Typography
+                                    variant="caption"
+                                    color="text.secondary"
+                                    sx={{ display: "block", lineHeight: 1.3 }}
+                                  >
+                                    {inst.detail}
+                                  </Typography>
+                                )}
+                              </Box>
+                            ))}
+                          </Stack>
+                          <Typography variant="caption" color="text.secondary">
+                            Click one to open it in the graph view.
+                          </Typography>
+                        </>
+                      )}
+                    </Stack>
+                  ) : (
+                    <Stack spacing={1.5}>
+                      <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>
+                        The graph&apos;s own schema
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        {model.stats.labels} node labels and {model.stats.relationship_types}{" "}
+                        relationship types, generated from <code>knowledge_graph.json</code> as a
+                        Neo4j Data Importer model. Properties, their nullability and the
+                        constraints are all read off the nodes that carry them.
+                      </Typography>
+                      <Divider />
+                      <Typography variant="caption" color="text.secondary">
+                        {model.stats.nodes} nodes · {model.stats.edges} relationships ·{" "}
+                        {model.stats.constraints} constraints
+                      </Typography>
+                      <Divider />
+                      <Typography variant="caption" color="text.secondary">
+                        Click a label for its properties and key constraint. Double-click one
+                        marked <strong>+</strong> — or use the button in its panel — to draw its
+                        real nodes on the canvas; <code>:Process</code> opens as the BPML
+                        hierarchy. The file is <code>docs/kg-data-importer-model.json</code>,
+                        openable at import.neo4j.io.
+                      </Typography>
+                    </Stack>
+                  )}
+                </Paper>
+              </Box>
+            )}
+          </Box>
+        )}
+
+        {/* Floating Zoom & Decipher Navigation Dock. Hidden in model mode: it
+            drives the d3 canvas, and at zIndex 14 it covered the model view's
+            own zoom controls in the same corner. */}
         <Paper
           elevation={4}
           sx={{
@@ -1798,7 +2171,7 @@ export default function KnowledgeGraphPage({ active, onNavigate }: KnowledgeGrap
             top: activeQueryResult ? 115 : 20,
             right: 20,
             zIndex: 14,
-            display: "flex",
+            display: viewMode === "graph" ? "flex" : "none",
             alignItems: "center",
             gap: 0.5,
             p: 0.75,
@@ -1915,7 +2288,9 @@ export default function KnowledgeGraphPage({ active, onNavigate }: KnowledgeGrap
             borderColor: "divider",
             boxShadow: 2,
             maxWidth: isLegendMinimized ? "auto" : 260,
-            display: { xs: "none", sm: "block" },
+            // Keeps the existing narrow-screen rule; "none" outright in model
+            // mode, where this legend describes the wrong thing.
+            display: viewMode === "graph" ? { xs: "none", sm: "block" } : "none",
             transition: "all 0.2s ease",
             zIndex: 10,
           }}
@@ -2010,8 +2385,8 @@ export default function KnowledgeGraphPage({ active, onNavigate }: KnowledgeGrap
                     width: 38,
                     height: 38,
                     borderRadius: 2,
-                    bgcolor: alpha(selectedNode.color || "#64748b", 0.15),
-                    color: selectedNode.color || "#64748b",
+                    bgcolor: alpha(nodeColor(selectedNode), 0.15),
+                    color: nodeColor(selectedNode),
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
@@ -2027,8 +2402,8 @@ export default function KnowledgeGraphPage({ active, onNavigate }: KnowledgeGrap
                       fontSize: 10.5,
                       fontWeight: 700,
                       height: 20,
-                      bgcolor: alpha(selectedNode.color || "#64748b", 0.15),
-                      color: selectedNode.color || "#64748b",
+                      bgcolor: alpha(nodeColor(selectedNode), 0.15),
+                      color: nodeColor(selectedNode),
                     }}
                   />
                   <Typography variant="caption" sx={{ display: "block", color: "text.secondary", mt: 0.25 }}>
@@ -2130,7 +2505,7 @@ export default function KnowledgeGraphPage({ active, onNavigate }: KnowledgeGrap
                         label={item.label}
                         clickable
                         onClick={() => zoomToNode(item)}
-                        sx={{ justifyContent: "flex-start", fontWeight: 600, fontSize: 12, bgcolor: alpha(item.color || "#0284c7", 0.1), color: item.color }}
+                        sx={{ justifyContent: "flex-start", fontWeight: 600, fontSize: 12, bgcolor: alpha(nodeColor(item), 0.1), color: nodeColor(item) }}
                       />
                     ))}
                   </Stack>

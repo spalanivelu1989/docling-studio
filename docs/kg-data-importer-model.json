@@ -1,0 +1,1144 @@
+{
+  "version": "3.0.0",
+  "visualisation": {
+    "nodes": [
+      {
+        "id": "n:1",
+        "position": {
+          "x": 0.0,
+          "y": 0.0
+        }
+      },
+      {
+        "id": "n:4",
+        "position": {
+          "x": 0.0,
+          "y": -420.0
+        }
+      },
+      {
+        "id": "n:5",
+        "position": {
+          "x": 520.0,
+          "y": 60.0
+        }
+      },
+      {
+        "id": "n:3",
+        "position": {
+          "x": -520.0,
+          "y": 60.0
+        }
+      },
+      {
+        "id": "n:2",
+        "position": {
+          "x": 0.0,
+          "y": 430.0
+        }
+      }
+    ]
+  },
+  "dataModel": {
+    "version": "3.0.0",
+    "graphSchemaRepresentation": {
+      "version": "1.0.0",
+      "graphSchema": {
+        "nodeLabels": [
+          {
+            "$id": "nl:1",
+            "token": "Document",
+            "properties": [
+              {
+                "$id": "p:1",
+                "token": "chars",
+                "type": {
+                  "type": "integer"
+                },
+                "nullable": false
+              },
+              {
+                "$id": "p:2",
+                "token": "filename",
+                "type": {
+                  "type": "string"
+                },
+                "nullable": false
+              },
+              {
+                "$id": "p:3",
+                "token": "format",
+                "type": {
+                  "type": "string"
+                },
+                "nullable": false
+              },
+              {
+                "$id": "p:4",
+                "token": "source",
+                "type": {
+                  "type": "string"
+                },
+                "nullable": false
+              }
+            ]
+          },
+          {
+            "$id": "nl:2",
+            "token": "Process",
+            "properties": [
+              {
+                "$id": "p:5",
+                "token": "code",
+                "type": {
+                  "type": "string"
+                },
+                "nullable": false
+              },
+              {
+                "$id": "p:6",
+                "token": "description",
+                "type": {
+                  "type": "string"
+                },
+                "nullable": false
+              },
+              {
+                "$id": "p:7",
+                "token": "in_bpml",
+                "type": {
+                  "type": "boolean"
+                },
+                "nullable": false
+              },
+              {
+                "$id": "p:8",
+                "token": "jira_key",
+                "type": {
+                  "type": "string"
+                },
+                "nullable": true
+              }
+            ]
+          },
+          {
+            "$id": "nl:3",
+            "token": "Spec",
+            "properties": [
+              {
+                "$id": "p:9",
+                "token": "is_primary",
+                "type": {
+                  "type": "boolean"
+                },
+                "nullable": false
+              },
+              {
+                "$id": "p:10",
+                "token": "ticket",
+                "type": {
+                  "type": "string"
+                },
+                "nullable": false
+              }
+            ]
+          },
+          {
+            "$id": "nl:4",
+            "token": "Stream",
+            "properties": [
+              {
+                "$id": "p:11",
+                "token": "code",
+                "type": {
+                  "type": "string"
+                },
+                "nullable": false
+              },
+              {
+                "$id": "p:12",
+                "token": "description",
+                "type": {
+                  "type": "string"
+                },
+                "nullable": false
+              }
+            ]
+          },
+          {
+            "$id": "nl:5",
+            "token": "System",
+            "properties": [
+              {
+                "$id": "p:13",
+                "token": "code",
+                "type": {
+                  "type": "string"
+                },
+                "nullable": false
+              },
+              {
+                "$id": "p:14",
+                "token": "description",
+                "type": {
+                  "type": "string"
+                },
+                "nullable": false
+              }
+            ]
+          }
+        ],
+        "relationshipTypes": [
+          {
+            "$id": "rt:1",
+            "token": "BELONGS_TO",
+            "properties": [
+              {
+                "$id": "p:15",
+                "token": "label",
+                "type": {
+                  "type": "string"
+                },
+                "nullable": false
+              }
+            ]
+          },
+          {
+            "$id": "rt:2",
+            "token": "CONNECTS_TO",
+            "properties": [
+              {
+                "$id": "p:16",
+                "token": "label",
+                "type": {
+                  "type": "string"
+                },
+                "nullable": false
+              }
+            ]
+          },
+          {
+            "$id": "rt:3",
+            "token": "IMPLEMENTS_TICKET",
+            "properties": [
+              {
+                "$id": "p:17",
+                "token": "label",
+                "type": {
+                  "type": "string"
+                },
+                "nullable": false
+              }
+            ]
+          },
+          {
+            "$id": "rt:4",
+            "token": "INTEGRATES_WITH",
+            "properties": [
+              {
+                "$id": "p:18",
+                "token": "label",
+                "type": {
+                  "type": "string"
+                },
+                "nullable": false
+              }
+            ]
+          },
+          {
+            "$id": "rt:5",
+            "token": "INTERACTS_WITH",
+            "properties": [
+              {
+                "$id": "p:19",
+                "token": "label",
+                "type": {
+                  "type": "string"
+                },
+                "nullable": false
+              }
+            ]
+          },
+          {
+            "$id": "rt:6",
+            "token": "INTERFACES_WITH",
+            "properties": [
+              {
+                "$id": "p:20",
+                "token": "label",
+                "type": {
+                  "type": "string"
+                },
+                "nullable": false
+              }
+            ]
+          },
+          {
+            "$id": "rt:7",
+            "token": "REFERENCES_TICKET",
+            "properties": [
+              {
+                "$id": "p:21",
+                "token": "label",
+                "type": {
+                  "type": "string"
+                },
+                "nullable": false
+              }
+            ]
+          },
+          {
+            "$id": "rt:8",
+            "token": "RUNS_ON",
+            "properties": [
+              {
+                "$id": "p:22",
+                "token": "label",
+                "type": {
+                  "type": "string"
+                },
+                "nullable": false
+              }
+            ]
+          },
+          {
+            "$id": "rt:9",
+            "token": "SPECIFIES_PROCESS",
+            "properties": [
+              {
+                "$id": "p:23",
+                "token": "label",
+                "type": {
+                  "type": "string"
+                },
+                "nullable": false
+              }
+            ]
+          },
+          {
+            "$id": "rt:10",
+            "token": "SUBPROCESS_OF",
+            "properties": [
+              {
+                "$id": "p:24",
+                "token": "label",
+                "type": {
+                  "type": "string"
+                },
+                "nullable": false
+              }
+            ]
+          },
+          {
+            "$id": "rt:11",
+            "token": "USES_UI",
+            "properties": [
+              {
+                "$id": "p:25",
+                "token": "label",
+                "type": {
+                  "type": "string"
+                },
+                "nullable": false
+              }
+            ]
+          }
+        ],
+        "nodeObjectTypes": [
+          {
+            "$id": "n:1",
+            "labels": [
+              {
+                "$ref": "#nl:1"
+              }
+            ]
+          },
+          {
+            "$id": "n:2",
+            "labels": [
+              {
+                "$ref": "#nl:2"
+              }
+            ]
+          },
+          {
+            "$id": "n:3",
+            "labels": [
+              {
+                "$ref": "#nl:3"
+              }
+            ]
+          },
+          {
+            "$id": "n:4",
+            "labels": [
+              {
+                "$ref": "#nl:4"
+              }
+            ]
+          },
+          {
+            "$id": "n:5",
+            "labels": [
+              {
+                "$ref": "#nl:5"
+              }
+            ]
+          }
+        ],
+        "relationshipObjectTypes": [
+          {
+            "$id": "r:1",
+            "type": {
+              "$ref": "#rt:1"
+            },
+            "from": {
+              "$ref": "#n:1"
+            },
+            "to": {
+              "$ref": "#n:4"
+            }
+          },
+          {
+            "$id": "r:2",
+            "type": {
+              "$ref": "#rt:2"
+            },
+            "from": {
+              "$ref": "#n:1"
+            },
+            "to": {
+              "$ref": "#n:5"
+            }
+          },
+          {
+            "$id": "r:3",
+            "type": {
+              "$ref": "#rt:3"
+            },
+            "from": {
+              "$ref": "#n:1"
+            },
+            "to": {
+              "$ref": "#n:3"
+            }
+          },
+          {
+            "$id": "r:4",
+            "type": {
+              "$ref": "#rt:4"
+            },
+            "from": {
+              "$ref": "#n:1"
+            },
+            "to": {
+              "$ref": "#n:5"
+            }
+          },
+          {
+            "$id": "r:5",
+            "type": {
+              "$ref": "#rt:5"
+            },
+            "from": {
+              "$ref": "#n:1"
+            },
+            "to": {
+              "$ref": "#n:5"
+            }
+          },
+          {
+            "$id": "r:6",
+            "type": {
+              "$ref": "#rt:6"
+            },
+            "from": {
+              "$ref": "#n:1"
+            },
+            "to": {
+              "$ref": "#n:5"
+            }
+          },
+          {
+            "$id": "r:7",
+            "type": {
+              "$ref": "#rt:7"
+            },
+            "from": {
+              "$ref": "#n:1"
+            },
+            "to": {
+              "$ref": "#n:3"
+            }
+          },
+          {
+            "$id": "r:8",
+            "type": {
+              "$ref": "#rt:8"
+            },
+            "from": {
+              "$ref": "#n:1"
+            },
+            "to": {
+              "$ref": "#n:5"
+            }
+          },
+          {
+            "$id": "r:9",
+            "type": {
+              "$ref": "#rt:9"
+            },
+            "from": {
+              "$ref": "#n:1"
+            },
+            "to": {
+              "$ref": "#n:2"
+            }
+          },
+          {
+            "$id": "r:10",
+            "type": {
+              "$ref": "#rt:11"
+            },
+            "from": {
+              "$ref": "#n:1"
+            },
+            "to": {
+              "$ref": "#n:5"
+            }
+          },
+          {
+            "$id": "r:11",
+            "type": {
+              "$ref": "#rt:10"
+            },
+            "from": {
+              "$ref": "#n:2"
+            },
+            "to": {
+              "$ref": "#n:2"
+            }
+          }
+        ],
+        "constraints": [
+          {
+            "$id": "c:1",
+            "name": "filename_Document_key",
+            "constraintType": "key",
+            "entityType": "node",
+            "nodeLabel": {
+              "$ref": "#nl:1"
+            },
+            "properties": [
+              {
+                "$ref": "#p:2"
+              }
+            ]
+          },
+          {
+            "$id": "c:2",
+            "name": "chars_Document_propertyExistence",
+            "constraintType": "propertyExistence",
+            "entityType": "node",
+            "nodeLabel": {
+              "$ref": "#nl:1"
+            },
+            "properties": [
+              {
+                "$ref": "#p:1"
+              }
+            ]
+          },
+          {
+            "$id": "c:3",
+            "name": "format_Document_propertyExistence",
+            "constraintType": "propertyExistence",
+            "entityType": "node",
+            "nodeLabel": {
+              "$ref": "#nl:1"
+            },
+            "properties": [
+              {
+                "$ref": "#p:3"
+              }
+            ]
+          },
+          {
+            "$id": "c:4",
+            "name": "source_Document_propertyExistence",
+            "constraintType": "propertyExistence",
+            "entityType": "node",
+            "nodeLabel": {
+              "$ref": "#nl:1"
+            },
+            "properties": [
+              {
+                "$ref": "#p:4"
+              }
+            ]
+          },
+          {
+            "$id": "c:5",
+            "name": "code_Process_key",
+            "constraintType": "key",
+            "entityType": "node",
+            "nodeLabel": {
+              "$ref": "#nl:2"
+            },
+            "properties": [
+              {
+                "$ref": "#p:5"
+              }
+            ]
+          },
+          {
+            "$id": "c:6",
+            "name": "description_Process_propertyExistence",
+            "constraintType": "propertyExistence",
+            "entityType": "node",
+            "nodeLabel": {
+              "$ref": "#nl:2"
+            },
+            "properties": [
+              {
+                "$ref": "#p:6"
+              }
+            ]
+          },
+          {
+            "$id": "c:7",
+            "name": "in_bpml_Process_propertyExistence",
+            "constraintType": "propertyExistence",
+            "entityType": "node",
+            "nodeLabel": {
+              "$ref": "#nl:2"
+            },
+            "properties": [
+              {
+                "$ref": "#p:7"
+              }
+            ]
+          },
+          {
+            "$id": "c:8",
+            "name": "ticket_Spec_key",
+            "constraintType": "key",
+            "entityType": "node",
+            "nodeLabel": {
+              "$ref": "#nl:3"
+            },
+            "properties": [
+              {
+                "$ref": "#p:10"
+              }
+            ]
+          },
+          {
+            "$id": "c:9",
+            "name": "is_primary_Spec_propertyExistence",
+            "constraintType": "propertyExistence",
+            "entityType": "node",
+            "nodeLabel": {
+              "$ref": "#nl:3"
+            },
+            "properties": [
+              {
+                "$ref": "#p:9"
+              }
+            ]
+          },
+          {
+            "$id": "c:10",
+            "name": "code_Stream_key",
+            "constraintType": "key",
+            "entityType": "node",
+            "nodeLabel": {
+              "$ref": "#nl:4"
+            },
+            "properties": [
+              {
+                "$ref": "#p:11"
+              }
+            ]
+          },
+          {
+            "$id": "c:11",
+            "name": "description_Stream_propertyExistence",
+            "constraintType": "propertyExistence",
+            "entityType": "node",
+            "nodeLabel": {
+              "$ref": "#nl:4"
+            },
+            "properties": [
+              {
+                "$ref": "#p:12"
+              }
+            ]
+          },
+          {
+            "$id": "c:12",
+            "name": "code_System_key",
+            "constraintType": "key",
+            "entityType": "node",
+            "nodeLabel": {
+              "$ref": "#nl:5"
+            },
+            "properties": [
+              {
+                "$ref": "#p:13"
+              }
+            ]
+          },
+          {
+            "$id": "c:13",
+            "name": "description_System_propertyExistence",
+            "constraintType": "propertyExistence",
+            "entityType": "node",
+            "nodeLabel": {
+              "$ref": "#nl:5"
+            },
+            "properties": [
+              {
+                "$ref": "#p:14"
+              }
+            ]
+          }
+        ],
+        "indexes": []
+      }
+    },
+    "graphSchemaExtensionsRepresentation": {
+      "nodeKeyProperties": [],
+      "relationshipKeyProperties": []
+    },
+    "graphMappingRepresentation": {
+      "dataSourceSchema": {
+        "type": "local-unstructured",
+        "tableSchemas": [
+          {
+            "name": "0270-InterCo1_xlsx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "20250209_SPARK_L2C_FS_Interface_Ecommerce and SAP updated_docx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "20250212_SPARK_Interface_L2C-21208__docx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "20251024_SPARK_L2C_Lead2Cash Pricing_xlsx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "20251031_SPARK_L2C_SPARK_FS_Enhancement_L2C_21999_CMIR & Master Data Priority on Ship-to_docx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "20251112_SPARK_L2C_Material Master Sales fields_xlsx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "20251204_SPARK_L2C_Non OTIF reasons_S4 Hana proposal_xlsx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "20251212_SPARK_L2C_SPARK_FS_Enhancement - Item Line Delivery Block_docx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "20260109_SPARK_L2C_Corporate Group CRM  and SAP 20251125_xlsx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "20260109_SPARK_L2C_[EXT] RE_ Material Sales View Fields Content_pdf.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "20260112_SPARK_L2C_Delivery Blocks_xlsx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "20260119_SPARK_L2C_Sample KL and Free Goods FG orders (1) - Copy_xlsx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "20260203_SPARK_L2C_Ecommerce_xlsx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "20260520_SPARK_L2C_R2R_Agent Commissions_pptx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "4.8.1 Customer Payment_docx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "4.8.2 Process Accounts Receivables - Apply Cash Remittances_docx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "4.9.2 Track Payment Due Dates_docx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "Account at customer_xlsx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "BPML_ProcessesHierarchyExtended_xlsx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "Commissions_pptx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "Consignement stock Intercompany_docx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "Consignment_xlsx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "DC chain_xlsx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "ECC Selling S4 supplying forward flow_docx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "ESKER User Guide -Touchless Feature_pptx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "ESKER User Guide V1.0 (1) (1)_pdf.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "Energy sales in S4HANA Gemini_docx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "General Handling of OPD_pdf.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "Hackathon_FOC and Sample_pptx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "Hackaton - BP specific UOM in forms_pptx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "IT XML_xml.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "Interim Forecast Check Solution_pptx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "Interim L2C W1_xlsx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "Interim Process - Spark- ECC Interim Process details_pptx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "Interim pricing_xlsx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "L2C Trainings - Topics to add in details_pptx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "Manage Text Labels for Billing Form_xlsx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "Mapping_Outbound _ S4_xlsx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "Pricing_xlsx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "Reporting needs Credit Management, Cash collection, Commission_xlsx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "Return S4 Selling ECC supplying_docx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "SPARK - Process Slide_pptx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "SPARK - freight costs on our invoices (1)_xlsx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "SPARK Cross Stream_Commissions process_pptx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "SPARK L2C - FINAL VERSION - Sample KL and Free Goods FG orders_xlsx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "SPARK L2C - Shipto priority_xlsx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "SPARK L2C ATP keys_Hackathon 20260306_xlsx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "SPARK L2C Create Billing Types_xlsx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "SPARK L2C First out flows_xlsx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "SPARK L2C INTRO FEB 2026_pptx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "SPARK L2C INTRO LISBON FEB 2026_pptx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "SPARK L2C Intercompany sales 2026.03.13_docx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "SPARK L2C Interim Process avoid ECC to S4_docx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "SPARK L2C L1-L4 Processes _xlsx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "SPARK L2C Sample KL and Free Goods FG orders 20251218_xlsx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "SPARK L2C Samples Rules EMEA - draft_docx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "SPARK L2C specific fields_xlsx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "SPARK Trad Pref statement_xlsx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "SPARK-51136 - ATP and TRS check_docx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "SPARK-I2D- Transit time processes overview_pptx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "SPARK_FS_Conversion_Template_docx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "SPARK_FS_Enhancement & New Custom Fiori App Template_docx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "SPARK_FS_Form_Template_docx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "SPARK_FS_Interface_Template_docx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "SPARK_FS_L2C-21265-CustomerDunningForm_docx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "SPARK_FS_L2C-21266-Process Receivable CollectionsWorklist_docx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "SPARK_FS_L2C_21930_ Item Line Delivery Block Part 1_docx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "SPARK_FS_L2C_SPARK -22234-FS_Interface - SOVOS_docx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "SPARK_FS_L2C_SPARK-21157_Form_Order Confirmation PDF_docx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "SPARK_FS_L2C_SPARK-21175_Form Mapping_Billing Document Mapping_xlsx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "SPARK_FS_L2C_SPARK-21175_Form_Billing Document PDF_docx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "SPARK_FS_L2C_SPARK-21256_Customer Statement-Form_docx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "SPARK_FS_L2C_SPARK-49618_Billing Split_Enhancement_docx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "SPARK_FS_L2C_SPARK-53169_Enhancement - Payment Method Determination at SO_docx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "SPARK_FS_L2C__SPARK-22877_Interface_Salesforce Complaints_docx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "SPARK_FS_Report_Template_docx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "SPARK_FS_Workflow_Template_docx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "SPARK_Interface__L2C_18542_Determine Order Type - FIT_docx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "Sales Order scheduling (time)_docx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "Solvay@eCommerce - Customer User Guide_pptx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "Solvay@eCommerce - SAP user guide_pptx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "billing_form_translations_html.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "master data needs_xlsx.md",
+            "expanded": false,
+            "fields": []
+          }
+        ]
+      },
+      "nodeMappings": [],
+      "relationshipMappings": []
+    },
+    "configurations": {
+      "idsToIgnore": [],
+      "arrayDelimiter": "|",
+      "vectorDelimiter": "|"
+    }
+  }
+}

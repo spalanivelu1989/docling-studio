@@ -1,1 +1,0 @@
-import{S as e}from"./graphlib-CvmUh9an.js";var t=4;function n(n){return e(n,t)}export{n as t};

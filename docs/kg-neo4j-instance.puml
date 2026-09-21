@@ -1,0 +1,50 @@
+@startuml kg-neo4j-instance
+title One :Document and its neighbours — as Neo4j Browser draws a result set
+
+skinparam backgroundColor #FFFFFF
+skinparam shadowing false
+skinparam defaultTextAlignment center
+skinparam ArrowColor #475569
+skinparam ArrowFontColor #0F172A
+skinparam ArrowFontSize 11
+skinparam ArrowThickness 1.4
+skinparam usecase {
+  FontColor #0F172A
+  FontSize 13
+  BorderThickness 2
+}
+skinparam note {
+  BackgroundColor #FFFFFF
+  BorderColor #CBD5E1
+  FontColor #334155
+  FontSize 10
+}
+
+usecase ":Document\nSPARK FS L2C SPARK-22877\nInterface Salesforce\nComplaints docx" as DOC #F1F5F9;line:64748B
+usecase ":Stream\nLead to Cash (L2C)" as STREAM0 #EDE9FE;line:8B5CF6
+usecase ":Spec\nSPARK-22877" as SPEC1 #FFEDD5;line:F97316
+usecase ":System\nSalesforce (CRM)" as SYSTEM2 #E0F2FE;line:0284C7
+usecase ":System\nSAP CPI" as SYSTEM3 #E0F2FE;line:0284C7
+usecase ":System\nSAP ECC" as SYSTEM4 #E0F2FE;line:0284C7
+usecase ":System\nM3 (Legacy ERP)" as SYSTEM5 #E0F2FE;line:0284C7
+usecase ":Spec\nSPARK-52846" as SPEC6 #FFEDD5;line:F97316
+usecase ":System\nSAP S/4HANA" as SYSTEM7 #E0F2FE;line:0284C7
+usecase ":System\nSAP Fiori" as SYSTEM8 #E0F2FE;line:0284C7
+
+SPEC1 -[hidden]down- SPEC6
+SYSTEM2 -[hidden]down- SYSTEM3
+SYSTEM3 -[hidden]down- SYSTEM4
+SYSTEM4 -[hidden]down- SYSTEM5
+SYSTEM5 -[hidden]down- SYSTEM7
+SYSTEM7 -[hidden]down- SYSTEM8
+
+DOC -up-> STREAM0 : ":BELONGS_TO"
+DOC -left-> SPEC1 : ":IMPLEMENTS_TICKET"
+DOC -left-> SPEC6 : ":REFERENCES_TICKET"
+DOC -right-> SYSTEM2 : ":INTEGRATES_WITH"
+DOC -right-> SYSTEM3 : ":INTEGRATES_WITH"
+DOC -right-> SYSTEM4 : ":INTERACTS_WITH"
+DOC -right-> SYSTEM5 : ":INTERACTS_WITH"
+DOC -right-> SYSTEM7 : ":RUNS_ON"
+DOC -right-> SYSTEM8 : ":USES_UI"
+@enduml

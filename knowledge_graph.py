@@ -28,27 +28,34 @@ SOLVAY_DIR = BASE_DIR / "solvay-spark" / "pkg" / "markdown"
 KB_DIR = BASE_DIR / "knowledge_base"
 CACHE_FILE = BASE_DIR / "knowledge_graph.json"
 
+# One colour per entity type, matching TYPE_CONFIG on the Knowledge Graph page.
+# Each stream and system used to carry its own hue, which made the legend ("one
+# swatch per type") disagree with the canvas, and put the L2C green on the same
+# value as the BPML process green.
+STREAM_COLOR = "#8b5cf6"
+SYSTEM_COLOR = "#0284c7"
+
 # Core Enterprise Streams
 STREAMS = {
     "L2C": {
         "label": "Lead to Cash (L2C)",
         "desc": "End-to-end sales order management, pricing, billing, logistics, and customer collections.",
-        "color": "#8b5cf6",
+        "color": STREAM_COLOR,
     },
     "I2D": {
         "label": "Idea to Delivery (I2D)",
         "desc": "Transit times, shipping logistics, warehouse operations, and physical goods delivery.",
-        "color": "#ec4899",
+        "color": STREAM_COLOR,
     },
     "R2R": {
         "label": "Record to Report (R2R)",
         "desc": "Financial accounting, commissions settlement, general ledger, and financial reporting.",
-        "color": "#10b981",
+        "color": STREAM_COLOR,
     },
     "P2P": {
         "label": "Procure to Pay (P2P)",
         "desc": "Procurement, vendor purchase orders, goods receipt, and invoice verification.",
-        "color": "#f59e0b",
+        "color": STREAM_COLOR,
     },
 }
 
@@ -57,37 +64,285 @@ SYSTEMS = {
     "S4HANA": {
         "label": "SAP S/4HANA",
         "desc": "Target ERP platform for global sales, billing, master data, and central finance.",
-        "color": "#0284c7",
+        "color": SYSTEM_COLOR,
     },
     "ECC": {
         "label": "SAP ECC",
         "desc": "Legacy ERP environment being migrated to SAP S/4HANA under Solvay SPARK.",
-        "color": "#475569",
+        "color": SYSTEM_COLOR,
     },
     "Salesforce": {
         "label": "Salesforce (CRM)",
         "desc": "Customer relationship management platform handling customer complaints, accounts, and order intake.",
-        "color": "#0ea5e9",
+        "color": SYSTEM_COLOR,
     },
     "SOVOS": {
         "label": "SOVOS (Tax Engine)",
         "desc": "Global tax determination and automated electronic compliance engine integrated with billing.",
-        "color": "#dc2626",
+        "color": SYSTEM_COLOR,
     },
     "Fiori": {
         "label": "SAP Fiori",
         "desc": "Modern UX role-based applications for custom enhancements and business user dashboards.",
-        "color": "#2563eb",
+        "color": SYSTEM_COLOR,
     },
     "eCommerce": {
         "label": "Solvay@eCommerce",
         "desc": "Digital portal for customer direct ordering, product catalog, and invoice visibility.",
-        "color": "#16a34a",
+        "color": SYSTEM_COLOR,
+    },
+    # The twelve below complete the system list the SPARK design brief names.
+    # All were already mentioned throughout the corpus -- PF1 alone in 12
+    # documents -- but had no node, so a document that only ever talks to a
+    # legacy instance or a trading partner looked like it talked to nothing.
+    "WP1": {
+        "label": "WP1 (Legacy ERP)",
+        "desc": "Legacy SAP instance being consolidated into S/4HANA under SPARK.",
+        "color": SYSTEM_COLOR,
+    },
+    "PF1": {
+        "label": "PF1 (Legacy ERP)",
+        "desc": "Legacy SAP instance carrying order and delivery flows ahead of migration.",
+        "color": SYSTEM_COLOR,
+    },
+    "M3": {
+        "label": "M3 (Legacy ERP)",
+        "desc": "Infor M3 ERP used by parts of the business, with order management being retired.",
+        "color": SYSTEM_COLOR,
+    },
+    "ESKER": {
+        "label": "Esker",
+        "desc": "Document delivery and order-intake automation partner.",
+        "color": SYSTEM_COLOR,
+    },
+    "Elemica": {
+        "label": "Elemica",
+        "desc": "Chemical industry supply-chain network used for customer EDI exchange.",
+        "color": SYSTEM_COLOR,
+    },
+    "Coface": {
+        "label": "Coface",
+        "desc": "Credit insurance provider feeding customer credit limits into the credit process.",
+        "color": SYSTEM_COLOR,
+    },
+    "CPI": {
+        "label": "SAP CPI",
+        "desc": "Cloud integration middleware brokering interfaces between SAP and third parties.",
+        "color": SYSTEM_COLOR,
+    },
+    "OMP": {
+        "label": "OMP",
+        "desc": "Supply chain planning system consulted for forecast and availability checks.",
+        "color": SYSTEM_COLOR,
+    },
+    "SAPTM": {
+        "label": "SAP TM",
+        "desc": "SAP Transportation Management for shipment planning and freight.",
+        "color": SYSTEM_COLOR,
+    },
+    "EWM": {
+        "label": "SAP EWM",
+        "desc": "Extended Warehouse Management for warehouse and outbound delivery execution.",
+        "color": SYSTEM_COLOR,
+    },
+    "GTS": {
+        "label": "SAP GTS",
+        "desc": "Global Trade Services for compliance screening and trade preference.",
+        "color": SYSTEM_COLOR,
+    },
+    "MDG": {
+        "label": "SAP MDG",
+        "desc": "Master Data Governance for customer and material master maintenance.",
+        "color": SYSTEM_COLOR,
     },
 }
 
-CODE_RE = re.compile(r"\b([A-Za-z][A-Za-z0-9]{0,3})-(\d{2,3}(?:-\d{2,3})+)\b")
+# Process codes are matched with a leading guard so that a longer prefix is not
+# silently truncated: "INT-P-080-160" must not be read as "P-080-160".
+CODE_RE = re.compile(r"(?<![A-Za-z0-9-])([A-Za-z][A-Za-z0-9]{0,3})-(\d{2,3}(?:-\d{2,3})+)\b")
 TICKET_RE = re.compile(r"\bSPARK[-_ ]?(\d{4,6})\b", re.I)
+
+# Word-bounded, case-insensitive system fingerprints. Bare substring tests used to
+# link documents to systems via customer names ("ADECCO", "CECCHETTO"), acronyms
+# ("ECCN" = Export Control Classification Number) and Salesforce record ids
+# ("001d100000DpgS4"), while missing real mentions spelled "Sovos" or "E-commerce".
+SYSTEM_RE = {
+    "S4HANA": re.compile(r"\bS[/ ]?4[\s/-]?HANA\b|\bS/4\b|\bS4\b", re.I),
+    "ECC": re.compile(r"\bECC\b", re.I),
+    "Salesforce": re.compile(r"\bsalesforce\b", re.I),
+    "SOVOS": re.compile(r"\bsovos\b", re.I),
+    "Fiori": re.compile(r"\bfiori\b", re.I),
+    "eCommerce": re.compile(r"\be[-\s]?commerce\b", re.I),
+    # Short acronyms stay case-sensitive: "m3" is also a cubic metre and "gts"
+    # turns up inside ordinary words once the case guard is dropped.
+    "WP1": re.compile(r"\bWP1\b"),
+    "PF1": re.compile(r"\bPF1\b"),
+    "M3": re.compile(r"\bM3\b"),
+    "CPI": re.compile(r"\bCPI\b"),
+    "OMP": re.compile(r"\bOMP\b"),
+    "EWM": re.compile(r"\bEWM\b"),
+    "GTS": re.compile(r"\bGTS\b"),
+    "MDG": re.compile(r"\bMDG\b"),
+    "ESKER": re.compile(r"\besker\b", re.I),
+    "Elemica": re.compile(r"\belemica\b", re.I),
+    "Coface": re.compile(r"\bcoface\b", re.I),
+    "SAPTM": re.compile(r"\bSAP\s*TM\b", re.I),
+}
+SYSTEM_EDGE = {
+    "S4HANA": ("runs_on", "Executes on S/4"),
+    "ECC": ("interacts_with", "Interacts with ECC"),
+    "Salesforce": ("integrates_with", "Integrates with CRM"),
+    "SOVOS": ("interfaces_with", "Tax Engine Interface"),
+    "Fiori": ("uses_ui", "Fiori Custom App"),
+    "eCommerce": ("connects_to", "eCommerce Portal"),
+    # The verb is not read out of the text -- the brief forbids inferring one --
+    # so it follows the system's kind: SAP components interact, third parties
+    # interface, middleware integrates.
+    "WP1": ("interacts_with", "Legacy ERP Instance"),
+    "PF1": ("interacts_with", "Legacy ERP Instance"),
+    "M3": ("interacts_with", "Legacy ERP Instance"),
+    "EWM": ("interacts_with", "Warehouse Management"),
+    "GTS": ("interacts_with", "Global Trade Services"),
+    "MDG": ("interacts_with", "Master Data Governance"),
+    "SAPTM": ("interacts_with", "Transportation Management"),
+    "CPI": ("integrates_with", "Integration Middleware"),
+    "ESKER": ("interfaces_with", "Document Delivery Partner"),
+    "Elemica": ("interfaces_with", "Supply Chain Network"),
+    "Coface": ("interfaces_with", "Credit Insurance Partner"),
+    "OMP": ("interfaces_with", "Planning System"),
+}
+STREAM_RE = {sid: re.compile(r"\b" + sid + r"\b", re.I) for sid in STREAMS}
+
+# Authoritative BPML process hierarchy. Its Markdown conversion is a stub
+# ("9096 rows x 50 columns; too wide to render as a table"), so the workbook is
+# read directly rather than through the corpus.
+BPML_XLSX = BASE_DIR / "solvay-spark" / "pkg" / "BPML_ProcessesHierarchyExtended.xlsx"
+_BPML_NUM_RE = re.compile(r"^\s*(\d+(?:\.\d+)*)\s+(.*)$")
+_BPML_CODE_RE = re.compile(r"^\s*([A-Za-z][A-Za-z0-9]{0,3}-\d{2,3}(?:-\d{2,3})*)\s+(.*)$")
+_bpml_cache: dict[str, Any] | None = None
+
+
+def load_bpml_hierarchy() -> dict[str, Any]:
+    """Reads the real parent and name of every BPML code from the source workbook.
+
+    The export is flattened: a numbered process row in "Process Name" is followed by
+    the BPMN object rows that live inside it, listed under "Object Name". So an object
+    belongs to the nearest numbered process above it, while a lettered row that is
+    itself a process takes its parent from the last numbered segment of its Root Path.
+    Returns {"parent": {code: parent_code}, "name": {code: label}}.
+    """
+    global _bpml_cache
+    if _bpml_cache is not None:
+        return _bpml_cache
+
+    parent: dict[str, str] = {}
+    name: dict[str, str] = {}
+    try:
+        import openpyxl
+
+        wb = openpyxl.load_workbook(BPML_XLSX, read_only=True, data_only=True)
+        for sheet in wb.worksheets:
+            current: str | None = None
+            for row in sheet.iter_rows(values_only=True):
+                proc = row[2] if len(row) > 2 and isinstance(row[2], str) else None
+                obj = row[25] if len(row) > 25 and isinstance(row[25], str) else None
+                path = row[48] if len(row) > 48 and isinstance(row[48], str) else ""
+
+                # Ancestors named in the Root Path, e.g. "... > 4.5 Manage Sales Orders".
+                numeric_ancestors = []
+                for segment in path.split(">"):
+                    m = _BPML_NUM_RE.match(segment.strip())
+                    if m:
+                        numeric_ancestors.append(m.group(1))
+                        name.setdefault(m.group(1), m.group(2).strip())
+
+                if proc:
+                    m_num = _BPML_NUM_RE.match(proc)
+                    if m_num:
+                        current = m_num.group(1)
+                        name.setdefault(current, m_num.group(2).strip())
+                        if numeric_ancestors:
+                            parent.setdefault(current, numeric_ancestors[-1])
+                        continue
+                    m_code = _BPML_CODE_RE.match(proc)
+                    if m_code:
+                        code = m_code.group(1)
+                        name.setdefault(code, m_code.group(2).strip())
+                        if numeric_ancestors:
+                            parent.setdefault(code, numeric_ancestors[-1])
+                        continue
+
+                if obj:
+                    m_code = _BPML_CODE_RE.match(obj)
+                    if m_code:
+                        code = m_code.group(1)
+                        name.setdefault(code, m_code.group(2).strip())
+                        if current:
+                            parent.setdefault(code, current)
+                        elif numeric_ancestors:
+                            parent.setdefault(code, numeric_ancestors[-1])
+        wb.close()
+    except Exception as e:  # pragma: no cover - the graph still builds without it
+        logger.warning("Could not read BPML hierarchy from %s: %s", BPML_XLSX, e)
+
+    _bpml_cache = {"parent": parent, "name": name}
+    logger.info("BPML hierarchy: %d codes, %d with a parent", len(name), len(parent))
+    return _bpml_cache
+
+
+
+# The L1-L4 process register. Its "Lowest Level Key" column holds the Jira id of
+# each lowest-level step. That key is a PROPERTY of the step, not an entity of
+# its own: modelling it as a node turned one spreadsheet column into 502 of the
+# graph's 549 spec nodes and 502 of its 556 ticket edges, all from this single
+# file, which drowned the 47 genuine functional-spec tickets.
+REGISTER_MD = SOLVAY_DIR / "SPARK L2C L1-L4 Processes _xlsx.md"
+_REGISTER_ROW_RE = re.compile(
+    r"\|\s*(\d{2})\.\s*([^|]+?)\s*"      # L1  "03. Lead to Cash"
+    r"\|\s*([\d.]+)\s+([^|]+?)\s*"        # L2  "4.5 Manage Sales Orders"
+    r"\|\s*([\d.]+)\s+([^|]+?)\s*"        # L3
+    r"\|\s*([\d.]+)\s+([^|]+?)\s*"        # L4
+    r"\|\s*(SPARK-\d+)\s*\|"              # Lowest Level Key
+)
+# Some rows carry a key but no dotted L4 code ("| 09. EH&S | 10.2 ... |  |
+# SPARK-13454 |"), so the key column is scanned separately from the full row.
+# "Lowest Level Key" is the only SPARK-bearing column in the file, across both
+# of its sheets, which is what makes the loose cell match safe here.
+_REGISTER_KEY_RE = re.compile(r"\|\s*(SPARK-\d+)\s*\|")
+REGISTER_VALUE_CHAIN = "lead to cash"
+_register_cache: dict[str, Any] | None = None
+
+
+def load_process_register() -> dict[str, Any]:
+    """Read the L1-L4 register.
+
+    Returns `keys` -- every Lowest Level Key in the file, across all eleven
+    value chains, so none of them can be mistaken for a functional spec -- and
+    `steps`, the Lead-to-Cash L4 activities only, since that is the design this
+    graph covers. Each step carries its name and its `jira_key`.
+    """
+    global _register_cache
+    if _register_cache is not None:
+        return _register_cache
+
+    keys: set[str] = set()
+    steps: dict[str, dict[str, str]] = {}
+    try:
+        text = REGISTER_MD.read_text(encoding="utf-8", errors="ignore")
+        keys.update(_REGISTER_KEY_RE.findall(text))
+        for l1_num, l1_name, _l2, _l2n, _l3, _l3n, l4, l4_name, key in _REGISTER_ROW_RE.findall(text):
+            if l1_name.strip().lower() != REGISTER_VALUE_CHAIN:
+                continue
+            # Rows repeat across sheets; the first spelling of a step wins.
+            steps.setdefault(l4, {"name": l4_name.strip(), "jira_key": key})
+    except FileNotFoundError:
+        logger.warning("Process register not found at %s; Jira keys will be absent", REGISTER_MD)
+    except Exception as e:  # a malformed table must not take the whole graph down
+        logger.warning("Could not read the process register at %s: %s", REGISTER_MD, e)
+
+    _register_cache = {"keys": keys, "steps": steps}
+    logger.info("Process register: %d keys, %d Lead-to-Cash steps", len(keys), len(steps))
+    return _register_cache
 
 
 def extract_graph(force: bool = False) -> dict[str, Any]:
@@ -158,8 +413,59 @@ def extract_graph(force: bool = False) -> dict[str, Any]:
                 if not any(f[0].name == p.name for f in files_to_process):
                     files_to_process.append((p, f"knowledge_base/{p.name}"))
 
-    # Track process descriptions if found in content
-    proc_descriptions: dict[str, str] = {}
+    # Real process hierarchy, read from the BPML workbook rather than guessed.
+    bpml = load_bpml_hierarchy()
+    bpml_parent: dict[str, str] = bpml["parent"]
+    bpml_name: dict[str, str] = bpml["name"]
+
+    def link_ancestors(code: str) -> None:
+        """Chain a process up to its value chain through the BPML hierarchy.
+
+        Codes absent from the workbook are left without a parent rather than
+        given a made-up one; the `walked` set stops a cycle in the source data
+        from looping forever.
+        """
+        child_code = code
+        walked = {code}
+        while True:
+            parent_code = bpml_parent.get(child_code)
+            if not parent_code or parent_code in walked:
+                break
+            walked.add(parent_code)
+            parent_id = f"proc:{parent_code}"
+            add_node(
+                parent_id,
+                parent_code,
+                "process",
+                code=parent_code,
+                description=bpml_name.get(parent_code, f"BPML Process {parent_code}"),
+                in_bpml=True,
+                color="#059669",
+            )
+            add_edge(f"proc:{child_code}", parent_id, "subprocess_of", "Subprocess of")
+            child_code = parent_code
+
+    # 3b. Lead-to-Cash L4 steps, from the process register.
+    #
+    # The register is authoritative for the lowest level of the taxonomy the way
+    # the BPML workbook is for the levels above it, so the steps are read from
+    # it directly rather than waiting for a document to happen to cite one. Each
+    # carries its Jira id as the `jira_key` property -- the register's own
+    # "Lowest Level Key" -- instead of becoming a spec node of its own.
+    register = load_process_register()
+    register_keys: set[str] = register["keys"]
+    for step_code, step in sorted(register["steps"].items()):
+        add_node(
+            f"proc:{step_code}",
+            step_code,
+            "process",
+            code=step_code,
+            description=bpml_name.get(step_code) or step["name"],
+            in_bpml=step_code in bpml_name,
+            jira_key=step["jira_key"],
+            color="#10b981",
+        )
+        link_ancestors(step_code)
 
     for path, rel_source in files_to_process:
         doc_id = f"doc:{path.name}"
@@ -191,24 +497,26 @@ def extract_graph(force: bool = False) -> dict[str, Any]:
             color="#64748b",
         )
 
-        # Connect Document to Stream
-        for sid in STREAMS:
-            if sid.lower() in path.name.lower() or sid in content[:600]:
+        # The filename carries entities the body sometimes never repeats, so it is
+        # searched alongside the text with its separators opened out into spaces.
+        filename_text = re.sub(r"[_\-]+", " ", path.stem)
+        # Underscores are word characters, so "ZZ1_L2C_SP21175_CODICECIG" would hide
+        # the stream from a word-bounded search. Opening them out keeps SAP field and
+        # column names readable without loosening the boundaries themselves.
+        haystack = f"{filename_text}\n" + content.replace("_", " ")
+
+        # Connect Document to Stream. The whole document is searched: the old
+        # 600-character window missed files such as billing_form_translations,
+        # which names L2C 54 times but not in its opening table header.
+        for sid, pattern in STREAM_RE.items():
+            if pattern.search(haystack):
                 add_edge(doc_id, f"stream:{sid}", "belongs_to", "Belongs to Stream")
 
         # Connect Document to Systems
-        if any(k in content for k in ["S/4", "S4", "S4HANA", "S/4HANA"]):
-            add_edge(doc_id, "system:S4HANA", "runs_on", "Executes on S/4")
-        if "ECC" in content:
-            add_edge(doc_id, "system:ECC", "interacts_with", "Interacts with ECC")
-        if "Salesforce" in content or "salesforce" in content:
-            add_edge(doc_id, "system:Salesforce", "integrates_with", "Integrates with CRM")
-        if "SOVOS" in content or "sovos" in content:
-            add_edge(doc_id, "system:SOVOS", "interfaces_with", "Tax Engine Interface")
-        if "Fiori" in content or "fiori" in content:
-            add_edge(doc_id, "system:Fiori", "uses_ui", "Fiori Custom App")
-        if "eCommerce" in content or "ecommerce" in content:
-            add_edge(doc_id, "system:eCommerce", "connects_to", "eCommerce Portal")
+        for sys_key, pattern in SYSTEM_RE.items():
+            if pattern.search(haystack):
+                relation, edge_label = SYSTEM_EDGE[sys_key]
+                add_edge(doc_id, f"system:{sys_key}", relation, edge_label)
 
         # Extract BPML Process Codes
         found_codes = set(CODE_RE.findall(content))
@@ -216,46 +524,61 @@ def extract_graph(force: bool = False) -> dict[str, Any]:
             full_code = f"{prefix}-{code_num}"
             proc_id = f"proc:{full_code}"
 
-            # Extract possible short title or header near the code
+            # Prefer the official name. Otherwise take the text that follows the code
+            # on its own line, matched on a boundary so that "DM-270-030" does not
+            # pick up the row belonging to "DM-270-030-010".
             match_line = ""
+            boundary = re.compile(rf"{re.escape(full_code)}(?!-?\d)")
             for line in content.splitlines():
-                if full_code in line and len(line.strip()) < 100:
-                    match_line = line.strip().strip("#* -")
-                    break
+                m = boundary.search(line)
+                if m:
+                    # Drop the separator that follows the code, then stop at the next
+                    # table cell so a neighbouring column is not pulled in as the name.
+                    tail = line[m.end():].lstrip(" \t|#*-–:")
+                    tail = re.sub(r"\s*\|.*$", "", tail)
+                    candidate = re.sub(r"\s+", " ", tail).strip()
+                    if candidate and candidate.lower() != "[illegible]":
+                        match_line = candidate
+                        break
 
             add_node(
                 proc_id,
                 full_code,
                 "process",
                 code=full_code,
-                description=match_line or f"BPML Process Step {full_code}",
+                description=bpml_name.get(full_code)
+                or match_line
+                or f"BPML Process Step {full_code}",
+                in_bpml=full_code in bpml_name,
                 color="#10b981",
             )
             add_edge(doc_id, proc_id, "specifies_process", "Specifies Process")
 
-            # Hierarchy: Link sub-process to parent process
-            parts = code_num.split("-")
-            if len(parts) > 1:
-                parent_code = f"{prefix}-" + "-".join(parts[:-1])
-                parent_id = f"proc:{parent_code}"
-                add_node(
-                    parent_id,
-                    parent_code,
-                    "process",
-                    code=parent_code,
-                    description=f"Parent Process {parent_code}",
-                    color="#059669",
-                )
-                add_edge(proc_id, parent_id, "subprocess_of", "Subprocess of")
+            # Hierarchy: walk the real parent chain from the BPML workbook. Splitting
+            # the code string used to invent parents ("O-030-010" -> "O-030") that do
+            # not exist in the hierarchy at all; the true parent of O-030-010 is the
+            # numbered process 4.5.2.4 Validate/Perform Order Readiness. Codes absent
+            # from the workbook are left without a parent rather than given a made-up one.
+            link_ancestors(full_code)
 
-        # Extract Tickets / Functional Specifications
-        found_tickets = set(TICKET_RE.findall(content))
+        # Extract Tickets / Functional Specifications. The filename is included
+        # because some documents never repeat their own ticket in the body, e.g.
+        # "SPARK-51136 - ATP and TRS check.docx".
+        found_tickets = set(TICKET_RE.findall(haystack))
         for t_num in found_tickets:
             ticket_id = f"SPARK-{t_num}"
+            # A Lowest Level Key names a process step, not a functional spec.
+            # It lives as `jira_key` on the step node and must never become an
+            # entity here, or the register's key column swamps the real tickets.
+            if ticket_id in register_keys:
+                continue
             t_node = f"spec:{ticket_id}"
 
-            # Check if this document is the primary spec for this ticket
-            is_primary = ticket_id.lower() in path.name.lower()
+            # A document is the primary spec when its filename names the ticket.
+            # Matching the full "SPARK-NNNNN" missed the common house styles
+            # "SPARK_FS_L2C-21265-..." and "SPARK -22234-...", so the number is
+            # matched on its own within the filename.
+            is_primary = re.search(rf"\b{t_num}\b", filename_text) is not None
 
             add_node(
                 t_node,

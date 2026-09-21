@@ -14,37 +14,47 @@ skinparam NoteBorderColor #E0C46C
 actor "User" as User
 participant "Web UI" as UI #E8F5E9
 participant "Converter" as Conv #FFF3E0
-participant "RAG" as RAG #F3E5F5
-boundary "Cohere Embed" as Cohere #ECEFF1
+database "Markdown corpus" as Files #ECEFF1
+participant "RAG engine" as RAG #F3E5F5
+boundary "Ollama bge-m3\n(local)" as Ollama #ECEFF1
 database "PostgreSQL\n(pgvector)" as PG #ECEFF1
 boundary "Anthropic Claude" as Claude #ECEFF1
+participant "Graph engine" as KG #E3F2FD
 
 == Step 1 — Upload and convert ==
 User -> UI : drops **Workshop.pptx**
 UI -> Conv : convert
 Conv -> Conv : Docling + OCR → **Markdown**
+Conv -> Files : output.md
 
 == Step 2 — Chunk, embed, store ==
 UI -> RAG : embed the Markdown
+RAG -> Files : read .md
 RAG -> RAG : split into **chunks**
-RAG -> Cohere : embed chunks
-Cohere --> RAG : vectors
+RAG -> Ollama : embed chunks (local)
+Ollama --> RAG : 1024-d vectors
 RAG -> PG : store chunks + vectors
 
-== Step 3 — Ask ==
+== Step 3 — Ask RAG ==
 User -> UI : "Who validated 7.1.12.3?"
 UI -> RAG : ask (SSE)
-RAG -> Cohere : embed question
 RAG -> PG : vector + keyword search
 PG --> RAG : **top-k chunks**
 RAG -> Claude : excerpts + question
 Claude --> RAG : answer tokens
-RAG --> UI : SSE stream
 UI --> User : 💬 answer with [n] citations
 
+== Step 4 — Ask the graph ==
+User -> UI : "How does eCommerce connect to S/4HANA?"
+UI -> KG : query_graph()
+KG -> Files : read the **same** .md corpus
+KG -> KG : BFS + 2-hop expansion
+KG --> User : 🕸️ hop-by-hop path (no LLM, no SQL)
+
 note across
-  Claude never touches the database: retrieval (vector + BM25, fused)
-  happens in rag.py, and Claude only sees the top-k excerpts.
+  Two engines over one corpus. RAG retrieves (vector + BM25, fused) and lets
+  Claude write a cited answer; the graph engine traverses and answers from
+  structure alone. Embedding runs locally on Ollama.
   Full sequence: system-workflow.png
 end note
 

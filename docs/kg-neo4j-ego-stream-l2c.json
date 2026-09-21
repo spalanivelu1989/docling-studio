@@ -1,0 +1,716 @@
+{
+  "nodes": [
+    {
+      "id": "n0",
+      "position": {
+        "x": 0,
+        "y": -500
+      },
+      "caption": "Lead to Cash (L2C)",
+      "labels": [
+        "Stream"
+      ],
+      "properties": {
+        "code": "L2C",
+        "description": "End-to-end sales order management, pricing, billing, logistics, and customer collections."
+      },
+      "style": {
+        "node-color": "#EDE9FE",
+        "border-color": "#8B5CF6",
+        "radius": 130
+      }
+    },
+    {
+      "id": "n1",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "caption": "\u00d748",
+      "labels": [
+        "Document"
+      ],
+      "properties": {
+        "count": "48"
+      },
+      "style": {
+        "node-color": "#F1F5F9",
+        "border-color": "#64748B",
+        "radius": 110
+      }
+    },
+    {
+      "id": "n2",
+      "position": {
+        "x": -3990,
+        "y": 520
+      },
+      "caption": "SAP S/4HANA",
+      "labels": [
+        "System"
+      ],
+      "properties": {},
+      "style": {
+        "node-color": "#E0F2FE",
+        "border-color": "#0284C7",
+        "radius": 100
+      }
+    },
+    {
+      "id": "n3",
+      "position": {
+        "x": -3610,
+        "y": 520
+      },
+      "caption": "SAP ECC",
+      "labels": [
+        "System"
+      ],
+      "properties": {},
+      "style": {
+        "node-color": "#E0F2FE",
+        "border-color": "#0284C7",
+        "radius": 100
+      }
+    },
+    {
+      "id": "n4",
+      "position": {
+        "x": -3230,
+        "y": 520
+      },
+      "caption": "SAP Fiori",
+      "labels": [
+        "System"
+      ],
+      "properties": {},
+      "style": {
+        "node-color": "#E0F2FE",
+        "border-color": "#0284C7",
+        "radius": 100
+      }
+    },
+    {
+      "id": "n5",
+      "position": {
+        "x": -2850,
+        "y": 520
+      },
+      "caption": "Solvay@eCommerce",
+      "labels": [
+        "System"
+      ],
+      "properties": {},
+      "style": {
+        "node-color": "#E0F2FE",
+        "border-color": "#0284C7",
+        "radius": 100
+      }
+    },
+    {
+      "id": "n6",
+      "position": {
+        "x": -2470,
+        "y": 520
+      },
+      "caption": "WP1 (Legacy ERP)",
+      "labels": [
+        "System"
+      ],
+      "properties": {},
+      "style": {
+        "node-color": "#E0F2FE",
+        "border-color": "#0284C7",
+        "radius": 100
+      }
+    },
+    {
+      "id": "n7",
+      "position": {
+        "x": -2090,
+        "y": 520
+      },
+      "caption": "PF1 (Legacy ERP)",
+      "labels": [
+        "System"
+      ],
+      "properties": {},
+      "style": {
+        "node-color": "#E0F2FE",
+        "border-color": "#0284C7",
+        "radius": 100
+      }
+    },
+    {
+      "id": "n8",
+      "position": {
+        "x": -1710,
+        "y": 520
+      },
+      "caption": "M3 (Legacy ERP)",
+      "labels": [
+        "System"
+      ],
+      "properties": {},
+      "style": {
+        "node-color": "#E0F2FE",
+        "border-color": "#0284C7",
+        "radius": 100
+      }
+    },
+    {
+      "id": "n9",
+      "position": {
+        "x": -1330,
+        "y": 520
+      },
+      "caption": "Record to Report (R2R)",
+      "labels": [
+        "Stream"
+      ],
+      "properties": {},
+      "style": {
+        "node-color": "#EDE9FE",
+        "border-color": "#8B5CF6",
+        "radius": 100
+      }
+    },
+    {
+      "id": "n10",
+      "position": {
+        "x": -950,
+        "y": 520
+      },
+      "caption": "SAP CPI",
+      "labels": [
+        "System"
+      ],
+      "properties": {},
+      "style": {
+        "node-color": "#E0F2FE",
+        "border-color": "#0284C7",
+        "radius": 100
+      }
+    },
+    {
+      "id": "n11",
+      "position": {
+        "x": -570,
+        "y": 520
+      },
+      "caption": "Coface",
+      "labels": [
+        "System"
+      ],
+      "properties": {},
+      "style": {
+        "node-color": "#E0F2FE",
+        "border-color": "#0284C7",
+        "radius": 100
+      }
+    },
+    {
+      "id": "n12",
+      "position": {
+        "x": -190,
+        "y": 520
+      },
+      "caption": "SAP GTS",
+      "labels": [
+        "System"
+      ],
+      "properties": {},
+      "style": {
+        "node-color": "#E0F2FE",
+        "border-color": "#0284C7",
+        "radius": 100
+      }
+    },
+    {
+      "id": "n13",
+      "position": {
+        "x": 190,
+        "y": 520
+      },
+      "caption": "Salesforce (CRM)",
+      "labels": [
+        "System"
+      ],
+      "properties": {},
+      "style": {
+        "node-color": "#E0F2FE",
+        "border-color": "#0284C7",
+        "radius": 100
+      }
+    },
+    {
+      "id": "n14",
+      "position": {
+        "x": 570,
+        "y": 520
+      },
+      "caption": "Esker",
+      "labels": [
+        "System"
+      ],
+      "properties": {},
+      "style": {
+        "node-color": "#E0F2FE",
+        "border-color": "#0284C7",
+        "radius": 100
+      }
+    },
+    {
+      "id": "n15",
+      "position": {
+        "x": 950,
+        "y": 520
+      },
+      "caption": "Elemica",
+      "labels": [
+        "System"
+      ],
+      "properties": {},
+      "style": {
+        "node-color": "#E0F2FE",
+        "border-color": "#0284C7",
+        "radius": 100
+      }
+    },
+    {
+      "id": "n16",
+      "position": {
+        "x": 1330,
+        "y": 520
+      },
+      "caption": "Idea to Delivery (I2D)",
+      "labels": [
+        "Stream"
+      ],
+      "properties": {},
+      "style": {
+        "node-color": "#EDE9FE",
+        "border-color": "#8B5CF6",
+        "radius": 100
+      }
+    },
+    {
+      "id": "n17",
+      "position": {
+        "x": 1710,
+        "y": 520
+      },
+      "caption": "Procure to Pay (P2P)",
+      "labels": [
+        "Stream"
+      ],
+      "properties": {},
+      "style": {
+        "node-color": "#EDE9FE",
+        "border-color": "#8B5CF6",
+        "radius": 100
+      }
+    },
+    {
+      "id": "n18",
+      "position": {
+        "x": 2090,
+        "y": 520
+      },
+      "caption": "OMP",
+      "labels": [
+        "System"
+      ],
+      "properties": {},
+      "style": {
+        "node-color": "#E0F2FE",
+        "border-color": "#0284C7",
+        "radius": 100
+      }
+    },
+    {
+      "id": "n19",
+      "position": {
+        "x": 2470,
+        "y": 520
+      },
+      "caption": "SAP MDG",
+      "labels": [
+        "System"
+      ],
+      "properties": {},
+      "style": {
+        "node-color": "#E0F2FE",
+        "border-color": "#0284C7",
+        "radius": 100
+      }
+    },
+    {
+      "id": "n20",
+      "position": {
+        "x": 2850,
+        "y": 520
+      },
+      "caption": "SOVOS (Tax Engine)",
+      "labels": [
+        "System"
+      ],
+      "properties": {},
+      "style": {
+        "node-color": "#E0F2FE",
+        "border-color": "#0284C7",
+        "radius": 100
+      }
+    },
+    {
+      "id": "n21",
+      "position": {
+        "x": 3230,
+        "y": 520
+      },
+      "caption": "SAP EWM",
+      "labels": [
+        "System"
+      ],
+      "properties": {},
+      "style": {
+        "node-color": "#E0F2FE",
+        "border-color": "#0284C7",
+        "radius": 100
+      }
+    },
+    {
+      "id": "n22",
+      "position": {
+        "x": 3610,
+        "y": 520
+      },
+      "caption": "41 distinct",
+      "labels": [
+        "Spec"
+      ],
+      "properties": {
+        "count": "41"
+      },
+      "style": {
+        "node-color": "#FFEDD5",
+        "border-color": "#F97316",
+        "radius": 100
+      }
+    },
+    {
+      "id": "n23",
+      "position": {
+        "x": 3990,
+        "y": 520
+      },
+      "caption": "53 distinct",
+      "labels": [
+        "Process"
+      ],
+      "properties": {
+        "count": "53"
+      },
+      "style": {
+        "node-color": "#DCFCE7",
+        "border-color": "#10B981",
+        "radius": 100
+      }
+    }
+  ],
+  "relationships": [
+    {
+      "id": "r0",
+      "type": "BELONGS_TO",
+      "fromId": "n1",
+      "toId": "n0",
+      "properties": {
+        "count": "48"
+      },
+      "style": {}
+    },
+    {
+      "id": "r1",
+      "type": "RUNS_ON",
+      "fromId": "n1",
+      "toId": "n2",
+      "properties": {
+        "count": "25"
+      },
+      "style": {}
+    },
+    {
+      "id": "r2",
+      "type": "INTERACTS_WITH",
+      "fromId": "n1",
+      "toId": "n3",
+      "properties": {
+        "count": "15"
+      },
+      "style": {}
+    },
+    {
+      "id": "r3",
+      "type": "USES_UI",
+      "fromId": "n1",
+      "toId": "n4",
+      "properties": {
+        "count": "19"
+      },
+      "style": {}
+    },
+    {
+      "id": "r4",
+      "type": "CONNECTS_TO",
+      "fromId": "n1",
+      "toId": "n5",
+      "properties": {
+        "count": "7"
+      },
+      "style": {}
+    },
+    {
+      "id": "r5",
+      "type": "INTERACTS_WITH",
+      "fromId": "n1",
+      "toId": "n6",
+      "properties": {
+        "count": "9"
+      },
+      "style": {}
+    },
+    {
+      "id": "r6",
+      "type": "INTERACTS_WITH",
+      "fromId": "n1",
+      "toId": "n7",
+      "properties": {
+        "count": "9"
+      },
+      "style": {}
+    },
+    {
+      "id": "r7",
+      "type": "INTERACTS_WITH",
+      "fromId": "n1",
+      "toId": "n8",
+      "properties": {
+        "count": "5"
+      },
+      "style": {}
+    },
+    {
+      "id": "r8",
+      "type": "BELONGS_TO",
+      "fromId": "n1",
+      "toId": "n9",
+      "properties": {
+        "count": "10"
+      },
+      "style": {}
+    },
+    {
+      "id": "r9",
+      "type": "INTEGRATES_WITH",
+      "fromId": "n1",
+      "toId": "n10",
+      "properties": {
+        "count": "7"
+      },
+      "style": {}
+    },
+    {
+      "id": "r10",
+      "type": "INTERFACES_WITH",
+      "fromId": "n1",
+      "toId": "n11",
+      "properties": {
+        "count": "2"
+      },
+      "style": {}
+    },
+    {
+      "id": "r11",
+      "type": "INTERACTS_WITH",
+      "fromId": "n1",
+      "toId": "n12",
+      "properties": {
+        "count": "7"
+      },
+      "style": {}
+    },
+    {
+      "id": "r12",
+      "type": "INTEGRATES_WITH",
+      "fromId": "n1",
+      "toId": "n13",
+      "properties": {
+        "count": "4"
+      },
+      "style": {}
+    },
+    {
+      "id": "r13",
+      "type": "INTERFACES_WITH",
+      "fromId": "n1",
+      "toId": "n14",
+      "properties": {
+        "count": "7"
+      },
+      "style": {}
+    },
+    {
+      "id": "r14",
+      "type": "INTERFACES_WITH",
+      "fromId": "n1",
+      "toId": "n15",
+      "properties": {
+        "count": "5"
+      },
+      "style": {}
+    },
+    {
+      "id": "r15",
+      "type": "BELONGS_TO",
+      "fromId": "n1",
+      "toId": "n16",
+      "properties": {
+        "count": "8"
+      },
+      "style": {}
+    },
+    {
+      "id": "r16",
+      "type": "BELONGS_TO",
+      "fromId": "n1",
+      "toId": "n17",
+      "properties": {
+        "count": "2"
+      },
+      "style": {}
+    },
+    {
+      "id": "r17",
+      "type": "INTERFACES_WITH",
+      "fromId": "n1",
+      "toId": "n18",
+      "properties": {
+        "count": "2"
+      },
+      "style": {}
+    },
+    {
+      "id": "r18",
+      "type": "INTERACTS_WITH",
+      "fromId": "n1",
+      "toId": "n19",
+      "properties": {
+        "count": "1"
+      },
+      "style": {}
+    },
+    {
+      "id": "r19",
+      "type": "INTERFACES_WITH",
+      "fromId": "n1",
+      "toId": "n20",
+      "properties": {
+        "count": "2"
+      },
+      "style": {}
+    },
+    {
+      "id": "r20",
+      "type": "INTERACTS_WITH",
+      "fromId": "n1",
+      "toId": "n21",
+      "properties": {
+        "count": "2"
+      },
+      "style": {}
+    },
+    {
+      "id": "r21",
+      "type": "REFERENCES_TICKET",
+      "fromId": "n1",
+      "toId": "n22",
+      "properties": {
+        "count": "33"
+      },
+      "style": {}
+    },
+    {
+      "id": "r22",
+      "type": "IMPLEMENTS_TICKET",
+      "fromId": "n1",
+      "toId": "n22",
+      "properties": {
+        "count": "12"
+      },
+      "style": {}
+    },
+    {
+      "id": "r23",
+      "type": "SPECIFIES_PROCESS",
+      "fromId": "n1",
+      "toId": "n23",
+      "properties": {
+        "count": "61"
+      },
+      "style": {}
+    }
+  ],
+  "style": {
+    "font-family": "sans-serif",
+    "background-color": "#ffffff",
+    "background-image": "",
+    "background-size": "100%",
+    "node-color": "#ffffff",
+    "border-width": 4,
+    "border-color": "#000000",
+    "radius": 50,
+    "node-padding": 5,
+    "node-margin": 2,
+    "outside-position": "auto",
+    "node-icon-image": "",
+    "node-background-image": "",
+    "icon-position": "inside",
+    "icon-size": 64,
+    "caption-position": "inside",
+    "caption-max-width": 200,
+    "caption-color": "#000000",
+    "caption-font-size": 50,
+    "caption-font-weight": "normal",
+    "label-position": "inside",
+    "label-display": "pill",
+    "label-color": "#000000",
+    "label-background-color": "#ffffff",
+    "label-border-color": "#000000",
+    "label-border-width": 4,
+    "label-font-size": 40,
+    "label-padding": 5,
+    "label-margin": 4,
+    "directionality": "directed",
+    "detail-position": "inline",
+    "detail-orientation": "parallel",
+    "arrow-width": 5,
+    "arrow-color": "#000000",
+    "margin-start": 5,
+    "margin-end": 5,
+    "margin-peer": 20,
+    "attachment-start": "normal",
+    "attachment-end": "normal",
+    "relationship-icon-image": "",
+    "type-color": "#000000",
+    "type-background-color": "#ffffff",
+    "type-border-color": "#000000",
+    "type-border-width": 0,
+    "type-font-size": 16,
+    "type-padding": 5,
+    "property-position": "outside",
+    "property-alignment": "colon",
+    "property-color": "#000000",
+    "property-font-size": 16,
+    "property-font-weight": "normal"
+  }
+}

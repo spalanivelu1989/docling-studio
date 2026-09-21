@@ -125,7 +125,60 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(req),
     }).then((r) => json<GraphQueryResult>(r)),
+  graphModel: () => fetch("/api/graph/model").then((r) => json<GraphModel>(r)),
 };
+
+/** The graph's own schema, as a Neo4j Data Importer model. */
+export interface ModelConstraint {
+  type: string;
+  property: string;
+}
+
+export interface ModelProperty {
+  name: string;
+  type: string;
+  nullable: boolean;
+}
+
+/** A real node from the built graph, standing in for its label. */
+export interface ModelInstance {
+  id: string;
+  label: string;
+  detail: string;
+  degree: number;
+}
+
+export interface ModelNode {
+  id: string;
+  token: string;
+  position: { x: number; y: number };
+  properties: ModelProperty[];
+  constraints: ModelConstraint[];
+  built_as: string | null;
+  count: number;
+  instances: ModelInstance[];
+}
+
+export interface ModelRelationship {
+  id: string;
+  type: string;
+  from: string;
+  to: string;
+  count: number;
+}
+
+export interface GraphModel {
+  version: string;
+  nodes: ModelNode[];
+  relationships: ModelRelationship[];
+  stats: {
+    labels: number;
+    relationship_types: number;
+    constraints: number;
+    nodes: number;
+    edges: number;
+  };
+}
 
 export interface GraphNode {
   id: string;
@@ -142,6 +195,10 @@ export interface GraphNode {
   format?: string;
   chars?: number;
   is_primary?: boolean;
+  /** Present on BPML processes, and true when the workbook confirms the code. */
+  in_bpml?: boolean;
+  /** The register's "Lowest Level Key", on L4 steps only. */
+  jira_key?: string;
 }
 
 export interface GraphEdge {
@@ -352,3 +409,400 @@ export interface BatchEmbedSummary {
   db_chunks: number;
   seconds: number;
 }
+
+// --- Fit-Gap Copilot ----------------------------------------------------------
+
+export type FitGapClass =
+  | "FIT_STANDARD" | "FIT_CONFIG" | "GAP_DEVELOPMENT"
+  | "REUSE" | "ADAPT" | "CHALLENGE" | "SIMPLIFY" | "REPLACE" | "RETIRE"
+  | "UNKNOWN";
+
+export interface BpmlProcess {
+  code: string;
+  name: string;
+  level: number;
+  parent: string | null;
+  description?: string;
+  process_type?: string;
+  status?: string;
+  children?: string[];
+  stream?: string | null;
+  steps?: number;
+}
+
+export interface FitGapEvidence {
+  chunk_id: string;
+  doc: string;
+  heading_path: string;
+  quote: string;
+  supports: "for" | "against" | "context";
+}
+
+export interface FitGapImpact {
+  system: string;
+  interface_ref: string | null;
+  impact: "none" | "reuse" | "variant" | "new";
+  evidence: FitGapEvidence[];
+}
+
+export interface FitGapDecision {
+  question: string;
+  options: string[];
+  consequence_note: string;
+  evidence: FitGapEvidence[];
+}
+
+export interface FitGapIssue {
+  code: string;
+  severity: "hard" | "soft";
+  detail: string;
+}
+
+export interface FitGapReviewRecord {
+  id: number;
+  reviewer: string;
+  verdict: "accept" | "reject" | "refine";
+  corrected_classification: FitGapClass | null;
+  comment: string;
+  created_at: string;
+}
+
+export interface FitGapEntry {
+  id?: number;
+  run_id: string;
+  mode: "A" | "B";
+  bpml_code: string;
+  step_name: string;
+  classification: FitGapClass;
+  rationale: string;
+  confidence: number;
+  materiality: "low" | "medium" | "high";
+  linked_tickets: string[];
+  sap_objects: string[];
+  evidence: FitGapEvidence[];
+  integration_impacts: FitGapImpact[];
+  decision_points: FitGapDecision[];
+  open_questions: string[];
+  status: "proposed";
+  issues?: FitGapIssue[];
+  evidence_valid?: boolean;
+  tool_calls?: number;
+  seconds?: number;
+  reviews?: FitGapReviewRecord[];
+}
+
+export interface FitGapSynthesis {
+  reuse: {
+    steps: number;
+    classified: number;
+    coverage_pct: number;
+    reuse_pct: number | null;
+    by_class: Record<string, number>;
+    by_process: {
+      code: string; label: string; steps: number; fit: number; gap: number;
+      unknown: number; reuse_pct: number | null; avg_confidence: number;
+    }[];
+    confidence_bins: Record<string, number>;
+    avg_confidence: number;
+    note: string;
+  };
+  gaps: {
+    bpml_code: string; step_name: string; classification: FitGapClass; confidence: number;
+    materiality: "low" | "medium" | "high"; rationale: string; linked_tickets: string[];
+    sap_objects: string[]; evidence_count: number; docs: string[]; weight: number;
+  }[];
+  decisions: {
+    process: string; question: string; options: string[]; consequence_note: string;
+    steps: { bpml_code: string; step_name: string; classification: FitGapClass }[];
+    evidence: { doc: string; quote: string; chunk_id: string }[]; weight: number;
+  }[];
+  integrations: {
+    system: string; step_count: number; impacts: Record<string, number>; interfaces: string[];
+    steps: { bpml_code: string; step_name: string; impact: string; classification: string }[];
+  }[];
+  agenda: {
+    order: number; process: string; code: string; weight: number; minutes: number;
+    steps: number; unresolved: number; gaps: number; decisions: string[];
+    open_questions: string[]; pre_read: string[];
+  }[];
+}
+
+export interface FitGapStatus {
+  bpml: { sheet: string; available: boolean; error: string | null; processes: number; by_level: Record<string, number>; roots: BpmlProcess[] };
+  model: string;
+  prompt_hash: string;
+  max_tool_calls: number;
+  anthropic_key: boolean;
+  runs: number;
+  entries: number;
+  reviews: number;
+  chunks?: number;
+  documents?: number;
+  graph: { total_nodes: number; total_edges: number; types: Record<string, number> } | null;
+  error: string | null;
+}
+
+export interface FitGapPreview {
+  scope: BpmlProcess;
+  scope_label: string;
+  ancestry: BpmlProcess[];
+  steps_total: number;
+  steps_planned: number;
+  steps: BpmlProcess[];
+  model: string;
+  max_tool_calls: number;
+  estimated_input_tokens: number;
+  estimated_minutes: number;
+}
+
+export interface FitGapRunSummary {
+  id: string; mode: "A" | "B"; scope_bpml: string; scope_label: string; question: string;
+  holdout: boolean; status: string; started_at: string | null; finished_at: string | null;
+  model: string; entries: number; reuse_pct: number | null; coverage_pct: number | null;
+}
+
+export interface FitGapRunDetail extends Omit<FitGapRunSummary, "entries"> {
+  prompt_hash: string;
+  corpus_fingerprint: string;
+  params: Record<string, unknown>;
+  country: Record<string, unknown> | null;
+  input_tokens: number;
+  output_tokens: number;
+  synthesis: FitGapSynthesis | Record<string, never>;
+  entries: FitGapEntry[];
+}
+
+export interface FitGapRunBody {
+  mode?: "A" | "B";
+  scope_bpml: string;
+  country_profile?: Record<string, unknown> | null;
+  holdout?: boolean;
+  max_steps?: number;
+  concurrency?: number;
+  question?: string | null;
+}
+
+export interface FitGapHandlers {
+  scope: (d: {
+    run_id: string; scope: BpmlProcess; scope_label: string; ancestry: BpmlProcess[];
+    steps: BpmlProcess[]; mode: "A" | "B"; holdout: boolean; model: string;
+    prompt_hash: string; corpus_fingerprint: string;
+  }) => void;
+  stepStart: (d: { bpml_code: string; step_name: string; level: number }) => void;
+  toolCall: (d: { bpml_code: string; tool: string; summary: string; ms: number; error: string | null }) => void;
+  entry: (d: FitGapEntry) => void;
+  verifyFail: (d: { bpml_code: string; issues: FitGapIssue[]; repaired: boolean }) => void;
+  stepError: (d: { bpml_code: string; step_name: string; message: string }) => void;
+  synthesis: (d: FitGapSynthesis) => void;
+  done: (d: {
+    run_id: string; steps: number; entries: number; failed: number; seconds: number;
+    input_tokens: number; output_tokens: number;
+    verification: { entries: number; evidence_items: number; hard_issues: number; soft_issues: number; entries_repaired: number; evidence_valid_pct: number };
+  }) => void;
+  error: (message: string) => void;
+}
+
+/** Run the Copilot and dispatch its server-sent events. Hand-parsed for the
+ *  same reason as ask(): EventSource can only GET, and a reconnect would
+ *  re-run (and re-bill) the whole register. */
+export async function runFitGap(body: FitGapRunBody, on: FitGapHandlers, signal: AbortSignal) {
+  const res = await fetch("/api/fitgap/run", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal,
+  });
+  if (!res.ok || !res.body) await json(res);
+  const reader = res.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let cut;
+    while ((cut = buffer.indexOf("\n\n")) >= 0) {
+      const block = buffer.slice(0, cut);
+      buffer = buffer.slice(cut + 2);
+      let event = "message";
+      let data = "";
+      for (const line of block.split("\n")) {
+        if (line.startsWith("event: ")) event = line.slice(7);
+        else if (line.startsWith("data: ")) data += line.slice(6);
+      }
+      if (!data) continue;
+      const payload = JSON.parse(data);
+      if (event === "scope") on.scope(payload);
+      else if (event === "step_start") on.stepStart(payload);
+      else if (event === "tool_call") on.toolCall(payload);
+      else if (event === "entry") on.entry(payload);
+      else if (event === "verify_fail") on.verifyFail(payload);
+      else if (event === "step_error") on.stepError(payload);
+      else if (event === "synthesis") on.synthesis(payload);
+      else if (event === "done") on.done(payload);
+      else if (event === "error") on.error(payload.message);
+    }
+  }
+}
+
+export const fitgap = {
+  status: () => fetch("/api/fitgap/status").then((r) => json<FitGapStatus>(r)),
+  roots: () => fetch("/api/fitgap/scope").then((r) => json<{ roots: BpmlProcess[] }>(r)),
+  search: (q: string) =>
+    fetch(`/api/fitgap/scope?q=${encodeURIComponent(q)}`).then((r) => json<{ query: string; matches: BpmlProcess[] }>(r)),
+  node: (code: string) =>
+    fetch(`/api/fitgap/scope?code=${encodeURIComponent(code)}`).then((r) =>
+      json<{ process: BpmlProcess; ancestry: BpmlProcess[]; children: BpmlProcess[]; steps: number }>(r)),
+  preview: (body: FitGapRunBody) =>
+    fetch("/api/fitgap/preview", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }).then((r) => json<FitGapPreview>(r)),
+  runs: () => fetch("/api/fitgap/runs").then((r) => json<FitGapRunSummary[]>(r)),
+  run: (id: string) => fetch(`/api/fitgap/runs/${id}`).then((r) => json<FitGapRunDetail>(r)),
+  exportUrl: (id: string, format: "md" | "json" | "xlsx") => `/api/fitgap/runs/${id}/export?format=${format}`,
+  review: (entryId: number, body: { reviewer: string; verdict: string; corrected_classification?: string | null; comment?: string }) =>
+    fetch(`/api/fitgap/entries/${entryId}/review`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }).then((r) => json<FitGapReviewRecord>(r)),
+};
+
+// --- Evidence Agent -----------------------------------------------------------
+
+export type AnswerState =
+  | "supported" | "conflicted" | "documented_unknown"
+  | "not_in_corpus" | "false_premise" | "unrepresentable";
+
+export type Stance = "supports" | "opposes" | "context";
+
+export interface EvidenceSource {
+  chunk_id: string;
+  doc: string;
+  heading_path: string;
+  quote: string;
+  stance: Stance;
+  score: number | null;
+  vector_rank: number | null;
+  keyword_rank: number | null;
+  provenance: string[];
+  provenance_note: string;
+  verified: boolean | null;
+}
+
+export interface EvidenceGraphFact {
+  statement: string;
+  node_ids: string[];
+  edge_ids: string[];
+  meaningful: boolean;
+  note: string;
+}
+
+export interface ScoreTerm {
+  rule: string;
+  delta: number;
+  cap: number | null;
+  detail: string;
+}
+
+export interface EvidenceClaim {
+  text: string;
+  sources: EvidenceSource[];
+  graph_facts: EvidenceGraphFact[];
+  score: number;
+  score_terms: ScoreTerm[];
+  independent_sources: number;
+  note: string;
+}
+
+export interface EvidenceAnswer {
+  question: string;
+  state: AnswerState;
+  answer: string;
+  claims: EvidenceClaim[];
+  open_questions: string[];
+  limits: string[];
+  engines: Record<string, number>;
+  tool_calls: number;
+  input_tokens: number;
+  output_tokens: number;
+  seconds: number;
+  model: string;
+}
+
+export interface EvidenceToolCall {
+  tool: string;
+  engine: "rag" | "graph" | "bpml" | "other";
+  arguments: Record<string, unknown>;
+  summary: string;
+  ms: number;
+  error: string | null;
+  warning: string | null;
+}
+
+export interface EvidenceStatus {
+  model: string;
+  prompt_hash: string;
+  max_tool_calls: number;
+  anthropic_key: boolean;
+  tools: string[];
+  duplicate_groups: string[][];
+  duplicate_threshold: number;
+  hubs: { label: string; degree: number }[];
+  hub_degree: number;
+  graph: { total_nodes: number; total_edges: number } | null;
+  error: string | null;
+}
+
+export interface EvidenceHandlers {
+  toolCall: (c: EvidenceToolCall) => void;
+  answer: (a: EvidenceAnswer) => void;
+  error: (message: string) => void;
+}
+
+/** Ask the Evidence Agent and dispatch its server-sent events. Hand-parsed for
+ *  the same reason as ask(): EventSource can only GET, and a reconnect would
+ *  re-run (and re-bill) the whole investigation. */
+export async function askEvidence(
+  body: { question: string; holdout?: boolean },
+  on: EvidenceHandlers,
+  signal: AbortSignal,
+) {
+  const res = await fetch("/api/evidence/ask", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal,
+  });
+  if (!res.ok || !res.body) await json(res);
+  const reader = res.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let cut;
+    while ((cut = buffer.indexOf("\n\n")) >= 0) {
+      const block = buffer.slice(0, cut);
+      buffer = buffer.slice(cut + 2);
+      let event = "message";
+      let data = "";
+      for (const line of block.split("\n")) {
+        if (line.startsWith("event: ")) event = line.slice(7);
+        else if (line.startsWith("data: ")) data += line.slice(6);
+      }
+      if (!data) continue;
+      const payload = JSON.parse(data);
+      if (event === "tool_call") on.toolCall(payload);
+      else if (event === "answer") on.answer(payload);
+      else if (event === "error") on.error(payload.message);
+    }
+  }
+}
+
+export const evidence = {
+  status: () => fetch("/api/evidence/status").then((r) => json<EvidenceStatus>(r)),
+};

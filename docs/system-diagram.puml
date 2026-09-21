@@ -15,60 +15,78 @@ skinparam cloud {
   FontColor #FFFFFF
   BorderColor #111111
 }
+skinparam database {
+  BorderColor #666666
+}
 skinparam package {
   BorderColor #888888
   FontStyle bold
 }
 skinparam ArrowColor #444444
 
-actor "User / Browser" as User
+actor "User" as User
 
-package "Web UI (React SPA)" {
-  rectangle "Extract page\nupload · convert · embed" as Extract
-  rectangle "Ask page\nquestion · streamed answer" as Ask
+package "Web UI — React 19 SPA" {
+  rectangle "Extract page\nupload · convert · embed" as EXTRACT
+  rectangle "Ask page\nquestion · streamed answer" as ASK
+  rectangle "Graph page\nD3 force canvas" as GRAPHUI
 }
 
-package "FastAPI app.py · :8000" {
-  rectangle "API routes\n/api/upload · convert · embed · ask" as API
-  rectangle "preview.py\nLibreOffice + pdftoppm" as Preview
-  rectangle "converter.py\nDocling → Markdown" as Converter
-  rectangle "Image readers\nTesseract · table_cv · flow_cv" as Readers
-  rectangle "Qwen3-VL (local)\nMLX, optional" as Qwen
-  rectangle "rag.py\nindex · hybrid search · answer" as RAG
-  rectangle "md_chunker.py\nheading-aware chunks" as Chunker
+package "FastAPI — app.py · :8000" {
+  rectangle "API routes\nupload · convert · embed\nask (SSE) · graph" as API
+  rectangle "preview.py\nLibreOffice · pdftoppm" as PREVIEW
+  rectangle "converter.py\nDocling → Markdown" as CONV
+  rectangle "Image toolchain\nTesseract · table_cv · flow_cv · Qwen3-VL (MLX)" as READ
 }
 
-database "Workdir + knowledge_base/\nsource · output.md" as Files
-database "PostgreSQL + pgvector\nrag_documents · rag_chunks\nHNSW cosine · GIN tsvector" as PG
+package "Answering engines — one corpus, two paths" {
+  rectangle "rag.py\nchunk · hybrid search · answer" as RAG
+  rectangle "md_chunker.py\nheading-aware chunks" as CHUNK
+  rectangle "knowledge_graph.py\nregex extract · BFS · 2-hop" as KG
+}
 
-cloud "GPT / Claude vision\noptional, via Docling VLM" as VLM
-cloud "Cohere Embed\nembed-v4.0 · 1536-d" as Cohere
-cloud "Anthropic Claude\nclaude-opus-5" as Claude
+database "Markdown corpus\npkg/markdown · knowledge_base" as FILES
+database "PostgreSQL · :5433\npgvector HNSW · tsvector GIN" as PG
+database "knowledge_graph.json\n720 nodes · 842 edges" as KGJSON
 
-User -down-> Extract : HTTPS
-User -down-> Ask : HTTPS
-Extract -down-> API : REST/JSON
-Ask -down-> API : POST /api/ask
-API .up.> Ask : SSE stream
+rectangle "Ollama\nbge-m3 · :11434 · 1024-d" as OLLAMA
 
-API -down-> Preview : render
-API -down-> Converter : convert
-Converter -down-> Readers : pictures
-Readers -down-> Qwen : dense images
-Readers -down-> VLM : HTTPS, API key
-API -down-> Files : write .md
+cloud "Anthropic Claude\nclaude-opus-5" as CLAUDE
+cloud "GPT / Claude vision\noptional · Docling VLM" as VLM
 
-API -down-> RAG : embed / ask
-RAG -down-> Files : read .md
-RAG -down-> Chunker : chunk
-RAG -down-> Cohere : HTTPS, API key
+User -down-> EXTRACT : HTTPS
+User -down-> ASK : HTTPS
+User -down-> GRAPHUI : HTTPS
+
+EXTRACT -down-> API : REST/JSON
+ASK -down-> API : POST /api/ask
+API -up-> ASK : SSE stream
+GRAPHUI -down-> API : POST /api/graph/query
+
+API -right-> PREVIEW : render pages
+API -right-> CONV : convert(src)
+CONV -right-> READ : embedded pictures
+READ -down-> VLM : HTTPS · API key
+API -down-> FILES : write output.md
+
+API -down-> RAG : embed_doc · ask_events
+API -down-> KG : query_graph()
+
+RAG -right-> CHUNK : chunk_file()
+RAG -down-> FILES : read .md
+RAG -down-> OLLAMA : HTTP · localhost
 RAG -down-> PG : SQL (psycopg)
-RAG -down-> Claude : HTTPS stream
+RAG -down-> CLAUDE : HTTPS stream · API key
 
-note bottom of Claude
-  Dark boxes = external systems
-  this app depends on but does
-  not control.
+KG -down-> FILES : read .md · regex
+KG -down-> KGJSON : cache · load
+
+note bottom of CLAUDE
+  Dark boxes = external systems this
+  app depends on but does not control.
+  They are also the only things data
+  leaves the machine for — Ollama
+  embeds on localhost.
 end note
 
 @enduml

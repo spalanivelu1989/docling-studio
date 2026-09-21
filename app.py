@@ -319,6 +319,24 @@ def rebuild_graph() -> dict:
     return knowledge_graph.extract_graph(force=True)
 
 
+@app.get("/api/graph/model")
+def get_graph_model() -> dict:
+    """The graph's own schema as a Neo4j Data Importer model.
+
+    Generated from knowledge_graph.json by kg_data_importer_model.py, so the
+    labels, relationship types, properties and constraints all describe what
+    the extractor actually builds.
+    """
+    import graph_model
+
+    try:
+        return graph_model.load_model()
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc))
+    except Exception as exc:
+        raise HTTPException(500, f"{type(exc).__name__}: {exc}")
+
+
 class GraphQueryRequest(BaseModel):
     query: str = ""
     source_id: str | None = None
@@ -981,6 +999,24 @@ class Question(BaseModel):
     mode: str = "hybrid"
 
 
+class FitGapRun(BaseModel):
+    mode: str = "A"
+    scope_bpml: str = "4.0"
+    country_profile: dict | None = None
+    asis_dir: str | None = None
+    holdout: bool = False
+    max_steps: int = Field(default=6, ge=1, le=60)
+    concurrency: int = Field(default=3, ge=1, le=8)
+    question: str | None = None
+
+
+class FitGapReview(BaseModel):
+    reviewer: str = Field(min_length=1, max_length=120)
+    verdict: str
+    corrected_classification: str | None = None
+    comment: str = ""
+
+
 @app.post("/api/ask")
 def ask(body: Question) -> StreamingResponse:
     """Run the pipeline and stream it as server-sent events: `stage` as each
@@ -997,6 +1033,351 @@ def ask(body: Question) -> StreamingResponse:
             for event, data in rag.ask_events(body.question.strip(), body.k, body.mode):
                 yield sse(event, data)
         # rag.py exits with a message when a key or DATABASE_URL is missing.
+        except SystemExit as exc:
+            yield sse("error", {"message": str(exc)})
+        except Exception as exc:
+            yield sse("error", {"message": f"{type(exc).__name__}: {exc}"})
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+
+# --- Fit-Gap Copilot (fitgap/) ------------------------------------------------
+# A third component beside rag.py and knowledge_graph.py: it calls both through
+# fitgap/tools.py and never merges them. Every entry it produces is "proposed"
+# and waits for a named reviewer.
+
+
+@app.get("/fit-gap", response_class=HTMLResponse)
+@app.get("/fitgap", response_class=HTMLResponse)
+def fitgap_page() -> HTMLResponse:
+    return _spa()
+
+
+@app.get("/api/fitgap/status")
+def fitgap_status() -> dict:
+    """What the Copilot can see right now: the BPML sheet, the index, the
+    graph and the model. The page shows this before the first run so a missing
+    prerequisite is visible rather than a failed run."""
+    from fitgap import agent as fg_agent, bpml as fg_bpml, store as fg_store
+
+    info: dict = {
+        "bpml": fg_bpml.stats(),
+        "model": fg_agent.MODEL,
+        "prompt_hash": fg_agent.prompt_hash(),
+        "max_tool_calls": fg_agent.MAX_TOOL_CALLS,
+        "anthropic_key": bool(os.environ.get("ANTHROPIC_API_KEY")),
+        "runs": 0,
+        "entries": 0,
+        "reviews": 0,
+        "error": None,
+    }
+    try:
+        conn = fg_store.connect()
+        try:
+            fg_store.create_schema(conn)
+            info.update(fg_store.stats(conn))
+            row = conn.execute("SELECT count(*) FROM rag_chunks").fetchone()
+            info["chunks"] = row[0]
+            info["documents"] = conn.execute("SELECT count(*) FROM rag_documents").fetchone()[0]
+        finally:
+            conn.close()
+    except Exception as exc:
+        info["error"] = f"{type(exc).__name__}: {exc}"
+    try:
+        info["graph"] = knowledge_graph.extract_graph()["stats"]
+    except Exception:
+        info["graph"] = None
+    return info
+
+
+@app.get("/api/fitgap/scope")
+def fitgap_scope(q: str = "", code: str = "") -> dict:
+    """Resolve what the user typed to a place in the BPML hierarchy, or list a
+    node's children for the tree picker."""
+    from fitgap import bpml as fg_bpml
+
+    if code:
+        p = fg_bpml.get(code)
+        if not p:
+            raise HTTPException(404, f"{code} is not a BPML code")
+        return {
+            "process": p.full(),
+            "ancestry": [a.brief() for a in _fg_ancestry(p)],
+            "children": [c.full() for c in fg_bpml.children(p.code)],
+            "steps": len(fg_bpml.steps_in_scope(p.code)),
+        }
+    if q.strip():
+        hits = fg_bpml.search(q, limit=10)
+        return {"query": q, "matches": [
+            {**h.full(), "steps": len(fg_bpml.steps_in_scope(h.code))} for h in hits
+        ]}
+    return {"roots": [
+        {**r.full(), "steps": len(fg_bpml.steps_in_scope(r.code))} for r in fg_bpml.roots()
+    ]}
+
+
+def _fg_ancestry(p):
+    from fitgap import bpml as fg_bpml
+
+    out, cur = [], p.parent
+    while cur:
+        q = fg_bpml.get(cur)
+        if not q:
+            break
+        out.append(q)
+        cur = q.parent
+    return list(reversed(out))
+
+
+@app.post("/api/fitgap/preview")
+def fitgap_preview(req: "FitGapRun") -> dict:
+    from fitgap.orchestrator import preview as fg_preview
+    from fitgap.schemas import RunRequest
+
+    out = fg_preview(RunRequest(**req.model_dump()))
+    if out.get("error"):
+        raise HTTPException(400, out["error"])
+    return out
+
+
+@app.post("/api/fitgap/run")
+def fitgap_run(req: "FitGapRun") -> StreamingResponse:
+    """Stream one map-reduce over a BPML scope as server-sent events:
+    `scope`, `step_start`, `tool_call`, `entry`, `verify_fail`, `synthesis`,
+    `done`. A sync generator, so Starlette iterates it in the threadpool."""
+    from fitgap.orchestrator import run as fg_run
+    from fitgap.schemas import RunRequest
+
+    request = RunRequest(**req.model_dump())
+
+    def sse(event: str, data) -> str:
+        return f"event: {event}\ndata: {json.dumps(data, default=str)}\n\n"
+
+    def events():
+        try:
+            for event, data in fg_run(request):
+                yield sse(event, data)
+        except SystemExit as exc:
+            yield sse("error", {"message": str(exc)})
+        except Exception as exc:
+            yield sse("error", {"message": f"{type(exc).__name__}: {exc}"})
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.get("/api/fitgap/runs")
+def fitgap_runs(limit: int = 40) -> list[dict]:
+    from fitgap import store as fg_store
+
+    conn = fg_store.connect()
+    try:
+        fg_store.create_schema(conn)
+        return fg_store.list_runs(conn, limit)
+    finally:
+        conn.close()
+
+
+@app.get("/api/fitgap/runs/{run_id}")
+def fitgap_get_run(run_id: str) -> dict:
+    from fitgap import store as fg_store
+
+    conn = fg_store.connect()
+    try:
+        run = fg_store.get_run(conn, run_id)
+        if not run:
+            raise HTTPException(404, f"run {run_id} not found")
+        return run
+    finally:
+        conn.close()
+
+
+@app.get("/api/fitgap/runs/{run_id}/export")
+def fitgap_export(run_id: str, format: str = "md"):
+    """The register as a document. Markdown and JSON always; XLSX when
+    openpyxl is installed, which it is because bpml.py needs it."""
+    from fitgap import store as fg_store, synthesis as fg_synth
+
+    if format not in ("md", "json", "xlsx"):
+        raise HTTPException(400, "format must be md, json or xlsx")
+    conn = fg_store.connect()
+    try:
+        run = fg_store.get_run(conn, run_id)
+    finally:
+        conn.close()
+    if not run:
+        raise HTTPException(404, f"run {run_id} not found")
+
+    results = fg_store.to_results(run["entries"])
+    synth = run.get("synthesis") or fg_synth.synthesise(results)
+
+    if format == "json":
+        return StreamingResponse(
+            iter([json.dumps({"run": {k: v for k, v in run.items() if k != "entries"},
+                              "entries": run["entries"], "synthesis": synth},
+                             indent=2, default=str)]),
+            media_type="application/json",
+            headers={"Content-Disposition": f'attachment; filename="fitgap_{run_id}.json"'},
+        )
+    if format == "md":
+        text = fg_synth.to_markdown(run, results, synth)
+        return StreamingResponse(
+            iter([text]), media_type="text/markdown; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="fitgap_{run_id}.md"'},
+        )
+    return _fitgap_xlsx(run, results, synth, run_id)
+
+
+def _fitgap_xlsx(run: dict, results, synth: dict, run_id: str) -> StreamingResponse:
+    import io
+
+    import openpyxl
+    from openpyxl.styles import Alignment, Font
+
+    wb = openpyxl.Workbook()
+
+    def sheet(name: str, headers: list[str], rows: list[list]):
+        ws = wb.create_sheet(name[:31])
+        ws.append(headers)
+        for c in ws[1]:
+            c.font = Font(bold=True)
+        for r in rows:
+            ws.append(["\n".join(map(str, v)) if isinstance(v, list) else v for v in r])
+        for n, h in enumerate(headers, 1):
+            width = max(12, min(60, max([len(str(h))] + [len(str(r[n - 1])) for r in rows[:60]] or [12]) + 2))
+            ws.column_dimensions[ws.cell(1, n).column_letter].width = width
+        ws.freeze_panes = "A2"
+        for row in ws.iter_rows(min_row=2):
+            for c in row:
+                c.alignment = Alignment(vertical="top", wrap_text=True)
+        return ws
+
+    wb.remove(wb.active)
+    sheet("Register", ["BPML", "Step", "Class", "Confidence", "Materiality", "Status",
+                       "Rationale", "Tickets", "SAP objects", "Evidence", "Docs", "Verified"],
+          [[e.entry.bpml_code, e.entry.step_name, e.entry.classification, e.entry.confidence,
+            e.entry.materiality, e.entry.status, e.entry.rationale,
+            ", ".join(e.entry.linked_tickets), ", ".join(e.entry.sap_objects),
+            len(e.entry.evidence), sorted({ev.doc for ev in e.entry.evidence}),
+            "yes" if e.evidence_valid else "no"] for e in results])
+    sheet("Reuse", ["Process", "Steps", "Fit", "Gap", "Unknown", "Reuse %", "Avg confidence"],
+          [[p["label"], p["steps"], p["fit"], p["gap"], p["unknown"], p["reuse_pct"],
+            p["avg_confidence"]] for p in synth["reuse"]["by_process"]])
+    sheet("Gaps", ["BPML", "Step", "Class", "Confidence", "Materiality", "Tickets", "Rationale"],
+          [[g["bpml_code"], g["step_name"], g["classification"], g["confidence"],
+            g["materiality"], ", ".join(g["linked_tickets"]), g["rationale"]]
+           for g in synth["gaps"]])
+    sheet("Decisions", ["Process", "Question", "Options", "Consequence", "Raised by", "Weight"],
+          [[d["process"], d["question"], d["options"], d["consequence_note"],
+            ", ".join(s["bpml_code"] for s in d["steps"]), d["weight"]]
+           for d in synth["decisions"]])
+    sheet("Integrations", ["System", "Steps", "Impacts", "Interfaces"],
+          [[i["system"], i["step_count"], ", ".join(f"{k}x{v}" for k, v in i["impacts"].items()),
+            ", ".join(i["interfaces"])] for i in synth["integrations"]])
+    sheet("Agenda", ["#", "Process", "Minutes", "Weight", "Steps", "Gaps", "Unresolved",
+                     "Decisions", "Pre-read"],
+          [[s["order"], s["process"], s["minutes"], s["weight"], s["steps"], s["gaps"],
+            s["unresolved"], s["decisions"], s["pre_read"]] for s in synth["agenda"]])
+    sheet("Review", ["Entry id", "BPML", "Step", "Proposed class", "Confidence",
+                     "Reviewer", "Verdict (accept/reject/refine)", "Corrected class", "Comment"],
+          [[row.get("id"), row["bpml_code"], row["step_name"], row["classification"],
+            row["confidence"], "", "", "", ""] for row in run["entries"]])
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="fitgap_{run_id}.xlsx"'},
+    )
+
+
+@app.post("/api/fitgap/entries/{entry_id}/review")
+def fitgap_review(entry_id: int, body: "FitGapReview") -> dict:
+    from fitgap import store as fg_store
+    from fitgap.schemas import Review
+
+    conn = fg_store.connect()
+    try:
+        exists = conn.execute("SELECT 1 FROM fitgap_entries WHERE id = %s", (entry_id,)).fetchone()
+        if not exists:
+            raise HTTPException(404, f"entry {entry_id} not found")
+        return fg_store.add_review(conn, entry_id, Review(**body.model_dump()))
+    finally:
+        conn.close()
+
+
+
+# --- Evidence Agent (evidence/) -----------------------------------------------
+# A fourth query mode: one question, both engines, answered as scored claims.
+# Reuses fitgap/tools.py for retrieval and traversal; adds provenance,
+# near-duplicate and hub-artefact judgement on top.
+
+
+@app.get("/evidence", response_class=HTMLResponse)
+@app.get("/investigate", response_class=HTMLResponse)
+def evidence_page() -> HTMLResponse:
+    return _spa()
+
+
+@app.get("/api/evidence/status")
+def evidence_status() -> dict:
+    from evidence import agent as ev_agent, independence, paths
+
+    info: dict = {
+        "model": ev_agent.MODEL,
+        "prompt_hash": ev_agent.prompt_hash(),
+        "max_tool_calls": ev_agent.MAX_TOOL_CALLS,
+        "anthropic_key": bool(os.environ.get("ANTHROPIC_API_KEY")),
+        "tools": [t["name"] for t in ev_agent.tool_definitions()],
+        "error": None,
+    }
+    try:
+        d = independence.load()
+        info["duplicate_groups"] = [sorted(g) for g in d.groups]
+        info["duplicate_threshold"] = independence.DUPLICATE_AT
+    except Exception as exc:
+        info["error"] = f"{type(exc).__name__}: {exc}"
+    try:
+        g = knowledge_graph.extract_graph()
+        nodes = {n["id"]: n for n in g["nodes"]}
+        info["hubs"] = [{"label": nodes[i]["label"], "degree": d}
+                        for i, d in sorted(paths.hubs(g).items(), key=lambda kv: -kv[1])]
+        info["hub_degree"] = paths.HUB_DEGREE
+        info["graph"] = g["stats"]
+    except Exception:
+        info["hubs"] = []
+    return info
+
+
+class EvidenceQuestion(BaseModel):
+    question: str = Field(min_length=3, max_length=2000)
+    holdout: bool = False
+
+
+@app.post("/api/evidence/ask")
+def evidence_ask(body: EvidenceQuestion) -> StreamingResponse:
+    """Stream one investigation as server-sent events: `tool_call` as each
+    engine is queried, then `answer` or `error`. A sync generator, so
+    Starlette iterates it in the threadpool."""
+    from evidence import agent as ev_agent
+
+    def sse(event: str, data) -> str:
+        return f"event: {event}\ndata: {json.dumps(data, default=str)}\n\n"
+
+    def events():
+        try:
+            for event, data in ev_agent.run(body.question.strip(), holdout=body.holdout):
+                yield sse(event, data)
         except SystemExit as exc:
             yield sse("error", {"message": str(exc)})
         except Exception as exc:

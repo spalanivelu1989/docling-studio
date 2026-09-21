@@ -1,0 +1,278 @@
+{
+  "nodes": [
+    {
+      "id": "n0",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "caption": "",
+      "labels": [
+        "Document"
+      ],
+      "properties": {
+        "count": "83",
+        "filename": "string",
+        "source": "string",
+        "format": "string",
+        "chars": "integer"
+      },
+      "style": {
+        "node-color": "#F1F5F9",
+        "border-color": "#64748B",
+        "radius": 100
+      }
+    },
+    {
+      "id": "n1",
+      "position": {
+        "x": 0,
+        "y": -420
+      },
+      "caption": "",
+      "labels": [
+        "Stream"
+      ],
+      "properties": {
+        "count": "4",
+        "code": "string",
+        "description": "string"
+      },
+      "style": {
+        "node-color": "#EDE9FE",
+        "border-color": "#8B5CF6",
+        "radius": 100
+      }
+    },
+    {
+      "id": "n2",
+      "position": {
+        "x": 520,
+        "y": 0
+      },
+      "caption": "",
+      "labels": [
+        "System"
+      ],
+      "properties": {
+        "count": "18",
+        "code": "string",
+        "description": "string"
+      },
+      "style": {
+        "node-color": "#E0F2FE",
+        "border-color": "#0284C7",
+        "radius": 100
+      }
+    },
+    {
+      "id": "n3",
+      "position": {
+        "x": -520,
+        "y": 0
+      },
+      "caption": "",
+      "labels": [
+        "Spec"
+      ],
+      "properties": {
+        "count": "47",
+        "ticket": "string",
+        "is_primary": "boolean"
+      },
+      "style": {
+        "node-color": "#FFEDD5",
+        "border-color": "#F97316",
+        "radius": 100
+      }
+    },
+    {
+      "id": "n4",
+      "position": {
+        "x": 0,
+        "y": 420
+      },
+      "caption": "",
+      "labels": [
+        "Process"
+      ],
+      "properties": {
+        "count": "202",
+        "code": "string",
+        "description": "string",
+        "in_bpml": "boolean",
+        "jira_key": "string"
+      },
+      "style": {
+        "node-color": "#DCFCE7",
+        "border-color": "#10B981",
+        "radius": 100
+      }
+    }
+  ],
+  "relationships": [
+    {
+      "id": "r0",
+      "type": "SUBPROCESS_OF",
+      "fromId": "n4",
+      "toId": "n4",
+      "properties": {
+        "count": "185"
+      },
+      "style": {}
+    },
+    {
+      "id": "r1",
+      "type": "INTERACTS_WITH",
+      "fromId": "n0",
+      "toId": "n2",
+      "properties": {
+        "count": "70"
+      },
+      "style": {}
+    },
+    {
+      "id": "r2",
+      "type": "BELONGS_TO",
+      "fromId": "n0",
+      "toId": "n1",
+      "properties": {
+        "count": "70"
+      },
+      "style": {}
+    },
+    {
+      "id": "r3",
+      "type": "SPECIFIES_PROCESS",
+      "fromId": "n0",
+      "toId": "n4",
+      "properties": {
+        "count": "70"
+      },
+      "style": {}
+    },
+    {
+      "id": "r4",
+      "type": "REFERENCES_TICKET",
+      "fromId": "n0",
+      "toId": "n3",
+      "properties": {
+        "count": "41"
+      },
+      "style": {}
+    },
+    {
+      "id": "r5",
+      "type": "RUNS_ON",
+      "fromId": "n0",
+      "toId": "n2",
+      "properties": {
+        "count": "40"
+      },
+      "style": {}
+    },
+    {
+      "id": "r6",
+      "type": "USES_UI",
+      "fromId": "n0",
+      "toId": "n2",
+      "properties": {
+        "count": "28"
+      },
+      "style": {}
+    },
+    {
+      "id": "r7",
+      "type": "INTERFACES_WITH",
+      "fromId": "n0",
+      "toId": "n2",
+      "properties": {
+        "count": "21"
+      },
+      "style": {}
+    },
+    {
+      "id": "r8",
+      "type": "IMPLEMENTS_TICKET",
+      "fromId": "n0",
+      "toId": "n3",
+      "properties": {
+        "count": "13"
+      },
+      "style": {}
+    },
+    {
+      "id": "r9",
+      "type": "INTEGRATES_WITH",
+      "fromId": "n0",
+      "toId": "n2",
+      "properties": {
+        "count": "12"
+      },
+      "style": {}
+    },
+    {
+      "id": "r10",
+      "type": "CONNECTS_TO",
+      "fromId": "n0",
+      "toId": "n2",
+      "properties": {
+        "count": "10"
+      },
+      "style": {}
+    }
+  ],
+  "style": {
+    "font-family": "sans-serif",
+    "background-color": "#ffffff",
+    "background-image": "",
+    "background-size": "100%",
+    "node-color": "#ffffff",
+    "border-width": 4,
+    "border-color": "#000000",
+    "radius": 50,
+    "node-padding": 5,
+    "node-margin": 2,
+    "outside-position": "auto",
+    "node-icon-image": "",
+    "node-background-image": "",
+    "icon-position": "inside",
+    "icon-size": 64,
+    "caption-position": "inside",
+    "caption-max-width": 200,
+    "caption-color": "#000000",
+    "caption-font-size": 50,
+    "caption-font-weight": "normal",
+    "label-position": "inside",
+    "label-display": "pill",
+    "label-color": "#000000",
+    "label-background-color": "#ffffff",
+    "label-border-color": "#000000",
+    "label-border-width": 4,
+    "label-font-size": 40,
+    "label-padding": 5,
+    "label-margin": 4,
+    "directionality": "directed",
+    "detail-position": "inline",
+    "detail-orientation": "parallel",
+    "arrow-width": 5,
+    "arrow-color": "#000000",
+    "margin-start": 5,
+    "margin-end": 5,
+    "margin-peer": 20,
+    "attachment-start": "normal",
+    "attachment-end": "normal",
+    "relationship-icon-image": "",
+    "type-color": "#000000",
+    "type-background-color": "#ffffff",
+    "type-border-color": "#000000",
+    "type-border-width": 0,
+    "type-font-size": 16,
+    "type-padding": 5,
+    "property-position": "outside",
+    "property-alignment": "colon",
+    "property-color": "#000000",
+    "property-font-size": 16,
+    "property-font-weight": "normal"
+  }
+}

@@ -1,0 +1,58 @@
+@startuml kg-entity-relationships
+title Solvay SPARK Knowledge Graph — Entity–Relationship Map\n732 nodes · 882 edges · 5 entity types · 11 relations
+
+skinparam backgroundColor #FFFFFF
+skinparam defaultTextAlignment center
+skinparam defaultFontColor #1F2937
+skinparam shadowing false
+skinparam roundcorner 8
+skinparam nodesep 55
+skinparam ranksep 70
+skinparam ArrowColor #475569
+skinparam ArrowFontColor #1F2937
+skinparam ArrowFontSize 11
+skinparam rectangle {
+  FontSize 12
+  FontColor #1F2937
+}
+skinparam legend {
+  BorderColor #94A3B8
+  BackgroundColor #F8FAFC
+  FontColor #1F2937
+}
+
+' Fills are the type colours used in the Knowledge Graph page, lightened so all
+' text stays dark on a pale ground; the border carries the full-strength colour.
+
+' --- the fixed, hard-coded vocabulary -------------------------------------
+rectangle "<b>stream</b>  (4)\n<size:10>id: stream:<CODE></size>\n<size:10><i>fixed vocabulary — not discovered</i></size>\n--\n<size:10>L2C  Lead to Cash ....... 48</size>\n<size:10>R2R  Record to Report ... 11</size>\n<size:10>I2D  Idea to Delivery .... 9</size>\n<size:10>P2P  Procure to Pay ...... 2</size>" as STREAM #EDE9FE;line:8B5CF6;line.bold
+
+rectangle "<b>system</b>  (6)\n<size:10>id: system:<CODE></size>\n<size:10><i>fixed vocabulary — not discovered</i></size>\n--\n<size:10>S4HANA ..... SAP S/4HANA ... 40</size>\n<size:10>Fiori ...... SAP Fiori ..... 28</size>\n<size:10>ECC ........ SAP ECC ....... 25</size>\n<size:10>eCommerce .. Solvay@eCom ... 10</size>\n<size:10>Salesforce . CRM ............ 4</size>\n<size:10>SOVOS ...... Tax Engine ..... 2</size>" as SYSTEM #E0F2FE;line:0284C7;line.bold
+
+' --- discovered from the corpus -------------------------------------------
+rectangle "<b>document</b>  (83)\n<size:10>id: doc:<filename></size>\n<size:10>filename · source · format · chars</size>\n--\n<size:10><i><b>the hub</b> — every stream, system,</i></size>\n<size:10><i>process and spec edge starts here</i></size>" as DOC #F1F5F9;line:64748B;line.bold
+
+rectangle "<b>process</b>  (90)\n<size:10>id: proc:<code></size>\n<size:10>code · in_bpml (79 true / 11 false)</size>\n--\n<size:10>O-030-010  Identify Order</size>\n<size:10>4.5.2.4  Validate Order Readiness</size>" as PROC #DCFCE7;line:10B981;line.bold
+
+rectangle "<b>spec</b>  (549)\n<size:10>id: spec:SPARK-NNNNN</size>\n<size:10>ticket · is_primary</size>\n--\n<size:10>SPARK-22234 · SPARK-21930</size>" as SPEC #FFEDD5;line:F97316;line.bold
+
+DOC -up-> STREAM : <b>belongs_to</b>\n"Belongs to Stream" · 70
+DOC -right-> SYSTEM : <b>runs_on</b> "Executes on S/4" · 40\n<b>uses_ui</b> "Fiori Custom App" · 28\n<b>interacts_with</b> "Interacts with ECC" · 25\n<b>connects_to</b> "eCommerce Portal" · 10\n<b>integrates_with</b> "Integrates with CRM" · 4\n<b>interfaces_with</b> "Tax Engine Interface" · 2
+DOC -down-> PROC : <b>specifies_process</b>\n"Specifies Process" · 70
+DOC -left-> SPEC : <b>implements_ticket</b>\n"Primary Specification" · 13\n<b>references_ticket</b>\n"References Ticket" · 543
+PROC -down-> PROC : <b>subprocess_of</b>\n"Subprocess of" · 77\n<i>derived from the BPML workbook</i>
+
+legend bottom
+  <b>Reading the map</b>
+  Box colours match the node types on the Knowledge Graph page.
+  <b>stream</b> and <b>system</b> are a fixed vocabulary, hard-coded in the extractor —
+  a platform absent from that list gets no node, however often documents name it.
+  Every arrow is directed and starts at a document, except <b>subprocess_of</b>,
+  the only relation between two nodes of the same type.
+  Ten relations are matched in the document text; <b>subprocess_of</b> alone is derived,
+  looked up in BPML_ProcessesHierarchyExtended.xlsx.
+  Two systems are connected only through a document naming both — any longer
+  route runs via a stream, which is co-membership, not an integration.
+end legend
+
+@enduml

@@ -387,7 +387,7 @@ Known limits:
 
 ## Solvay SPARK Knowledge Graph & Query Engine
 
-Docling Studio includes an interactive enterprise Knowledge Graph (720 nodes, 842 edges) constructed from Solvay SPARK project specifications, business streams, core systems, and BPML process taxonomies.
+Docling Studio includes an interactive enterprise Knowledge Graph (354 nodes, 560 edges) constructed from Solvay SPARK project specifications, business streams, core systems, and BPML process taxonomies.
 
 Users can explore the ontology visually via an interactive D3 force-directed canvas and ask natural language questions (e.g. *"What specs are linked to Salesforce?"*, *"How does eCommerce connect to S/4HANA?"*, *"What is BPML process O-020-090?"*).
 

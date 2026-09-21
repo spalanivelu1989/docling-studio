@@ -1,5 +1,5 @@
 @startuml system-workflow
-title Docling Studio — Workflow (upload a deck, index it, ask a question)
+title Docling Studio — Workflow (upload a deck, index it, ask RAG, then ask the graph)
 
 skinparam backgroundColor #FFFFFF
 skinparam shadowing false
@@ -16,12 +16,14 @@ participant "Web UI" as UI #E8F5E9
 participant "FastAPI\n(app.py)" as API #E3F2FD
 participant "converter.py\n+ Docling" as Conv #FFF3E0
 participant "Image readers\n(Tesseract · CV)" as Read #F3E5F5
+database "Markdown corpus\n(pkg/markdown · knowledge_base)" as Files #ECEFF1
 participant "rag.py" as RAG #E8F5E9
 participant "md_chunker.py" as Chunk #E3F2FD
-database "Files\n(workdir · knowledge_base)" as Files #ECEFF1
-boundary "Cohere Embed\n(embed-v4.0)" as Cohere #ECEFF1
+boundary "Ollama bge-m3\n(local · :11434)" as Ollama #ECEFF1
 database "PostgreSQL\n(pgvector)" as PG #ECEFF1
 boundary "Anthropic Claude\n(claude-opus-5)" as Claude #ECEFF1
+participant "knowledge_graph.py" as KG #FFF3E0
+database "knowledge_graph\n.json" as KGJson #ECEFF1
 
 User -> UI : 1. drops **Workshop.pptx**
 
@@ -56,12 +58,12 @@ activate API
 API -> Files : copy to knowledge_base/Workshop_pptx.md
 API -> RAG : index_file()
 activate RAG
-RAG -> PG : fingerprint changed?
-PG --> RAG : new document
+RAG -> Files : read .md + SHA-256 fingerprint
+Files --> RAG : changed → re-embed
 RAG -> Chunk : chunk_file()
 Chunk --> RAG : **chunks** (~500 tokens, heading path)
-RAG -> Cohere : embed chunks (search_document)
-Cohere --> RAG : 1536-d **vectors**
+RAG -> Ollama : embed chunks (batches of 32)
+Ollama --> RAG : 1024-d **vectors** (never leave the machine)
 RAG -> PG : INSERT chunks · vectors · tsvector
 deactivate RAG
 API --> UI : 42 chunks indexed
@@ -73,12 +75,12 @@ UI -> API : POST /api/ask (SSE)
 activate API
 API -> RAG : ask_events(question, k=8)
 activate RAG
-RAG -> Cohere : embed question (search_query)
-Cohere --> RAG : query vector
+RAG -> Ollama : embed question
+Ollama --> RAG : query vector
 RAG -> PG : vector search (cosine, top 40)
 PG --> RAG : nearest chunks
 RAG -> PG : BM25 keyword search (top 40)
-PG --> RAG : keyword matches
+PG --> RAG : keyword matches (codes kept whole)
 RAG -> RAG : reciprocal rank fusion → **top 8 excerpts**
 
 == Step 5 — Generate the cited answer ==
@@ -92,10 +94,29 @@ API --> UI : SSE stream
 deactivate API
 UI --> User : 💬 answer with [n] citations + sources
 
+== Step 6 — Ask the knowledge graph instead ==
+User -> UI : 3. "How does eCommerce connect to S/4HANA?"
+UI -> API : POST /api/graph/query
+activate API
+API -> KG : query_graph()
+activate KG
+KG -> KGJson : load cached graph
+KGJson --> KG : 720 nodes · 842 edges
+KG -> Files : (on rebuild) re-scan the **same** .md corpus
+Files --> KG : streams · systems · BPML codes · SPARK tickets
+KG -> KG : resolve entities → BFS shortest path\n+ 2-hop bridge expansion
+KG --> API : **templated answer** + node_ids / edge_ids\n(no LLM, no SQL)
+deactivate KG
+API --> UI : subgraph payload
+deactivate API
+UI --> User : 🕸️ hop-by-hop path, highlighted on the D3 canvas
+
 note across
-  Claude never touches the database: rag.py embeds the question with Cohere,
-  runs vector AND keyword search on the same Postgres table, fuses the rankings,
-  and sends Claude only the top-k chunks as numbered excerpts to cite.
+  Two engines, one corpus. rag.py embeds with Ollama **on localhost**, runs vector
+  AND BM25 search on the same Postgres table, fuses the rankings, and sends Claude
+  only the top-k chunks to cite. knowledge_graph.py reads the same .md files with
+  regex and answers by **traversing** its graph — no embedding, no database, no LLM.
+  The two never call each other.
 end note
 
 @enduml
