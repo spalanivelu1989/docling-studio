@@ -59,6 +59,9 @@ def run(req: RunRequest) -> Iterator[Event]:
         return
 
     run_id = f"fg_{uuid.uuid4().hex[:10]}"
+    # Enforced on every worker session rather than passed per tool call, so no
+    # step in the run can read outside what was chosen.
+    scope_categories = tuple(sorted({c.strip().upper() for c in (req.categories or []) if c.strip()}))
     conn = store.connect()
     try:
         store.create_schema(conn)
@@ -67,7 +70,10 @@ def run(req: RunRequest) -> Iterator[Event]:
             "scope_label": f"{scope.code} {scope.name}", "question": req.question or "",
             "country": req.country_profile, "model": agent.MODEL,
             "prompt_hash": agent.prompt_hash(), "holdout": req.holdout,
-            "corpus_fingerprint": store.corpus_fingerprint(conn),
+            "categories": list(scope_categories),
+            # Scoped to what this run could read: a fingerprint over the whole
+            # corpus would claim it saw documents it could never retrieve.
+            "corpus_fingerprint": store.corpus_fingerprint(categories=list(scope_categories)),
             "params": {"max_steps": req.max_steps, "concurrency": req.concurrency,
                        "max_tool_calls": agent.MAX_TOOL_CALLS, "asis_dir": req.asis_dir},
         }
@@ -81,6 +87,7 @@ def run(req: RunRequest) -> Iterator[Event]:
             "mode": req.mode, "holdout": req.holdout, "model": agent.MODEL,
             "prompt_hash": record["prompt_hash"],
             "corpus_fingerprint": record["corpus_fingerprint"],
+            "categories": list(scope_categories),
         }
 
         events: queue.Queue = queue.Queue()
@@ -90,7 +97,7 @@ def run(req: RunRequest) -> Iterator[Event]:
         def work(step: bpml.Process) -> None:
             events.put(("step_start", {"bpml_code": step.code, "step_name": step.name,
                                        "level": step.level}))
-            session = tools.Session(holdout=req.holdout)
+            session = tools.Session(holdout=req.holdout, categories=scope_categories)
             try:
                 def on_tool(call: tools.ToolCall) -> None:
                     events.put(("tool_call", {
@@ -163,5 +170,5 @@ def run(req: RunRequest) -> Iterator[Event]:
         }
     except Exception as exc:
         yield "error", {"message": f"{type(exc).__name__}: {exc}"}
-    finally:
-        conn.close()
+    # `conn` comes from store.connect(), which is shared and cached per thread,
+    # so it is deliberately left open here.

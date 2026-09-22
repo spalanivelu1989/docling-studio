@@ -359,14 +359,28 @@ _ID = re.compile(r"\b(?:SPARK-\d{4,6}|[A-Z]-\d{2,3}(?:-\d{2,3})+|\d+(?:\.\d+){2,
 
 
 def run(question: str, holdout: bool = False,
-        on_event: Callable[[str, dict], None] | None = None) -> Iterator[tuple[str, dict]]:
-    """Answer one question. Yields ('tool_call'|'thinking'|'answer'|'error', payload)."""
+        on_event: Callable[[str, dict], None] | None = None,
+        categories: list[str] | None = None) -> Iterator[tuple[str, dict]]:
+    """Answer one question. Yields ('tool_call'|'thinking'|'answer'|'error', payload).
+
+    `categories` restricts which document categories the run may read. It is
+    enforced in the session rather than left to the model, and the model is
+    told about it so it does not report a gap that is really the filter."""
     import anthropic
 
     started = time.time()
-    session = ftools.Session(holdout=holdout)
+    scope = tuple(sorted({c.strip().upper() for c in (categories or []) if c.strip()}))
+    session = ftools.Session(holdout=holdout, categories=scope)
     client = anthropic.Anthropic()
-    messages: list[dict[str, Any]] = [{"role": "user", "content": question}]
+    prompt = question
+    if scope:
+        prompt = (
+            f"{question}\n\n[Only the {', '.join(scope)} document "
+            f"{'categories are' if len(scope) > 1 else 'category is'} in scope for this "
+            "question. Everything else is out of reach, so say what these documents do "
+            "and do not show rather than treating the rest of the corpus as missing.]"
+        )
+    messages: list[dict[str, Any]] = [{"role": "user", "content": prompt}]
     defs = tool_definitions()
 
     calls = 0

@@ -22,7 +22,7 @@ import uuid
 import zipfile
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, UploadFile
+from fastapi import FastAPI, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -187,7 +187,7 @@ def _display_path(path: str) -> str:
 
 
 @app.post("/api/docs/{doc_id}/embed")
-def embed_doc(doc_id: str) -> dict:
+def embed_doc(doc_id: str, category: str | None = None) -> dict:
     """Add the converted Markdown to the vector index used by the Ask page.
 
     The file is copied to knowledge_base/<name>_<ext>.md (the same naming as
@@ -204,21 +204,14 @@ def embed_doc(doc_id: str) -> dict:
 
     started = time.perf_counter()
     try:
-        with rag.connect() as conn:
-            rag.create_schema(conn)
-            result = rag.index_file(conn, dest)
-            # The same document indexed from somewhere else (e.g. by
-            # `rag.py index solvay-spark/markdown`) would be retrieved twice.
-            result["duplicates"] = [
-                _display_path(r[0])
-                for r in conn.execute(
-                    "SELECT source FROM rag_documents WHERE title = %s AND source <> %s",
-                    (result["title"], str(dest.resolve())),
-                ).fetchall()
-            ]
-            result["documents"], result["total_chunks"] = conn.execute(
-                "SELECT (SELECT count(*) FROM rag_documents), (SELECT count(*) FROM rag_chunks)"
-            ).fetchone()
+        # index_path picks the database the file's category belongs to.
+        result = rag.index_path(dest, category=category)
+        # The same document indexed from somewhere else (e.g. by
+        # `rag.py index solvay-spark/pkg/markdown`) would be retrieved twice.
+        result["duplicates"] = [
+            _display_path(src) for src in rag.duplicate_sources(result["title"], str(dest.resolve()))
+        ]
+        result["documents"], result["total_chunks"] = rag.counts()
     except SystemExit as exc:  # rag.py exits with a message when a setting is missing
         raise HTTPException(400, str(exc)) from None
     except Exception as exc:
@@ -310,27 +303,43 @@ def graph_page() -> HTMLResponse:
 
 
 @app.get("/api/graph/data")
-def get_graph_data() -> dict:
-    return knowledge_graph.extract_graph(force=False)
+def get_graph_data(categories: list[str] | None = Query(default=None)) -> dict:
+    """The knowledge graph, optionally narrowed to some categories.
+
+    No categories means the whole graph, which is also what naming every
+    category gives."""
+    return knowledge_graph.filter_by_categories(
+        knowledge_graph.extract_graph(force=False), categories
+    )
 
 
 @app.post("/api/graph/rebuild")
-def rebuild_graph() -> dict:
-    return knowledge_graph.extract_graph(force=True)
+def rebuild_graph(categories: list[str] | None = Query(default=None)) -> dict:
+    return knowledge_graph.filter_by_categories(
+        knowledge_graph.extract_graph(force=True), categories
+    )
 
 
 @app.get("/api/graph/model")
-def get_graph_model() -> dict:
+def get_graph_model(categories: list[str] | None = Query(default=None)) -> dict:
     """The graph's own schema as a Neo4j Data Importer model.
 
     Generated from knowledge_graph.json by kg_data_importer_model.py, so the
     labels, relationship types, properties and constraints all describe what
     the extractor actually builds.
+
+    `categories` does not change the schema -- the shape of the graph is the
+    same whichever documents are in view -- but it does narrow the counts and
+    the sample instances, so the numbers here agree with the graph on screen
+    instead of quietly reporting the whole corpus.
     """
     import graph_model
 
     try:
-        return graph_model.load_model()
+        graph = knowledge_graph.filter_by_categories(
+            knowledge_graph.extract_graph(force=False), categories
+        )
+        return graph_model.load_model(graph)
     except FileNotFoundError as exc:
         raise HTTPException(404, str(exc))
     except Exception as exc:
@@ -359,47 +368,39 @@ def list_kb_files() -> list[dict]:
     stored in knowledge_base/."""
     items: dict[str, dict] = {}
 
-    # 1. Primary source of truth: documents indexed in PostgreSQL rag_documents
+    # 1. Primary source of truth: the documents indexed in pgvector, across
+    #    every category database.
     try:
-        with rag.connect() as conn:
-            rows = conn.execute(
-                "SELECT d.id, d.source, d.title, count(c.id), coalesce(sum(c.tokens), 0), d.indexed_at"
-                " FROM rag_documents d LEFT JOIN rag_chunks c ON c.document_id = d.id"
-                " GROUP BY d.id, d.source, d.title, d.indexed_at"
-                " ORDER BY d.indexed_at DESC, d.title ASC"
-            ).fetchall()
-            for r in rows:
-                doc_id, source_path_str, title, chunk_count, token_count, indexed_at = r
-                p = Path(source_path_str)
-                name = p.name
-                size = 0
-                if p.is_file():
+        for doc in rag.documents():
+            p = Path(doc["source"])
+            name = p.name
+            size = 0
+            for candidate in (p, KNOWLEDGE_BASE / name):
+                if candidate.is_file():
                     try:
-                        size = p.stat().st_size
+                        size = candidate.stat().st_size
                     except Exception:
                         pass
-                elif (KNOWLEDGE_BASE / name).is_file():
-                    try:
-                        size = (KNOWLEDGE_BASE / name).stat().st_size
-                    except Exception:
-                        pass
+                    break
 
-                try:
-                    rel_source = str(p.relative_to(BASE))
-                except Exception:
-                    rel_source = str(p)
+            try:
+                rel_source = str(p.relative_to(BASE))
+            except Exception:
+                rel_source = str(p)
 
-                items[name] = {
-                    "name": name,
-                    "title": title or p.stem,
-                    "source": rel_source,
-                    "full_path": str(p),
-                    "size": size,
-                    "chunks": int(chunk_count),
-                    "tokens": int(token_count),
-                    "is_indexed": True,
-                    "indexed_at": indexed_at.isoformat() if hasattr(indexed_at, "isoformat") else str(indexed_at),
-                }
+            indexed_at = doc["indexed_at"]
+            items[name] = {
+                "name": name,
+                "title": doc["title"] or p.stem,
+                "source": rel_source,
+                "full_path": str(p),
+                "size": size,
+                "category": doc["category"],
+                "chunks": doc["chunks"],
+                "tokens": doc["tokens"],
+                "is_indexed": True,
+                "indexed_at": indexed_at.isoformat() if hasattr(indexed_at, "isoformat") else str(indexed_at),
+            }
     except Exception:
         pass
 
@@ -415,6 +416,7 @@ def list_kb_files() -> list[dict]:
                     "source": f"knowledge_base/{f.name}",
                     "full_path": str(f.resolve()),
                     "size": f.stat().st_size,
+                    "category": rag.category_for(f),
                     "chunks": 0,
                     "tokens": 0,
                     "is_indexed": False,
@@ -434,6 +436,7 @@ def list_kb_files() -> list[dict]:
                     "source": f"solvay-spark/pkg/markdown/{f.name}",
                     "full_path": str(f.resolve()),
                     "size": f.stat().st_size,
+                    "category": rag.category_for(f),
                     "chunks": 0,
                     "tokens": 0,
                     "is_indexed": False,
@@ -456,17 +459,13 @@ def get_kb_file(filename: str) -> FileResponse:
     if target_pkg.is_file():
         return FileResponse(target_pkg, media_type="text/markdown")
 
-    # 3. Check rag_documents source in database
+    # 3. Check the indexed source path, in any category database
     try:
-        with rag.connect() as conn:
-            row = conn.execute(
-                "SELECT source FROM rag_documents WHERE source LIKE %s LIMIT 1",
-                (f"%/{fname}",),
-            ).fetchone()
-            if row:
-                db_path = Path(row[0]).resolve()
-                if db_path.is_file():
-                    return FileResponse(db_path, media_type="text/markdown")
+        found = rag.find_document(fname)
+        if found:
+            db_path = Path(found).resolve()
+            if db_path.is_file():
+                return FileResponse(db_path, media_type="text/markdown")
     except Exception:
         pass
 
@@ -478,13 +477,7 @@ def delete_kb_file(filename: str) -> dict:
     fname = Path(filename).name
     deleted_db = False
     try:
-        with rag.connect() as conn:
-            with conn.transaction():
-                res = conn.execute(
-                    "DELETE FROM rag_documents WHERE source LIKE %s OR source = %s RETURNING id",
-                    (f"%/{fname}", fname),
-                ).fetchall()
-                deleted_db = bool(res)
+        deleted_db = rag.delete_document(fname) > 0
     except Exception:
         pass
 
@@ -496,10 +489,20 @@ def delete_kb_file(filename: str) -> dict:
 
 
 @app.post("/api/kb/batch-insert")
-def kb_batch_insert(files: list[UploadFile]) -> StreamingResponse:
-    """Upload multiple .md files, save them to knowledge_base/, and embed them into pgvector."""
+def kb_batch_insert(files: list[UploadFile], category: str | None = Form(default=None)) -> StreamingResponse:
+    """Upload multiple .md files, save them to knowledge_base/, and embed them
+    into the database their category belongs to.
+
+    Uploads land in knowledge_base/ whatever they are, so the folder cannot say
+    which category they belong to: without `category` they are UNFILED unless
+    the file declares one in its own front matter."""
     if not files:
         raise HTTPException(400, "No files uploaded")
+    if category:
+        try:
+            category = rag.check_category(category)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from None
 
     missing = [
         name
@@ -536,92 +539,83 @@ def kb_batch_insert(files: list[UploadFile]) -> StreamingResponse:
         total_tokens = 0
 
         try:
-            with rag.connect() as conn:
-                rag.create_schema(conn)
+            for i, (name, upload_file) in enumerate(valid_files, 1):
+                yield sse(
+                    "progress",
+                    {
+                        "type": "start",
+                        "index": i,
+                        "total": total,
+                        "filename": name,
+                    },
+                )
 
-                for i, (name, upload_file) in enumerate(valid_files, 1):
+                try:
+                    dest = KNOWLEDGE_BASE / name
+                    content = upload_file.file.read()
+                    if isinstance(content, bytes):
+                        dest.write_bytes(content)
+                    else:
+                        dest.write_text(content, encoding="utf-8")
+
+                    res = rag.index_path(dest, category=category)
+                    succeeded += 1
+                    chunks = res.get("chunks", 0)
+                    tokens = res.get("tokens", 0)
+                    total_chunks += chunks
+                    total_tokens += tokens
+
+                    duplicates = [
+                        _display_path(src)
+                        for src in rag.duplicate_sources(res["title"], str(dest.resolve()))
+                    ]
+
                     yield sse(
-                        "progress",
+                        "file_done",
                         {
-                            "type": "start",
+                            "type": "done",
                             "index": i,
                             "total": total,
                             "filename": name,
+                            "title": res["title"],
+                            "status": res["status"],
+                            "category": res["category"],
+                            "chunks": chunks,
+                            "tokens": tokens,
+                            "duplicates": duplicates,
+                        },
+                    )
+                except Exception as exc:
+                    failed += 1
+                    yield sse(
+                        "file_error",
+                        {
+                            "type": "error",
+                            "index": i,
+                            "total": total,
+                            "filename": name,
+                            "error": str(exc),
                         },
                     )
 
-                    try:
-                        dest = KNOWLEDGE_BASE / name
-                        content = upload_file.file.read()
-                        if isinstance(content, bytes):
-                            dest.write_bytes(content)
-                        else:
-                            dest.write_text(content, encoding="utf-8")
+            try:
+                docs_count, chunks_count = rag.counts()
+            except Exception:
+                docs_count, chunks_count = (succeeded, total_chunks)
 
-                        res = rag.index_file(conn, dest)
-                        succeeded += 1
-                        chunks = res.get("chunks", 0)
-                        tokens = res.get("tokens", 0)
-                        total_chunks += chunks
-                        total_tokens += tokens
-
-                        duplicates = [
-                            _display_path(r[0])
-                            for r in conn.execute(
-                                "SELECT source FROM rag_documents WHERE title = %s AND source <> %s",
-                                (res["title"], str(dest.resolve())),
-                            ).fetchall()
-                        ]
-
-                        yield sse(
-                            "file_done",
-                            {
-                                "type": "done",
-                                "index": i,
-                                "total": total,
-                                "filename": name,
-                                "title": res["title"],
-                                "status": res["status"],
-                                "chunks": chunks,
-                                "tokens": tokens,
-                                "duplicates": duplicates,
-                            },
-                        )
-                    except Exception as exc:
-                        failed += 1
-                        yield sse(
-                            "file_error",
-                            {
-                                "type": "error",
-                                "index": i,
-                                "total": total,
-                                "filename": name,
-                                "error": str(exc),
-                            },
-                        )
-
-                try:
-                    row = conn.execute(
-                        "SELECT (SELECT count(*) FROM rag_documents), (SELECT count(*) FROM rag_chunks)"
-                    ).fetchone()
-                    docs_count = int(row[0]) if row and row[0] is not None else succeeded
-                    chunks_count = int(row[1]) if row and row[1] is not None else total_chunks
-                except Exception:
-                    docs_count, chunks_count = (succeeded, total_chunks)
-
-                yield sse(
-                    "complete",
-                    {
-                        "total": total,
-                        "succeeded": succeeded,
-                        "failed": failed,
-                        "total_chunks": total_chunks,
-                        "total_tokens": total_tokens,
-                        "total_documents_in_db": docs_count,
-                        "total_chunks_in_db": chunks_count,
-                        "seconds": round(time.perf_counter() - started, 2),
-                    },
-                )
+            yield sse(
+                "complete",
+                {
+                    "total": total,
+                    "succeeded": succeeded,
+                    "failed": failed,
+                    "total_chunks": total_chunks,
+                    "total_tokens": total_tokens,
+                    "total_documents_in_db": docs_count,
+                    "total_chunks_in_db": chunks_count,
+                    "seconds": round(time.perf_counter() - started, 2),
+                },
+            )
         except Exception as exc:
             yield sse("error", {"message": str(exc)})
 
@@ -831,7 +825,10 @@ def download_batch_zip(batch_id: str) -> FileResponse:
 
 
 @app.post("/api/batch/{batch_id}/embed")
-def embed_batch(batch_id: str) -> StreamingResponse:
+def embed_batch(batch_id: str, category: str | None = None) -> StreamingResponse:
+    """Embed a converted batch. The files are copied into knowledge_base/, so
+    `category` is how a batch is filed; without it they are UNFILED unless a
+    file declares its own category in front matter."""
     batch_dir = (WORKDIR / "batches" / batch_id).resolve()
     if not batch_dir.is_dir() or WORKDIR.resolve() not in batch_dir.parents:
         raise HTTPException(404, "Batch not found")
@@ -853,6 +850,11 @@ def embed_batch(batch_id: str) -> StreamingResponse:
     ]
     if missing:
         raise HTTPException(400, f"Cannot embed: missing {', '.join(missing)} in environment or .env")
+    if category:
+        try:
+            category = rag.check_category(category)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from None
 
     def sse(event: str, data: dict) -> str:
         return f"event: {event}\ndata: {json.dumps(data)}\n\n"
@@ -867,89 +869,80 @@ def embed_batch(batch_id: str) -> StreamingResponse:
         total_tokens = 0
 
         try:
-            with rag.connect() as conn:
-                rag.create_schema(conn)
+            for i, md_file in enumerate(md_files, 1):
+                yield sse(
+                    "progress",
+                    {
+                        "type": "start",
+                        "index": i,
+                        "total": total,
+                        "filename": md_file.name,
+                    },
+                )
 
-                for i, md_file in enumerate(md_files, 1):
+                try:
+                    dest = KNOWLEDGE_BASE / md_file.name
+                    dest.write_text(md_file.read_text(encoding="utf-8"), encoding="utf-8")
+
+                    res = rag.index_path(dest, category=category)
+                    succeeded += 1
+                    chunks = res.get("chunks", 0)
+                    tokens = res.get("tokens", 0)
+                    total_chunks += chunks
+                    total_tokens += tokens
+
+                    duplicates = [
+                        _display_path(src)
+                        for src in rag.duplicate_sources(res["title"], str(dest.resolve()))
+                    ]
+
                     yield sse(
-                        "progress",
+                        "file_done",
                         {
-                            "type": "start",
+                            "type": "done",
                             "index": i,
                             "total": total,
                             "filename": md_file.name,
+                            "title": res["title"],
+                            "status": res["status"],
+                            "category": res["category"],
+                            "chunks": chunks,
+                            "tokens": tokens,
+                            "duplicates": duplicates,
+                        },
+                    )
+                except Exception as exc:
+                    failed += 1
+                    yield sse(
+                        "file_error",
+                        {
+                            "type": "error",
+                            "index": i,
+                            "total": total,
+                            "filename": md_file.name,
+                            "error": str(exc),
                         },
                     )
 
-                    try:
-                        dest = KNOWLEDGE_BASE / md_file.name
-                        dest.write_text(md_file.read_text(encoding="utf-8"), encoding="utf-8")
+            try:
+                docs_count, chunks_count = rag.counts()
+            except Exception:
+                docs_count, chunks_count = (succeeded, total_chunks)
 
-                        res = rag.index_file(conn, dest)
-                        succeeded += 1
-                        chunks = res.get("chunks", 0)
-                        tokens = res.get("tokens", 0)
-                        total_chunks += chunks
-                        total_tokens += tokens
-
-                        duplicates = [
-                            _display_path(r[0])
-                            for r in conn.execute(
-                                "SELECT source FROM rag_documents WHERE title = %s AND source <> %s",
-                                (res["title"], str(dest.resolve())),
-                            ).fetchall()
-                        ]
-
-                        yield sse(
-                            "file_done",
-                            {
-                                "type": "done",
-                                "index": i,
-                                "total": total,
-                                "filename": md_file.name,
-                                "title": res["title"],
-                                "status": res["status"],
-                                "chunks": chunks,
-                                "tokens": tokens,
-                                "duplicates": duplicates,
-                            },
-                        )
-                    except Exception as exc:
-                        failed += 1
-                        yield sse(
-                            "file_error",
-                            {
-                                "type": "error",
-                                "index": i,
-                                "total": total,
-                                "filename": md_file.name,
-                                "error": str(exc),
-                            },
-                        )
-
-                try:
-                    row = conn.execute(
-                        "SELECT (SELECT count(*) FROM rag_documents), (SELECT count(*) FROM rag_chunks)"
-                    ).fetchone()
-                    docs_count = int(row[0]) if row and row[0] is not None else succeeded
-                    chunks_count = int(row[1]) if row and row[1] is not None else total_chunks
-                except Exception:
-                    docs_count, chunks_count = (succeeded, total_chunks)
-
-                yield sse(
-                    "batch_done",
-                    {
-                        "type": "batch_done",
-                        "total": total,
-                        "succeeded": succeeded,
-                        "failed": failed,
-                        "total_chunks": total_chunks,
-                        "total_tokens": total_tokens,
-                        "db_documents": docs_count,
-                        "db_chunks": chunks_count,
-                        "seconds": round(time.perf_counter() - started, 2),
-                    },
-                )
+            yield sse(
+                "batch_done",
+                {
+                    "type": "batch_done",
+                    "total": total,
+                    "succeeded": succeeded,
+                    "failed": failed,
+                    "total_chunks": total_chunks,
+                    "total_tokens": total_tokens,
+                    "db_documents": docs_count,
+                    "db_chunks": chunks_count,
+                    "seconds": round(time.perf_counter() - started, 2),
+                },
+            )
         except Exception as exc:
             yield sse("error", {"type": "error", "error": str(exc)})
 
@@ -980,14 +973,24 @@ def rag_status() -> dict:
         "default_k": rag.DEFAULT_K,
         "documents": 0,
         "chunks": 0,
+        "categories": [],
         "error": None,
     }
     if "DATABASE_URL" not in missing:
         try:
-            with rag.connect() as conn:
-                info["documents"], info["chunks"] = conn.execute(
-                    "SELECT (SELECT count(*) FROM rag_documents), (SELECT count(*) FROM rag_chunks)"
-                ).fetchone()
+            info["documents"], info["chunks"] = rag.counts()
+            held = {code: (docs, chunks) for code, docs, chunks in rag.totals()}
+            # Only the categories that exist as a database. A code in
+            # rag.CATEGORIES whose database has never been created -- or has
+            # been dropped -- is a default waiting to be used, not a place to
+            # search, and listing it would offer somewhere that is not there.
+            info["categories"] = [
+                described
+                for code in list(rag.CATEGORIES) + [c for c in held if c not in rag.CATEGORIES]
+                if (described := {**rag.describe(code),
+                                  "documents": held.get(code, (0, 0))[0],
+                                  "chunks": held.get(code, (0, 0))[1]})["exists"]
+            ]
         except Exception as exc:  # no tables yet, server down, bad credentials
             info["error"] = str(exc).splitlines()[0]
     return info
@@ -997,6 +1000,8 @@ class Question(BaseModel):
     question: str = Field(min_length=1, max_length=2000)
     k: int = Field(default=rag.DEFAULT_K, ge=1, le=20)
     mode: str = "hybrid"
+    # Empty means every category, which is what the Ask page sends today.
+    categories: list[str] = Field(default_factory=list)
 
 
 class FitGapRun(BaseModel):
@@ -1008,6 +1013,8 @@ class FitGapRun(BaseModel):
     max_steps: int = Field(default=6, ge=1, le=60)
     concurrency: int = Field(default=3, ge=1, le=8)
     question: str | None = None
+    # Empty means every category, matching the Ask, Graph and Evidence pages.
+    categories: list[str] = Field(default_factory=list)
 
 
 class FitGapReview(BaseModel):
@@ -1024,13 +1031,17 @@ def ask(body: Question) -> StreamingResponse:
     or `error`. A sync generator, so Starlette iterates it in the threadpool."""
     if body.mode not in rag.MODES:
         raise HTTPException(400, f"mode must be one of {rag.MODES}")
+    try:
+        categories = [rag.check_category(c) for c in body.categories]
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
 
     def sse(event: str, data) -> str:
         return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
     def events():
         try:
-            for event, data in rag.ask_events(body.question.strip(), body.k, body.mode):
+            for event, data in rag.ask_events(body.question.strip(), body.k, body.mode, categories):
                 yield sse(event, data)
         # rag.py exits with a message when a key or DATABASE_URL is missing.
         except SystemExit as exc:
@@ -1077,17 +1088,22 @@ def fitgap_status() -> dict:
         "error": None,
     }
     try:
-        conn = fg_store.connect()
-        try:
-            fg_store.create_schema(conn)
-            info.update(fg_store.stats(conn))
-            row = conn.execute("SELECT count(*) FROM rag_chunks").fetchone()
-            info["chunks"] = row[0]
-            info["documents"] = conn.execute("SELECT count(*) FROM rag_documents").fetchone()[0]
-        finally:
-            conn.close()
+        conn = fg_store.connect()  # shared; not ours to close
+        fg_store.create_schema(conn)
+        info.update(fg_store.stats(conn))
     except Exception as exc:
         info["error"] = f"{type(exc).__name__}: {exc}"
+    try:
+        # The corpus is not in the Fit/Gap database -- it is spread across the
+        # category databases a run retrieves from, so the counts come from
+        # there and are broken down the same way the Ask page shows them.
+        info["documents"], info["chunks"] = rag.counts()
+        info["categories"] = [
+            {"code": code, "documents": docs, "chunks": chunks}
+            for code, docs, chunks in rag.totals()
+        ]
+    except Exception as exc:
+        info["corpus_error"] = f"{type(exc).__name__}: {exc}"
     try:
         info["graph"] = knowledge_graph.extract_graph()["stats"]
     except Exception:
@@ -1139,7 +1155,11 @@ def fitgap_preview(req: "FitGapRun") -> dict:
     from fitgap.orchestrator import preview as fg_preview
     from fitgap.schemas import RunRequest
 
-    out = fg_preview(RunRequest(**req.model_dump()))
+    try:
+        categories = [rag.check_category(c) for c in req.categories]
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+    out = fg_preview(RunRequest(**{**req.model_dump(), "categories": categories}))
     if out.get("error"):
         raise HTTPException(400, out["error"])
     return out
@@ -1153,7 +1173,11 @@ def fitgap_run(req: "FitGapRun") -> StreamingResponse:
     from fitgap.orchestrator import run as fg_run
     from fitgap.schemas import RunRequest
 
-    request = RunRequest(**req.model_dump())
+    try:
+        categories = [rag.check_category(c) for c in req.categories]
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+    request = RunRequest(**{**req.model_dump(), "categories": categories})
 
     def sse(event: str, data) -> str:
         return f"event: {event}\ndata: {json.dumps(data, default=str)}\n\n"
@@ -1178,26 +1202,20 @@ def fitgap_run(req: "FitGapRun") -> StreamingResponse:
 def fitgap_runs(limit: int = 40) -> list[dict]:
     from fitgap import store as fg_store
 
-    conn = fg_store.connect()
-    try:
-        fg_store.create_schema(conn)
-        return fg_store.list_runs(conn, limit)
-    finally:
-        conn.close()
+    conn = fg_store.connect()  # shared; not ours to close
+    fg_store.create_schema(conn)
+    return fg_store.list_runs(conn, limit)
 
 
 @app.get("/api/fitgap/runs/{run_id}")
 def fitgap_get_run(run_id: str) -> dict:
     from fitgap import store as fg_store
 
-    conn = fg_store.connect()
-    try:
-        run = fg_store.get_run(conn, run_id)
-        if not run:
-            raise HTTPException(404, f"run {run_id} not found")
-        return run
-    finally:
-        conn.close()
+    conn = fg_store.connect()  # shared; not ours to close
+    run = fg_store.get_run(conn, run_id)
+    if not run:
+        raise HTTPException(404, f"run {run_id} not found")
+    return run
 
 
 @app.get("/api/fitgap/runs/{run_id}/export")
@@ -1208,11 +1226,8 @@ def fitgap_export(run_id: str, format: str = "md"):
 
     if format not in ("md", "json", "xlsx"):
         raise HTTPException(400, "format must be md, json or xlsx")
-    conn = fg_store.connect()
-    try:
-        run = fg_store.get_run(conn, run_id)
-    finally:
-        conn.close()
+    conn = fg_store.connect()  # shared; not ours to close
+    run = fg_store.get_run(conn, run_id)
     if not run:
         raise HTTPException(404, f"run {run_id} not found")
 
@@ -1306,14 +1321,11 @@ def fitgap_review(entry_id: int, body: "FitGapReview") -> dict:
     from fitgap import store as fg_store
     from fitgap.schemas import Review
 
-    conn = fg_store.connect()
-    try:
-        exists = conn.execute("SELECT 1 FROM fitgap_entries WHERE id = %s", (entry_id,)).fetchone()
-        if not exists:
-            raise HTTPException(404, f"entry {entry_id} not found")
-        return fg_store.add_review(conn, entry_id, Review(**body.model_dump()))
-    finally:
-        conn.close()
+    conn = fg_store.connect()  # shared; not ours to close
+    exists = conn.execute("SELECT 1 FROM fitgap_entries WHERE id = %s", (entry_id,)).fetchone()
+    if not exists:
+        raise HTTPException(404, f"entry {entry_id} not found")
+    return fg_store.add_review(conn, entry_id, Review(**body.model_dump()))
 
 
 
@@ -1339,8 +1351,17 @@ def evidence_status() -> dict:
         "max_tool_calls": ev_agent.MAX_TOOL_CALLS,
         "anthropic_key": bool(os.environ.get("ANTHROPIC_API_KEY")),
         "tools": [t["name"] for t in ev_agent.tool_definitions()],
+        "categories": [],
         "error": None,
     }
+    try:
+        # What the run may be pointed at, and how much is in each.
+        info["categories"] = [
+            {"code": code, "documents": docs, "chunks": chunks}
+            for code, docs, chunks in rag.totals()
+        ]
+    except Exception:
+        pass
     try:
         d = independence.load()
         info["duplicate_groups"] = [sorted(g) for g in d.groups]
@@ -1362,6 +1383,8 @@ def evidence_status() -> dict:
 class EvidenceQuestion(BaseModel):
     question: str = Field(min_length=3, max_length=2000)
     holdout: bool = False
+    # Empty means every category, matching the Ask and Knowledge Graph pages.
+    categories: list[str] = Field(default_factory=list)
 
 
 @app.post("/api/evidence/ask")
@@ -1374,9 +1397,16 @@ def evidence_ask(body: EvidenceQuestion) -> StreamingResponse:
     def sse(event: str, data) -> str:
         return f"event: {event}\ndata: {json.dumps(data, default=str)}\n\n"
 
+    try:
+        categories = [rag.check_category(c) for c in body.categories]
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+
     def events():
         try:
-            for event, data in ev_agent.run(body.question.strip(), holdout=body.holdout):
+            for event, data in ev_agent.run(
+                body.question.strip(), holdout=body.holdout, categories=categories
+            ):
                 yield sse(event, data)
         except SystemExit as exc:
             yield sse("error", {"message": str(exc)})

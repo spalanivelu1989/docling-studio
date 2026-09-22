@@ -16,7 +16,6 @@ import sys
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -73,27 +72,24 @@ class Session:
 
     holdout: bool = False
     doc_exclude: tuple[str, ...] = ()
+    # Document categories this run may read. Empty means every one of them.
+    # It is a property of the session, not of a tool call, so the model cannot
+    # widen it by asking for a category the person did not choose.
+    categories: tuple[str, ...] = ()
     calls: list[ToolCall] = field(default_factory=list)
     # chunk id -> the record the agent was shown, for the verifier
     retrieved: dict[str, dict] = field(default_factory=dict)
     masked_docs: set[str] = field(default_factory=set)
-    _conn: Any = None
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
-    @property
-    def conn(self):
-        # psycopg connections are not thread safe; one per session, and each
-        # session belongs to exactly one worker thread.
-        if self._conn is None:
-            self._conn = rag.connect()
-        return self._conn
-
     def close(self) -> None:
-        if self._conn is not None:
-            try:
-                self._conn.close()
-            finally:
-                self._conn = None
+        """Release this thread's database connections.
+
+        A session used to hold one connection of its own. Retrieval now goes
+        through rag.search, which keeps a connection per category database per
+        thread, so there is nothing session-specific left to close -- but a
+        worker thread finishing with a session should still let go of them."""
+        rag.close_shards()
 
     def excluded(self, doc: str, source: str = "") -> bool:
         if self.doc_exclude and _matches(doc, tuple(self.doc_exclude)):
@@ -153,7 +149,14 @@ def search_corpus(session: Session, query: str, k: int = 8, filters: dict | None
     k = max(1, min(int(k or 8), 12))
     want = k * 3 if (include or exclude or session.holdout or session.doc_exclude) else k
 
-    hits = rag.search(query, k=want, conn=session.conn, mode=filters.get("mode", "hybrid"))
+    # No `conn`: retrieval covers every category database the session allows.
+    # The session's scope wins over anything in `filters` -- a filter may
+    # narrow it further but never reach outside it.
+    asked = filters.get("categories") or []
+    scope = [c for c in asked if not session.categories or c.upper() in session.categories]
+    if session.categories and not scope:
+        scope = list(session.categories)
+    hits = rag.search(query, k=want, mode=filters.get("mode", "hybrid"), categories=scope or None)
     results = []
     dropped = 0
     for h in hits:
@@ -162,7 +165,7 @@ def search_corpus(session: Session, query: str, k: int = 8, filters: dict | None
             continue
         if include and not _matches(h.title, include):
             continue
-        cid = str(h.chunk_id)
+        cid = h.key  # unique across databases; row ids restart in each one
         rec = {
             "chunk_id": cid,
             "doc": session.present(h.title),
@@ -184,23 +187,24 @@ def search_corpus(session: Session, query: str, k: int = 8, filters: dict | None
 
 
 def get_chunk(session: Session, chunk_id: str) -> dict:
-    row = session.conn.execute(
-        "SELECT c.id, d.title, d.source, c.heading_path, c.content, c.tokens"
-        " FROM rag_chunks c JOIN rag_documents d ON d.id = c.document_id WHERE c.id = %s",
-        (int(chunk_id),),
-    ).fetchone() if str(chunk_id).isdigit() else None
+    # The id carries its category ("PKG:412"), so it reaches the right database.
+    row = rag.chunk(chunk_id)
     if not row:
         return {"error": f"chunk {chunk_id} does not exist"}
-    cid, title, source, heading, content, tokens = row
+    if session.categories and row["category"].upper() not in session.categories:
+        return {"error": f"chunk {chunk_id} is outside the categories this run may read"}
+    title, source, heading, content = row["title"], row["source"], row["heading_path"], row["content"]
     if session.excluded(title, source):
         return {"error": f"chunk {chunk_id} is in a document withheld by the evaluation holdout"}
+    cid = row["chunk_id"]
     rec = {
-        "chunk_id": str(cid), "doc": session.present(title),
-        "heading_path": session.present(heading), "text": content[:MAX_CHUNK_CHARS], "tokens": tokens,
+        "chunk_id": cid, "doc": session.present(title),
+        "heading_path": session.present(heading), "text": content[:MAX_CHUNK_CHARS],
+        "tokens": row["tokens"],
     }
-    session.retrieved[str(cid)] = {**rec, "full_text": content, "true_doc": title,
-                                   "true_heading_path": heading, "source": source, "score": None,
-                                   "vector_rank": None, "keyword_rank": None}
+    session.retrieved[cid] = {**rec, "full_text": content, "true_doc": title,
+                              "true_heading_path": heading, "source": source, "score": None,
+                              "vector_rank": None, "keyword_rank": None}
     return rec
 
 

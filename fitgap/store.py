@@ -3,6 +3,10 @@
 Reviews sit alongside entries and never overwrite them: the register has to
 keep showing what the Copilot proposed next to what the human decided, or the
 next evaluation has nothing to measure.
+
+These tables are not per-category -- a run reads every category and records one
+result -- so they live in their own database, `<base>_fitgap`, beside the
+per-category ones rather than inside any of them.
 """
 
 from __future__ import annotations
@@ -19,85 +23,116 @@ import rag  # noqa: E402
 from .schemas import FitGapEntry, Review, VerifiedEntry  # noqa: E402
 
 
+# The runs, entries and reviews database. RAG_DATABASE_URL_FITGAP moves it, the
+# same way a category can be moved.
+FITGAP_DATABASE = "FITGAP"
+
+
+def database_url() -> str:
+    return rag.database_url(FITGAP_DATABASE)
+
+
 def connect():
-    return rag.connect()
+    """A connection to the Fit/Gap database, created if it is not there yet.
+
+    Retrieval does not come through here: search_corpus goes to every category
+    database via rag.search, and this connection only ever sees the tables
+    below.
+
+    The connection is shared and cached per thread, so callers must not close
+    it; rag.close_shards() releases a thread's connections when it is done."""
+    return rag.shard_connection(rag.ensure_database(FITGAP_DATABASE), schema=False)
 
 
 def create_schema(conn=None) -> None:
-    own = conn is None
     conn = conn or connect()
-    try:
-        with conn.transaction():
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS fitgap_runs (
-                    id            text PRIMARY KEY,
-                    mode          text NOT NULL,
-                    scope_bpml    text NOT NULL,
-                    scope_label   text NOT NULL DEFAULT '',
-                    question      text NOT NULL DEFAULT '',
-                    country       jsonb,
-                    model         text NOT NULL DEFAULT '',
-                    prompt_hash   text NOT NULL DEFAULT '',
-                    params        jsonb NOT NULL DEFAULT '{}'::jsonb,
-                    holdout       boolean NOT NULL DEFAULT false,
-                    corpus_fingerprint text NOT NULL DEFAULT '',
-                    started_at    timestamptz NOT NULL DEFAULT now(),
-                    finished_at   timestamptz,
-                    status        text NOT NULL DEFAULT 'running',
-                    input_tokens  int NOT NULL DEFAULT 0,
-                    output_tokens int NOT NULL DEFAULT 0,
-                    synthesis     jsonb
-                )"""
-            )
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS fitgap_entries (
-                    id             bigserial PRIMARY KEY,
-                    run_id         text NOT NULL REFERENCES fitgap_runs(id) ON DELETE CASCADE,
-                    bpml_code      text NOT NULL,
-                    step_name      text NOT NULL DEFAULT '',
-                    classification text NOT NULL,
-                    confidence     real NOT NULL DEFAULT 0,
-                    materiality    text NOT NULL DEFAULT 'low',
-                    status         text NOT NULL DEFAULT 'proposed',
-                    evidence_valid boolean NOT NULL DEFAULT true,
-                    entry          jsonb NOT NULL,
-                    issues         jsonb NOT NULL DEFAULT '[]'::jsonb,
-                    tool_calls     int NOT NULL DEFAULT 0,
-                    seconds        real NOT NULL DEFAULT 0,
-                    created_at     timestamptz NOT NULL DEFAULT now(),
-                    UNIQUE (run_id, bpml_code)
-                )"""
-            )
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS fitgap_reviews (
-                    id         bigserial PRIMARY KEY,
-                    entry_id   bigint NOT NULL REFERENCES fitgap_entries(id) ON DELETE CASCADE,
-                    reviewer   text NOT NULL,
-                    verdict    text NOT NULL,
-                    corrected_classification text,
-                    comment    text NOT NULL DEFAULT '',
-                    created_at timestamptz NOT NULL DEFAULT now()
-                )"""
-            )
-            conn.execute("CREATE INDEX IF NOT EXISTS fitgap_entries_run_idx ON fitgap_entries (run_id)")
-            conn.execute("CREATE INDEX IF NOT EXISTS fitgap_reviews_entry_idx ON fitgap_reviews (entry_id)")
-    finally:
-        if own:
-            conn.close()
+    with conn.transaction():
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS fitgap_runs (
+                id            text PRIMARY KEY,
+                mode          text NOT NULL,
+                scope_bpml    text NOT NULL,
+                scope_label   text NOT NULL DEFAULT '',
+                question      text NOT NULL DEFAULT '',
+                country       jsonb,
+                model         text NOT NULL DEFAULT '',
+                prompt_hash   text NOT NULL DEFAULT '',
+                params        jsonb NOT NULL DEFAULT '{}'::jsonb,
+                holdout       boolean NOT NULL DEFAULT false,
+                corpus_fingerprint text NOT NULL DEFAULT '',
+                started_at    timestamptz NOT NULL DEFAULT now(),
+                finished_at   timestamptz,
+                status        text NOT NULL DEFAULT 'running',
+                input_tokens  int NOT NULL DEFAULT 0,
+                output_tokens int NOT NULL DEFAULT 0,
+                synthesis     jsonb
+            )"""
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS fitgap_entries (
+                id             bigserial PRIMARY KEY,
+                run_id         text NOT NULL REFERENCES fitgap_runs(id) ON DELETE CASCADE,
+                bpml_code      text NOT NULL,
+                step_name      text NOT NULL DEFAULT '',
+                classification text NOT NULL,
+                confidence     real NOT NULL DEFAULT 0,
+                materiality    text NOT NULL DEFAULT 'low',
+                status         text NOT NULL DEFAULT 'proposed',
+                evidence_valid boolean NOT NULL DEFAULT true,
+                entry          jsonb NOT NULL,
+                issues         jsonb NOT NULL DEFAULT '[]'::jsonb,
+                tool_calls     int NOT NULL DEFAULT 0,
+                seconds        real NOT NULL DEFAULT 0,
+                created_at     timestamptz NOT NULL DEFAULT now(),
+                UNIQUE (run_id, bpml_code)
+            )"""
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS fitgap_reviews (
+                id         bigserial PRIMARY KEY,
+                entry_id   bigint NOT NULL REFERENCES fitgap_entries(id) ON DELETE CASCADE,
+                reviewer   text NOT NULL,
+                verdict    text NOT NULL,
+                corrected_classification text,
+                comment    text NOT NULL DEFAULT '',
+                created_at timestamptz NOT NULL DEFAULT now()
+            )"""
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS fitgap_entries_run_idx ON fitgap_entries (run_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS fitgap_reviews_entry_idx ON fitgap_reviews (entry_id)")
+        # Added with ALTER so a register built before categories existed keeps
+        # its runs; they were unscoped, which is what the default says.
+        conn.execute(
+            "ALTER TABLE fitgap_runs ADD COLUMN IF NOT EXISTS categories jsonb NOT NULL DEFAULT '[]'::jsonb"
+        )
 
 
-def corpus_fingerprint(conn) -> str:
-    """The hash of the indexed corpus, so a run can be reproduced against the
-    exact material it saw (§10)."""
+def corpus_fingerprint(conn=None, categories: list[str] | None = None) -> str:
+    """The hash of the material a run could read, so it can be reproduced
+    against exactly that material (§10).
+
+    It covers every category database the run was allowed to reach, not one
+    connection's worth -- and not the whole corpus when the run was scoped to
+    part of it, or the fingerprint would claim the run saw documents it could
+    never retrieve. `conn` is ignored; it remains in the signature for callers
+    that still pass one."""
     import hashlib
 
-    rows = conn.execute("SELECT fingerprint FROM rag_documents ORDER BY source").fetchall()
+    rows: list[tuple[str, str]] = []
+    for url, cats in rag.shards(categories or None):
+        conn_ = rag.shard_connection(url)
+        if cats:
+            rows += conn_.execute(
+                "SELECT source, fingerprint FROM rag_documents WHERE category = ANY(%s)", (cats,)
+            ).fetchall()
+        else:
+            rows += conn_.execute("SELECT source, fingerprint FROM rag_documents").fetchall()
     h = hashlib.sha256()
-    for (f,) in rows:
-        h.update(f.encode())
+    for _, fingerprint in sorted(rows):
+        h.update(fingerprint.encode())
     return h.hexdigest()[:16]
 
 
@@ -105,13 +140,15 @@ def start_run(conn, run: dict) -> None:
     conn.execute(
         """INSERT INTO fitgap_runs
            (id, mode, scope_bpml, scope_label, question, country, model, prompt_hash,
-            params, holdout, corpus_fingerprint)
+            params, holdout, corpus_fingerprint, categories)
            VALUES (%(id)s, %(mode)s, %(scope_bpml)s, %(scope_label)s, %(question)s, %(country)s,
-                   %(model)s, %(prompt_hash)s, %(params)s, %(holdout)s, %(corpus_fingerprint)s)
+                   %(model)s, %(prompt_hash)s, %(params)s, %(holdout)s, %(corpus_fingerprint)s,
+                   %(categories)s)
            ON CONFLICT (id) DO NOTHING""",
         {**run,
          "country": json.dumps(run.get("country")) if run.get("country") else None,
-         "params": json.dumps(run.get("params", {}))},
+         "params": json.dumps(run.get("params", {})),
+         "categories": json.dumps(run.get("categories") or [])},
     )
     conn.commit()
 
@@ -150,7 +187,7 @@ def list_runs(conn, limit: int = 40) -> list[dict]:
         """SELECT r.id, r.mode, r.scope_bpml, r.scope_label, r.question, r.holdout, r.status,
                   r.started_at, r.finished_at, r.model,
                   (SELECT count(*) FROM fitgap_entries e WHERE e.run_id = r.id) AS entries,
-                  r.synthesis
+                  r.synthesis, r.categories
            FROM fitgap_runs r ORDER BY r.started_at DESC LIMIT %s""",
         (limit,),
     ).fetchall()
@@ -166,7 +203,7 @@ def list_runs(conn, limit: int = 40) -> list[dict]:
             status = "abandoned"
         out.append({
             "id": r[0], "mode": r[1], "scope_bpml": r[2], "scope_label": r[3], "question": r[4],
-            "holdout": r[5], "status": status,
+            "holdout": r[5], "status": status, "categories": r[12] or [],
             "started_at": r[7].isoformat() if r[7] else None,
             "finished_at": r[8].isoformat() if r[8] else None,
             "model": r[9], "entries": r[10],
@@ -189,7 +226,7 @@ def get_run(conn, run_id: str) -> dict | None:
     r = conn.execute(
         """SELECT id, mode, scope_bpml, scope_label, question, country, model, prompt_hash,
                   params, holdout, corpus_fingerprint, started_at, finished_at, status,
-                  input_tokens, output_tokens, synthesis
+                  input_tokens, output_tokens, synthesis, categories
            FROM fitgap_runs WHERE id = %s""",
         (run_id,),
     ).fetchone()
@@ -198,7 +235,7 @@ def get_run(conn, run_id: str) -> dict | None:
     run = {
         "id": r[0], "mode": r[1], "scope_bpml": r[2], "scope_label": r[3], "question": r[4],
         "country": r[5], "model": r[6], "prompt_hash": r[7], "params": r[8], "holdout": r[9],
-        "corpus_fingerprint": r[10],
+        "corpus_fingerprint": r[10], "categories": r[17] or [],
         "started_at": r[11].isoformat() if r[11] else None,
         "finished_at": r[12].isoformat() if r[12] else None,
         "status": r[13], "input_tokens": r[14], "output_tokens": r[15],

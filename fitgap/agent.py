@@ -116,7 +116,8 @@ def _client():
     return anthropic.Anthropic()
 
 
-def _user_message(step: bpml.Process, mode: str, country: dict | None, question: str | None) -> str:
+def _user_message(step: bpml.Process, mode: str, country: dict | None, question: str | None,
+                  categories: tuple[str, ...] = ()) -> str:
     ancestry = " › ".join(f"{a.code} {a.name}" for a in tools._ancestry(step))
     parts = [
         f"BPML step: {step.code} — {step.name}",
@@ -132,6 +133,16 @@ def _user_message(step: bpml.Process, mode: str, country: dict | None, question:
             f"The analyst who started this run asked: \"{question}\"\n"
             "Keep it in view when you choose what to search for and what to put in "
             "open_questions, but still classify the step against the rubric."
+        )
+    if categories:
+        # Without this the model reads an out-of-scope specification as a
+        # missing one, and reports GAP where the truth is "not in this scope".
+        parts.append(
+            f"Retrieval for this run is limited to the {', '.join(categories)} document "
+            f"{'categories' if len(categories) > 1 else 'category'}. Anything outside it "
+            "cannot be searched, so absence of evidence here is not evidence that the "
+            "project lacks a design: classify UNKNOWN and say in open_questions which "
+            "category would have to be searched, rather than calling it a GAP."
         )
     parts.append(
         f"Classify this step and submit one register entry. bpml_code must be exactly "
@@ -158,7 +169,7 @@ def run_step(
     client = _client()
     system = SYSTEM_B if mode == "B" else SYSTEM_A
     messages: list[dict[str, Any]] = [
-        {"role": "user", "content": _user_message(step, mode, country, question)}
+        {"role": "user", "content": _user_message(step, mode, country, question, sess.categories)}
     ]
     tool_defs = tools.definitions(mode)
 

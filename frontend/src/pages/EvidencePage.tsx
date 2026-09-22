@@ -1,12 +1,13 @@
 import {
-  Alert, Autocomplete, Box, Button, Chip, Collapse, Divider, IconButton,
-  LinearProgress, ListSubheader, Paper, Stack, Switch, TextField, Tooltip, Typography,
+  Alert, Autocomplete, Box, Button, Checkbox, Chip, Collapse, Divider, IconButton,
+  LinearProgress, ListItemText, ListSubheader, MenuItem, Paper, Select, Stack, Switch,
+  TextField, Tooltip, Typography,
 } from "@mui/material";
 import { alpha, useTheme } from "@mui/material/styles";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Ban, ChevronDown, CircleAlert, CircleCheck, CircleHelp, Copy, Dices, Eye, FileText, FlaskConical,
-  GitBranch, Network, Quote, Scale, ScanLine, Search, SendHorizontal, Sigma, Square, Target,
+  GitBranch, Layers, Network, Quote, Scale, ScanLine, Search, SendHorizontal, Sigma, Square, Target,
   TriangleAlert,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
@@ -285,6 +286,9 @@ export default function EvidencePage({ active }: { active: boolean }) {
   const [question, setQuestion] = useState("");
   const [picked, setPicked] = useState<EvalQuestion | null>(null);
   const [holdout, setHoldout] = useState(false);
+  // Which document categories the investigation may read. Empty is all of
+  // them, which is what the server does with an empty list.
+  const [categories, setCategories] = useState<string[]>([]);
   const [running, setRunning] = useState(false);
   const [calls, setCalls] = useState<EvidenceToolCall[]>([]);
   const [answer, setAnswer] = useState<EvidenceAnswer | null>(null);
@@ -308,7 +312,7 @@ export default function EvidencePage({ active }: { active: boolean }) {
     const ctrl = new AbortController();
     controller.current = ctrl;
     try {
-      await askEvidence({ question: q, holdout }, {
+      await askEvidence({ question: q, holdout, categories }, {
         toolCall: (c) => setCalls((cs) => [...cs, c]),
         answer: setAnswer,
         error: setError,
@@ -411,6 +415,43 @@ export default function EvidencePage({ active }: { active: boolean }) {
                                  setPicked(q); setQuestion(q.question); }}>
                 <Dices size={16} /></IconButton></span>
             </Tooltip>
+            {/* A native title, not a MUI Tooltip: a Tooltip renders above the
+                open menu and would cover the options. */}
+            {(status?.categories?.length ?? 0) > 0 && (
+              <Select
+                multiple
+                size="small"
+                displayEmpty
+                value={categories}
+                onChange={(e) =>
+                  setCategories(typeof e.target.value === "string" ? e.target.value.split(",") : e.target.value)
+                }
+                disabled={running}
+                title="Which document categories the investigation may read. None selected reads all of them."
+                renderValue={(picked) => (
+                  <Stack direction="row" spacing={0.6} sx={{ alignItems: "center" }}>
+                    <Layers size={14} />
+                    <span>{picked.length === 0 ? "All categories" : picked.join(", ")}</span>
+                  </Stack>
+                )}
+                sx={{ fontSize: 13, minWidth: 140 }}
+              >
+                {(status?.categories ?? []).map((c) => (
+                  <MenuItem key={c.code} value={c.code} disabled={c.chunks === 0} sx={{ py: 0.5 }}>
+                    <Checkbox size="small" checked={categories.includes(c.code)} sx={{ mr: 0.5 }} />
+                    <ListItemText
+                      primary={c.code}
+                      secondary={
+                        c.chunks === 0
+                          ? "empty"
+                          : `${c.documents} document${c.documents === 1 ? "" : "s"} · ${c.chunks.toLocaleString()} chunks`
+                      }
+                      slotProps={{ primary: { sx: { fontSize: 13 } }, secondary: { sx: { fontSize: 11 } } }}
+                    />
+                  </MenuItem>
+                ))}
+              </Select>
+            )}
             <Tooltip title="Hide the fit registers and blank FIT/GAP tokens, for an unbiased evaluation run">
               <Stack direction="row" spacing={0.5} sx={{ alignItems: "center" }}>
                 <Switch size="small" checked={holdout} onChange={(e) => setHoldout(e.target.checked)} />

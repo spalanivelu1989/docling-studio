@@ -1,7 +1,7 @@
 import {
-  Alert, Autocomplete, Box, Button, Chip, CircularProgress, Collapse, Divider, Drawer, IconButton,
-  LinearProgress, ListSubheader, Menu, MenuItem, Paper, Select, Slider, Stack, Switch, Tab, Tabs,
-  TextField, ToggleButton, ToggleButtonGroup, Tooltip, Typography,
+  Alert, Autocomplete, Box, Button, Checkbox, Chip, CircularProgress, Collapse, Divider, Drawer,
+  IconButton, LinearProgress, ListItemText, ListSubheader, Menu, MenuItem, Paper, Select, Slider,
+  Stack, Switch, Tab, Tabs, TextField, ToggleButton, ToggleButtonGroup, Tooltip, Typography,
 } from "@mui/material";
 import { alpha, useTheme } from "@mui/material/styles";
 import { AnimatePresence, motion } from "framer-motion";
@@ -1096,6 +1096,9 @@ export default function FitGapPage({ active, onShowInGraph }: Props) {
 
   const [mode, setMode] = useState<"A" | "B">("A");
   const [holdout, setHoldout] = useState(false);
+  // Document categories a run may read. Empty is all of them, matching the
+  // server. Enforced on every worker session, not passed per tool call.
+  const [categories, setCategories] = useState<string[]>([]);
   const [country, setCountry] = useState("");
   const countryError = (() => {
     if (!country.trim()) return null;
@@ -1145,10 +1148,10 @@ export default function FitGapPage({ active, onShowInGraph }: Props) {
 
   useEffect(() => {
     if (!scope) { setPlan(null); return; }
-    fitgap.preview({ scope_bpml: scope.code, max_steps: maxSteps, concurrency, mode, holdout })
+    fitgap.preview({ scope_bpml: scope.code, max_steps: maxSteps, concurrency, mode, holdout, categories })
       .then(setPlan)
       .catch(() => setPlan(null));
-  }, [scope, maxSteps, concurrency, mode, holdout]);
+  }, [scope, maxSteps, concurrency, mode, holdout, categories]);
 
   const doneCount = steps.filter((s) => s.state === "done" || s.state === "failed").length;
   const current = steps.find((s) => s.code === openEntry);
@@ -1183,7 +1186,7 @@ export default function FitGapPage({ active, onShowInGraph }: Props) {
     try {
       await runFitGap(
         {
-          mode, scope_bpml: scope.code, holdout, max_steps: maxSteps, concurrency,
+          mode, scope_bpml: scope.code, holdout, max_steps: maxSteps, concurrency, categories,
           // Tag the run with the eval id so a stored register can be traced
           // back to the question that produced it.
           question: picked ? `[${picked.id} · ${picked.axis}] ${question.trim()}` : question.trim() || null,
@@ -1232,6 +1235,7 @@ export default function FitGapPage({ active, onShowInGraph }: Props) {
       setPicked(EVAL_QUESTIONS.find((q) => (run.question || "").startsWith(`[${q.id} `)) ?? null);
       setMode(run.mode);
       setHoldout(run.holdout);
+      setCategories(run.categories ?? []);
       setCountry(run.country ? JSON.stringify(run.country, null, 2) : "");
       setSteps(run.entries.map((e) => ({ code: e.bpml_code, name: e.step_name, state: "done", tools: [], entry: e })));
       setSynth((run.synthesis && "reuse" in run.synthesis ? run.synthesis : null) as FitGapSynthesis | null);
@@ -1309,6 +1313,7 @@ export default function FitGapPage({ active, onShowInGraph }: Props) {
                         {plural(r.entries, "entry", "entries")}
                         {r.reuse_pct !== null ? ` · ${r.reuse_pct}% reuse` : ""}
                         {r.holdout ? " · holdout" : ""}
+                        {r.categories?.length ? ` · ${r.categories.join(", ")}` : ""}
                         {r.status === "abandoned" ? " · abandoned" : ""}
                       </Typography>
                     </Box>
@@ -1457,6 +1462,51 @@ export default function FitGapPage({ active, onShowInGraph }: Props) {
                 <Slider size="small" min={1} max={6} value={concurrency} onChange={(_, v) => setConcurrency(v as number)} valueLabelDisplay="auto" />
               </Box>
               <Box sx={{ maxWidth: 320 }}>
+                {(status?.categories?.length ?? 0) > 0 && (
+                  <Box sx={{ mb: 1.5 }}>
+                    <Typography variant="overline" color="text.secondary">Corpus</Typography>
+                    {/* A native title, not a MUI Tooltip: a Tooltip renders
+                        above the open menu and would cover the options. */}
+                    <Select
+                      multiple
+                      size="small"
+                      fullWidth
+                      displayEmpty
+                      value={categories}
+                      onChange={(e) =>
+                        setCategories(typeof e.target.value === "string" ? e.target.value.split(",") : e.target.value)
+                      }
+                      disabled={running}
+                      title="Which document categories the run may read. None selected reads all of them."
+                      renderValue={(picked) => (
+                        <Stack direction="row" spacing={0.6} sx={{ alignItems: "center" }}>
+                          <Layers size={14} />
+                          <span>{picked.length === 0 ? "All categories" : picked.join(", ")}</span>
+                        </Stack>
+                      )}
+                      sx={{ fontSize: 13 }}
+                    >
+                      {(status?.categories ?? []).map((c) => (
+                        <MenuItem key={c.code} value={c.code} disabled={c.chunks === 0} sx={{ py: 0.5 }}>
+                          <Checkbox size="small" checked={categories.includes(c.code)} sx={{ mr: 0.5 }} />
+                          <ListItemText
+                            primary={c.code}
+                            secondary={
+                              c.chunks === 0
+                                ? "empty"
+                                : `${c.documents} document${c.documents === 1 ? "" : "s"} · ${c.chunks.toLocaleString()} chunks`
+                            }
+                            slotProps={{ primary: { sx: { fontSize: 13 } }, secondary: { sx: { fontSize: 11 } } }}
+                          />
+                        </MenuItem>
+                      ))}
+                    </Select>
+                    <Typography sx={{ fontSize: 11, color: "text.secondary", mt: 0.5 }}>
+                      A narrowed run records its scope, and the classifier is told what it cannot
+                      reach so a missing specification is reported as UNKNOWN rather than a GAP.
+                    </Typography>
+                  </Box>
+                )}
                 <Stack direction="row"  spacing={1} sx={{ alignItems: "center" }}>
                   <Switch size="small" checked={holdout} onChange={(e) => setHoldout(e.target.checked)} />
                   <Typography sx={{ fontSize: 13, fontWeight: 600 }}>Evaluation holdout</Typography>

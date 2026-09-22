@@ -122,14 +122,24 @@ def load(conn=None, force: bool = False) -> Duplicates:
     with _lock:
         if _cached is not None and not force:
             return _cached
-    own = conn is None
-    conn = conn or rag.connect()
-    try:
-        rows = conn.execute(_centroids_sql(), {"threshold": DUPLICATE_AT}).fetchall()
-        titles = dict(conn.execute("SELECT id, title FROM rag_documents").fetchall())
-    finally:
-        if own:
-            conn.close()
+    # One pass per category database. Document ids restart in each one, so the
+    # pairs are resolved to titles inside the loop and only then merged. Two
+    # copies of the same document filed under different categories therefore
+    # go unnoticed, which is the price of giving a category its own database;
+    # duplicates within a category, which is what this guards against, are
+    # still found.
+    pairs_by_title: list[tuple[str, str, float]] = []
+    if conn is not None:
+        passes = [conn]
+    else:
+        passes = [rag.shard_connection(url) for url, _ in rag.shards()]
+    for c in passes:
+        rows = c.execute(_centroids_sql(), {"threshold": DUPLICATE_AT}).fetchall()
+        titles = dict(c.execute("SELECT id, title FROM rag_documents").fetchall())
+        for a_id, b_id, sim in rows:
+            a, b = titles.get(a_id), titles.get(b_id)
+            if a and b:
+                pairs_by_title.append((a, b, float(sim)))
 
     pairs: dict[tuple[str, str], float] = {}
     # Union-find over the near-duplicate pairs, so a chain of three versions
@@ -148,11 +158,10 @@ def load(conn=None, force: bool = False) -> Duplicates:
         if ra != rb:
             parent[ra] = rb
 
-    for a_id, b_id, sim in rows:
-        a, b = titles.get(a_id), titles.get(b_id)
-        if not a or not b or not _same_identity(a, b):
+    for a, b, sim in pairs_by_title:
+        if not _same_identity(a, b):
             continue
-        pairs[(a, b)] = round(float(sim), 3)
+        pairs[(a, b)] = round(sim, 3)
         union(a, b)
 
     grouped: dict[str, set[str]] = {}

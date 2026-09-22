@@ -1,16 +1,17 @@
 import {
-  Alert, Box, Button, Chip, IconButton, InputAdornment, MenuItem, Paper, Select, Skeleton, Stack, TextField,
-  ToggleButton, ToggleButtonGroup, Tooltip, Typography,
+  Alert, Box, Button, Checkbox, Chip, IconButton, InputAdornment, ListItemText, MenuItem, Paper, Select,
+  Skeleton, Stack, TextField, ToggleButton, ToggleButtonGroup, Tooltip, Typography,
 } from "@mui/material";
 import { alpha, useTheme } from "@mui/material/styles";
 import { AnimatePresence, LayoutGroup, motion } from "framer-motion";
 import {
-  Ban, Binary, BrainCircuit, Check, ChevronDown, CircleAlert, CircleCheck, Copy, Database, GitMerge, LoaderCircle,
-  MessageSquareText, Search, SendHorizontal, Sparkles, Square, TextSearch, Timer,
+  Ban, Binary, BrainCircuit, Check, ChevronDown, CircleAlert, CircleCheck, Copy, Database, GitMerge, Layers,
+  LoaderCircle, MessageSquareText, Search, SendHorizontal, Sparkles, Square, TextSearch, Timer,
 } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
-  ask, api, type Done, type RagStatus, type SearchMode, type Source, type StepKey, type StepStatus,
+  ask, api, type CategoryInfo, type Done, type RagStatus, type SearchMode, type Source, type StepKey,
+  type StepStatus,
 } from "../api";
 import Markdown, { highlightRegex } from "../components/Markdown";
 import { searchColors } from "../theme";
@@ -49,6 +50,8 @@ export default function AskPage({ active }: { active: boolean }) {
   const [asked, setAsked] = useState("");
   const [mode, setMode] = useState<SearchMode>("hybrid");
   const [k, setK] = useState(8);
+  // Empty means every category, which is what the server does with an empty list.
+  const [categories, setCategories] = useState<string[]>([]);
   const [steps, setSteps] = useState<Step[]>(() => freshSteps("hybrid"));
   const [terms, setTerms] = useState<string[]>([]);
   const [sources, setSources] = useState<Source[]>([]);
@@ -67,6 +70,25 @@ export default function AskPage({ active }: { active: boolean }) {
   useEffect(() => {
     if (active) api.ragStatus().then(setStatus).catch(() => setStatus(null));
   }, [active]);
+
+  // Every category is shown, so the filter does not appear and disappear as
+  // they fill up and empty; only the ones holding something can be picked. A
+  // category emptied since it was picked is dropped rather than silently
+  // returning nothing.
+  const allCategories = useMemo<CategoryInfo[]>(() => status?.categories ?? [], [status]);
+  const filled = useMemo<CategoryInfo[]>(() => allCategories.filter((c) => c.chunks > 0), [allCategories]);
+  useEffect(() => {
+    setCategories((picked) => {
+      const kept = picked.filter((code) => filled.some((c) => c.code === code));
+      return kept.length === picked.length ? picked : kept;
+    });
+  }, [filled]);
+
+  const scope = useMemo(() => (categories.length ? filled.filter((c) => categories.includes(c.code)) : filled), [categories, filled]);
+  const scoped = useMemo(
+    () => scope.reduce((acc, c) => ({ documents: acc.documents + c.documents, chunks: acc.chunks + c.chunks }), { documents: 0, chunks: 0 }),
+    [scope],
+  );
 
   // Tokens arrive faster than it is worth re-rendering Markdown; flush a few
   // times a second.
@@ -106,7 +128,7 @@ export default function AskPage({ active }: { active: boolean }) {
     };
     try {
       await ask(
-        { question: q, mode, k },
+        { question: q, mode, k, categories },
         {
           stage: (e) => {
             if (e.terms) setTerms(e.terms);
@@ -156,10 +178,13 @@ export default function AskPage({ active }: { active: boolean }) {
   if (status?.missing.length) problems.push(<>Set {status.missing.join(", ")} in <code>.env</code> and restart the server.</>);
   if (status?.error) problems.push(<>Cannot read the index: {status.error}</>);
   else if (status && !status.missing.includes("DATABASE_URL") && !status.chunks)
-    problems.push(<>The index is empty. Run <code>.venv/bin/python rag.py index solvay-spark/markdown</code> or add a document from the Extract page.</>);
+    problems.push(<>The index is empty. Run <code>.venv/bin/python rag.py index solvay-spark/pkg/markdown</code> or add a document from the Extract page.</>);
+  else if (status && categories.length > 0 && scoped.chunks === 0)
+    problems.push(<>Nothing is indexed in {categories.join(", ")}. Clear the category filter to search everything.</>);
 
   const answerModel = status?.answer_model ?? "Claude";
   const docsInSources = new Set(sources.map((s) => s.title)).size;
+  const sourceCategories = useMemo(() => [...new Set(sources.map((s) => s.category))].sort(), [sources]);
   const colors = searchColors[theme.palette.mode];
 
   return (
@@ -180,12 +205,24 @@ export default function AskPage({ active }: { active: boolean }) {
             <Typography sx={{ fontWeight: 650 }}>Ask the documents</Typography>
             <Box sx={{ flex: 1 }} />
             {status && !status.error && (
-              <Tooltip title={`Embeddings: Ollama ${status.embed_model} (${status.embed_dimension || 1024}d) · Answers: ${status.answer_model}`}>
+              <Tooltip
+                title={
+                  <>
+                    Embeddings: Ollama {status.embed_model} ({status.embed_dimension || 1024}d) · Answers: {status.answer_model}
+                    {scope.length > 0 && (
+                      <>
+                        <br />
+                        {scope.map((c) => `${c.code}: ${c.documents} in ${c.database}`).join(" · ")}
+                      </>
+                    )}
+                  </>
+                }
+              >
                 <Chip
                   size="small"
                   variant="outlined"
                   icon={<Database size={13} />}
-                  label={`${status.chunks.toLocaleString()} chunks · ${status.documents} documents`}
+                  label={`${scoped.chunks.toLocaleString()} chunks · ${scoped.documents} documents${categories.length ? ` · ${categories.join(", ")}` : ""}`}
                   sx={{ fontVariantNumeric: "tabular-nums" }}
                 />
               </Tooltip>
@@ -248,6 +285,44 @@ export default function AskPage({ active }: { active: boolean }) {
                 <TextSearch size={15} /> Keyword
               </ToggleButton>
             </ToggleButtonGroup>
+            {allCategories.length > 0 && (
+              <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
+                <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                  Categories
+                </Typography>
+                <Select
+                  multiple
+                  size="small"
+                  displayEmpty
+                  value={categories}
+                  onChange={(e) => setCategories(typeof e.target.value === "string" ? e.target.value.split(",") : e.target.value)}
+                  disabled={running}
+                  title="Which categories to search. None selected searches all of them."
+                  renderValue={(picked) => (
+                    <Stack direction="row" spacing={0.6} sx={{ alignItems: "center" }}>
+                      <Layers size={14} />
+                      <span>{picked.length === 0 ? "All" : picked.join(", ")}</span>
+                    </Stack>
+                  )}
+                  sx={{ fontSize: 14, minWidth: 130 }}
+                >
+                  {allCategories.map((c) => (
+                    <MenuItem key={c.code} value={c.code} disabled={c.chunks === 0} sx={{ py: 0.5 }}>
+                      <Checkbox size="small" checked={categories.includes(c.code)} sx={{ mr: 0.5 }} />
+                      <ListItemText
+                        primary={c.label}
+                        secondary={
+                          c.chunks === 0
+                            ? `empty · ${c.database}`
+                            : `${c.documents} document${c.documents === 1 ? "" : "s"} · ${c.chunks.toLocaleString()} chunks`
+                        }
+                        slotProps={{ primary: { sx: { fontSize: 14 } }, secondary: { sx: { fontSize: 12 } } }}
+                      />
+                    </MenuItem>
+                  ))}
+                </Select>
+              </Stack>
+            )}
             <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
               <Typography variant="body2" sx={{ color: "text.secondary" }}>
                 Excerpts
@@ -370,7 +445,7 @@ export default function AskPage({ active }: { active: boolean }) {
               <Paper sx={{ overflow: "hidden" }}>
                 <CardHead
                   title="Sources"
-                  meta={`${sources.length} excerpts from ${docsInSources} document${docsInSources === 1 ? "" : "s"} · ${cited.size} cited`}
+                  meta={`${sources.length} excerpts from ${docsInSources} document${docsInSources === 1 ? "" : "s"}${sourceCategories.length > 1 ? ` in ${sourceCategories.join(", ")}` : ""} · ${cited.size} cited`}
                   actions={
                     <ToggleButtonGroup size="small" exclusive value={sort} onChange={(_, v) => v && setSort(v)} aria-label="Sort sources">
                       <ToggleButton value="score" sx={{ px: 1.25, py: 0.3 }}>Combined</ToggleButton>
@@ -397,6 +472,7 @@ export default function AskPage({ active }: { active: boolean }) {
                         maxBm25={maxBm25}
                         highlight={highlight}
                         flash={flash?.n === s.n ? flash.at : 0}
+                        showCategory={filled.length > 1}
                       />
                     ))}
                   </Box>
@@ -539,8 +615,9 @@ function ScoreBar({ label, value, fraction, color, empty }: { label: string; val
   );
 }
 
-function SourceCard({ source: s, index, cited, maxScore, maxBm25, highlight, flash }: {
-  source: Source; index: number; cited: boolean; maxScore: number; maxBm25: number; highlight: RegExp | null; flash: number;
+function SourceCard({ source: s, index, cited, maxScore, maxBm25, highlight, flash, showCategory }: {
+  source: Source; index: number; cited: boolean; maxScore: number; maxBm25: number; highlight: RegExp | null;
+  flash: number; showCategory: boolean;
 }) {
   const theme = useTheme();
   const colors = searchColors[theme.palette.mode];
@@ -600,9 +677,16 @@ function SourceCard({ source: s, index, cited, maxScore, maxBm25, highlight, fla
         </Box>
         <Box sx={{ minWidth: 0, flex: 1 }}>
           <Typography sx={{ fontWeight: 650, overflowWrap: "anywhere" }}>{s.title}</Typography>
-          <Typography variant="body2" sx={{ color: "text.secondary", overflowWrap: "anywhere" }}>
-            {s.section || "(start of document)"}
-          </Typography>
+          <Stack direction="row" spacing={0.75} sx={{ alignItems: "center", flexWrap: "wrap" }}>
+            {/* Only when more than one category exists: otherwise it says the
+                same thing on every card. */}
+            {showCategory && (
+              <Chip size="small" variant="outlined" label={s.category} sx={{ height: 19, fontSize: 11, fontWeight: 650 }} />
+            )}
+            <Typography variant="body2" sx={{ color: "text.secondary", overflowWrap: "anywhere" }}>
+              {s.section || "(start of document)"}
+            </Typography>
+          </Stack>
         </Box>
         <AnimatePresence>
           {cited && (

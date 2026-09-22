@@ -37,6 +37,22 @@ export interface EmbedResult {
   file: string;
 }
 
+/** A category of documents. Each one is isolated in its own Postgres
+ *  database, so `documents` and `chunks` are that database's own counts. */
+export interface CategoryInfo {
+  code: string;
+  label: string;
+  description: string;
+  folder: string;
+  database: string;
+  /** False until something has been indexed into it. */
+  exists: boolean;
+  /** True when RAG_DATABASE_URL_<CODE> puts it off the naming convention. */
+  configured: boolean;
+  documents: number;
+  chunks: number;
+}
+
 export interface RagStatus {
   missing: string[];
   embed_model: string;
@@ -46,6 +62,7 @@ export interface RagStatus {
   default_k: number;
   documents: number;
   chunks: number;
+  categories: CategoryInfo[];
   error: string | null;
 }
 
@@ -65,6 +82,7 @@ export interface Source {
   title: string;
   section: string;
   content: string;
+  category: string;
   score: number;
   similarity: number | null;
   bm25: number | null;
@@ -79,6 +97,12 @@ export interface Done {
 }
 
 export type SearchMode = "hybrid" | "vector" | "keyword";
+
+/** `?categories=PKG&categories=DR`, or nothing at all for the whole graph. */
+function categoryQuery(categories: string[]): string {
+  if (!categories.length) return "";
+  return "?" + categories.map((c) => `categories=${encodeURIComponent(c)}`).join("&");
+}
 
 async function json<T>(res: Response): Promise<T> {
   const data = await res.json().catch(() => ({}));
@@ -117,15 +141,20 @@ export const api = {
   kbFileContent: (filename: string) => fetch(`/api/kb/files/${encodeURIComponent(filename)}`).then((r) => r.text()),
   deleteKbFile: (filename: string) =>
     fetch(`/api/kb/files/${encodeURIComponent(filename)}`, { method: "DELETE" }).then((r) => json<{ status: string }>(r)),
-  graphData: () => fetch("/api/graph/data").then((r) => json<GraphData>(r)),
-  rebuildGraph: () => fetch("/api/graph/rebuild", { method: "POST" }).then((r) => json<GraphData>(r)),
+  graphData: (categories: string[] = []) =>
+    fetch(`/api/graph/data${categoryQuery(categories)}`).then((r) => json<GraphData>(r)),
+  rebuildGraph: (categories: string[] = []) =>
+    fetch(`/api/graph/rebuild${categoryQuery(categories)}`, { method: "POST" }).then((r) => json<GraphData>(r)),
   queryGraph: (req: { query?: string; source_id?: string; target_id?: string }) =>
     fetch("/api/graph/query", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(req),
     }).then((r) => json<GraphQueryResult>(r)),
-  graphModel: () => fetch("/api/graph/model").then((r) => json<GraphModel>(r)),
+  /** The schema is the same whatever the categories; the counts and sample
+   *  instances follow them. */
+  graphModel: (categories: string[] = []) =>
+    fetch(`/api/graph/model${categoryQuery(categories)}`).then((r) => json<GraphModel>(r)),
 };
 
 /** The graph's own schema, as a Neo4j Data Importer model. */
@@ -199,6 +228,9 @@ export interface GraphNode {
   in_bpml?: boolean;
   /** The register's "Lowest Level Key", on L4 steps only. */
   jira_key?: string;
+  /** The category the document came from (document nodes only). Streams,
+   *  systems, processes and specs are shared, so they carry none. */
+  category?: string;
 }
 
 export interface GraphEdge {
@@ -218,6 +250,10 @@ export interface GraphData {
     types: Record<string, number>;
     streams: string[];
     systems: string[];
+    /** Documents per category in the graph as returned. */
+    categories?: Record<string, number>;
+    /** Present when the graph was narrowed to some categories. */
+    filtered_to?: string[];
   };
 }
 
@@ -352,7 +388,8 @@ export interface AskHandlers {
  *  Parsed by hand: EventSource can only GET, and it reconnects on close --
  *  which would ask the question (and pay for it) again. */
 export async function ask(
-  body: { question: string; mode: SearchMode; k: number },
+  /** An empty `categories` searches every one of them. */
+  body: { question: string; mode: SearchMode; k: number; categories: string[] },
   on: AskHandlers,
   signal: AbortSignal,
 ) {
@@ -538,8 +575,12 @@ export interface FitGapStatus {
   reviews: number;
   chunks?: number;
   documents?: number;
+  /** The document categories a run can be pointed at, with what each holds. */
+  categories?: { code: string; documents: number; chunks: number }[];
   graph: { total_nodes: number; total_edges: number; types: Record<string, number> } | null;
   error: string | null;
+  /** Set when the corpus counts could not be read; the register itself is fine. */
+  corpus_error?: string;
 }
 
 export interface FitGapPreview {
@@ -559,6 +600,8 @@ export interface FitGapRunSummary {
   id: string; mode: "A" | "B"; scope_bpml: string; scope_label: string; question: string;
   holdout: boolean; status: string; started_at: string | null; finished_at: string | null;
   model: string; entries: number; reuse_pct: number | null; coverage_pct: number | null;
+  /** Categories the run was limited to. Empty means it read every one. */
+  categories: string[];
 }
 
 export interface FitGapRunDetail extends Omit<FitGapRunSummary, "entries"> {
@@ -580,13 +623,15 @@ export interface FitGapRunBody {
   max_steps?: number;
   concurrency?: number;
   question?: string | null;
+  /** Empty reads every category. Enforced server-side, not a hint. */
+  categories?: string[];
 }
 
 export interface FitGapHandlers {
   scope: (d: {
     run_id: string; scope: BpmlProcess; scope_label: string; ancestry: BpmlProcess[];
     steps: BpmlProcess[]; mode: "A" | "B"; holdout: boolean; model: string;
-    prompt_hash: string; corpus_fingerprint: string;
+    prompt_hash: string; corpus_fingerprint: string; categories: string[];
   }) => void;
   stepStart: (d: { bpml_code: string; step_name: string; level: number }) => void;
   toolCall: (d: { bpml_code: string; tool: string; summary: string; ms: number; error: string | null }) => void;
@@ -748,6 +793,8 @@ export interface EvidenceStatus {
   max_tool_calls: number;
   anthropic_key: boolean;
   tools: string[];
+  /** Document categories an investigation can be pointed at. */
+  categories: { code: string; documents: number; chunks: number }[];
   duplicate_groups: string[][];
   duplicate_threshold: number;
   hubs: { label: string; degree: number }[];
@@ -766,7 +813,8 @@ export interface EvidenceHandlers {
  *  the same reason as ask(): EventSource can only GET, and a reconnect would
  *  re-run (and re-bill) the whole investigation. */
 export async function askEvidence(
-  body: { question: string; holdout?: boolean },
+  /** An empty `categories` reads every one of them. */
+  body: { question: string; holdout?: boolean; categories?: string[] },
   on: EvidenceHandlers,
   signal: AbortSignal,
 ) {

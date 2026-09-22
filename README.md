@@ -151,7 +151,62 @@ OLLAMA_HOST=http://127.0.0.1:11434
 RAG_EMBED_MODEL=bge-m3
 RAG_EMBED_DIMENSION=1024
 RAG_ANSWER_MODEL=claude-opus-5
+RAG_HNSW_EF_SEARCH=200
 ```
+
+### Categories
+
+Every document belongs to a category, and **each category is isolated in its
+own database** named after the one in `DATABASE_URL`: `PKG` lives in
+`docling_pkg`, `DR` in `docling_dr`. `DATABASE_URL` itself holds no documents —
+it is the base name the others are derived from, and where the tables that are
+not per-category (the Fit/Gap runs and reviews) live.
+
+A document's category is decided in this order:
+
+1. an explicit choice — `--category` on the command line, the `category` field
+   on the upload and embed endpoints;
+2. the file's own YAML front matter, `category: DR`;
+3. the folder it sits in — `solvay-spark/<code>/markdown` names its category,
+   so `solvay-spark/pkg/markdown` is `PKG`;
+4. `UNFILED`.
+
+**Adding a category takes no code change.** Put the Markdown in
+`solvay-spark/<code>/markdown` and index it: the folder names the category and
+its database is created on the first write. `rag.py categories` lists what each
+one holds and where.
+
+```bash
+.venv/bin/python rag.py index solvay-spark/dr/markdown   # creates docling_dr
+.venv/bin/python rag.py categories                       # what is where
+.venv/bin/python rag.py ask "..." --category DR          # search one category
+.venv/bin/python rag.py ask "..."                        # search all of them
+```
+
+Edit `CATEGORIES` in `rag.py` only to give a category a label and description
+for the UI, or set `RAG_DATABASE_URL_<CODE>` to put one somewhere off the
+convention (another server, another name).
+
+The category is **metadata, never embedded text**. A code like `PKG` means
+nothing to BGE-M3, and adding it to every chunk would move a whole category by
+the same constant vector without making any chunk in it easier to tell apart —
+so re-filing a document is an `UPDATE`, not 50 embedding calls. It is passed to
+Claude on each excerpt, so an answer can say which kind of document it rests on.
+
+Searching with no category covers every database and merges the rankings.
+Both scores stay comparable across databases: cosine similarity is absolute,
+and the BM25 corpus statistics are gathered from every database in the search
+rather than each scoring against itself — without that, a category holding a
+handful of chunks would have near-zero keyword scores and never surface beside
+a large one.
+
+**Upgrading an index built before categories existed:**
+
+```bash
+.venv/bin/python rag.py migrate   # tag by folder, then move each category out
+```
+
+Nothing is re-embedded — the vectors are carried across as they are.
 
 **In the browser:** `./run.sh`, then open <http://localhost:8000/ask> (or the
 **Ask** tab in the header). Type a question and the page shows each step as it
@@ -170,11 +225,14 @@ similarity and keyword score; the buttons re-sort by any of them, highest first.
 **From the command line:**
 
 ```bash
-createdb docling                                           # once
-.venv/bin/python rag.py index solvay-spark/markdown        # chunk + embed with bge-m3 + store
+createdb docling                                           # once; per-category
+                                                           # databases are made for you
+.venv/bin/python rag.py index solvay-spark/pkg/markdown    # chunk + embed with bge-m3 + store
 .venv/bin/python rag.py search "Who owns 7.1.12.3 Production Declaration?"
 .venv/bin/python rag.py ask "Who owns 7.1.12.3 Production Declaration?"
-.venv/bin/python rag.py chunks "solvay-spark/markdown/deck_pptx.md"  # preview chunking, no API calls
+.venv/bin/python rag.py categories                         # what each category holds
+.venv/bin/python rag.py retag knowledge_base/x.md DR       # re-file, no re-embedding
+.venv/bin/python rag.py chunks "solvay-spark/pkg/markdown/deck_pptx.md"  # preview chunking, no API calls
 ```
 
 ### Removing or Resetting Data in pgvector
@@ -184,13 +242,15 @@ If you want to clear old records or switch embedding models:
 1. **Reset schema for BGE-M3 (1024d) — Recommended:**
    Drops existing tables and recreates clean tables matching `vector(1024)`:
    ```bash
-   .venv/bin/python rag.py reset
+   .venv/bin/python rag.py reset               # every category
+   .venv/bin/python rag.py reset --category DR # just one
    ```
 
 2. **Clear all documents and chunks (keep schema):**
    Truncates all stored documents and chunks:
    ```bash
-   .venv/bin/python rag.py clear
+   .venv/bin/python rag.py clear               # every category
+   .venv/bin/python rag.py clear --category DR # just one
    ```
 
 3. **Wipe and immediately re-index a folder:**

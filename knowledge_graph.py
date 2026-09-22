@@ -1,8 +1,11 @@
 """
 knowledge_graph.py — Entity & Relationship Extraction Engine for Docling Studio.
 
-Extracts a semantic enterprise knowledge graph from Markdown documents located in
-solvay-spark/pkg/markdown/ and knowledge_base/.
+Extracts a semantic enterprise knowledge graph from the Markdown of every
+category rag.py knows about -- solvay-spark/pkg/markdown (PKG),
+solvay-spark/dr/markdown (DR), knowledge_base (UNFILED), and any other folder
+following the <base>/<code>/markdown convention. Each document node carries the
+category it came from, so the graph can be shown one category at a time.
 Discovers:
 - Business Streams (L2C, I2D, R2R, P2P)
 - Core Enterprise Systems (SAP S/4HANA, SAP ECC, Salesforce, SOVOS, Fiori, eCommerce)
@@ -27,6 +30,74 @@ BASE_DIR = Path(__file__).resolve().parent
 SOLVAY_DIR = BASE_DIR / "solvay-spark" / "pkg" / "markdown"
 KB_DIR = BASE_DIR / "knowledge_base"
 CACHE_FILE = BASE_DIR / "knowledge_graph.json"
+# Where the per-category folders live, for the <base>/<code>/markdown convention.
+CATEGORY_ROOT = BASE_DIR / "solvay-spark"
+
+
+def source_folders() -> list[tuple[Path, str]]:
+    """(folder, category) for every folder the graph reads.
+
+    The categories rag.py has descriptions for come first, then any folder
+    following the <base>/<code>/markdown convention -- so a category added by
+    dropping Markdown in a new folder appears here for the same reason it
+    appears in the vector index, with no list to keep in step."""
+    import rag
+
+    found: dict[Path, str] = {}
+    for code, meta in rag.CATEGORIES.items():
+        folder = meta.get("folder")
+        if folder and (path := (BASE_DIR / folder)).is_dir():
+            found[path.resolve()] = code
+    if CATEGORY_ROOT.is_dir():
+        for path in sorted(CATEGORY_ROOT.glob(f"*/{rag.MARKDOWN_FOLDER}")):
+            if path.is_dir() and path.resolve() not in found:
+                try:
+                    found[path.resolve()] = rag.check_category(path.parent.name)
+                except ValueError:
+                    pass  # not a category code -- some other folder called markdown
+    # Sorted by category so the same file appearing in two folders is always
+    # resolved the same way (see the de-duplication in extract_graph).
+    return sorted(found.items(), key=lambda pair: (pair[1], str(pair[0])))
+
+
+def _sources_fingerprint(files: list[tuple[Path, str, str]]) -> str:
+    """Identifies the set of files the graph was built from, so a cache built
+    before a category existed is rebuilt rather than served."""
+    import hashlib
+
+    parts = sorted(f"{rel}:{cat}:{path.stat().st_size}" for path, rel, cat in files)
+    return hashlib.sha256("\n".join(parts).encode()).hexdigest()
+
+
+def _display_size(type_: str, degree: int) -> float:
+    """Node radius, grown by how connected the node is within the graph shown."""
+    if type_ == "stream":
+        return 28 + min(degree * 0.4, 20)
+    if type_ == "system":
+        return 22 + min(degree * 0.3, 16)
+    if type_ == "document":
+        return 12 + min(degree * 0.5, 12)
+    if type_ == "process":
+        return 10 + min(degree * 0.5, 10)
+    return 9 + min(degree * 0.5, 10)  # spec
+
+
+def collect_files() -> list[tuple[Path, str, str]]:
+    """(path, source path relative to the project, category) for every Markdown
+    file in the graph's scope."""
+    files: list[tuple[Path, str, str]] = []
+    seen: set[str] = set()
+    for folder, code in source_folders():
+        for path in sorted(folder.glob("*.md")):
+            if path.name.startswith((".", "~$")) or path.name in seen:
+                continue
+            seen.add(path.name)
+            try:
+                rel = str(path.relative_to(BASE_DIR))
+            except ValueError:
+                rel = str(path)
+            files.append((path, rel, code))
+    return files
 
 # One colour per entity type, matching TYPE_CONFIG on the Knowledge Graph page.
 # Each stream and system used to carry its own hue, which made the legend ("one
@@ -346,13 +417,22 @@ def load_process_register() -> dict[str, Any]:
 
 
 def extract_graph(force: bool = False) -> dict[str, Any]:
-    """Extracts entities and relations from all markdown files in solvay-spark and knowledge_base."""
+    """Every entity and relation in every category's Markdown.
+
+    Categories are not filtered here: the whole graph is built and cached once,
+    and filter_by_categories cuts it down for a caller that wants one. A cached
+    graph is only used when it was built from the same set of files, so adding
+    a category does not silently serve a graph that predates it."""
+    files_to_process = collect_files()
+    fingerprint = _sources_fingerprint(files_to_process)
     if not force and CACHE_FILE.is_file():
         try:
             with open(CACHE_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 if data.get("nodes") and data.get("edges"):
-                    return data
+                    if data.get("stats", {}).get("sources") == fingerprint:
+                        return data
+                    logger.info("Cached graph was built from a different set of files; rebuilding")
         except Exception as e:
             logger.warning("Failed to load cached graph: %s", e)
 
@@ -400,18 +480,7 @@ def extract_graph(force: bool = False) -> dict[str, Any]:
             color=sys_info["color"],
         )
 
-    # 3. Gather Markdown Files
-    files_to_process: list[tuple[Path, str]] = []
-    if SOLVAY_DIR.is_dir():
-        for p in sorted(SOLVAY_DIR.glob("*.md")):
-            if not p.name.startswith((".", "~$")):
-                files_to_process.append((p, f"solvay-spark/pkg/markdown/{p.name}"))
-    if KB_DIR.is_dir():
-        for p in sorted(KB_DIR.glob("*.md")):
-            if not p.name.startswith((".", "~$")):
-                # Avoid duplicate names if already collected
-                if not any(f[0].name == p.name for f in files_to_process):
-                    files_to_process.append((p, f"knowledge_base/{p.name}"))
+    # 3. Markdown files, gathered per category by collect_files above.
 
     # Real process hierarchy, read from the BPML workbook rather than guessed.
     bpml = load_bpml_hierarchy()
@@ -467,7 +536,7 @@ def extract_graph(force: bool = False) -> dict[str, Any]:
         )
         link_ancestors(step_code)
 
-    for path, rel_source in files_to_process:
+    for path, rel_source, category in files_to_process:
         doc_id = f"doc:{path.name}"
         title = path.stem
         try:
@@ -491,6 +560,7 @@ def extract_graph(force: bool = False) -> dict[str, Any]:
             "document",
             filename=path.name,
             source=rel_source,
+            category=category,
             format=fmt,
             size=path.stat().st_size,
             chars=len(content),
@@ -603,22 +673,16 @@ def extract_graph(force: bool = False) -> dict[str, Any]:
 
     for nid, node in nodes.items():
         node["degree"] = degrees[nid]
-        # Calculate dynamic display size based on connectivity
-        if node["type"] == "stream":
-            node["size"] = 28 + min(node["degree"] * 0.4, 20)
-        elif node["type"] == "system":
-            node["size"] = 22 + min(node["degree"] * 0.3, 16)
-        elif node["type"] == "document":
-            node["size"] = 12 + min(node["degree"] * 0.5, 12)
-        elif node["type"] == "process":
-            node["size"] = 10 + min(node["degree"] * 0.5, 10)
-        else:  # spec
-            node["size"] = 9 + min(node["degree"] * 0.5, 10)
+        node["size"] = _display_size(node["type"], node["degree"])
 
     # Type counts
     by_type: dict[str, int] = defaultdict(int)
     for n in nodes.values():
         by_type[n["type"]] += 1
+    by_category: dict[str, int] = defaultdict(int)
+    for n in nodes.values():
+        if n["type"] == "document":
+            by_category[n.get("category", "")] += 1
 
     result = {
         "nodes": list(nodes.values()),
@@ -629,6 +693,9 @@ def extract_graph(force: bool = False) -> dict[str, Any]:
             "types": dict(by_type),
             "streams": list(STREAMS.keys()),
             "systems": list(SYSTEMS.keys()),
+            # Documents per category, and the file set this was built from.
+            "categories": dict(sorted(by_category.items())),
+            "sources": fingerprint,
         },
     }
 
@@ -640,6 +707,75 @@ def extract_graph(force: bool = False) -> dict[str, Any]:
         logger.warning("Failed to cache graph: %s", e)
 
     return result
+
+
+def filter_by_categories(graph: dict[str, Any], categories: list[str] | None) -> dict[str, Any]:
+    """The part of the graph a set of categories accounts for.
+
+    Only documents belong to a category; streams, systems, processes and specs
+    are entities the documents refer to, so they are kept when a kept document
+    refers to them. Process ancestors come along too -- a step whose value
+    chain had been cut away would look unconnected, when the truth is only that
+    no document in this category mentions the levels above it.
+
+    An empty or missing list means the whole graph."""
+    codes = {c.strip().upper() for c in (categories or []) if c and c.strip()}
+    present = {c for c in graph.get("stats", {}).get("categories", {})}
+    # Ticking every category has to mean the same as ticking none, or the
+    # unfiltered view would show the parts of the BPML hierarchy that no
+    # document mentions while "all of them" quietly dropped them.
+    if not codes or present <= codes:
+        return graph
+
+    nodes = {n["id"]: n for n in graph["nodes"]}
+    keep = {i for i, n in nodes.items() if n["type"] == "document" and n.get("category") in codes}
+    for edge in graph["edges"]:
+        if edge["source"] in keep and edge["target"] in nodes:
+            keep.add(edge["target"])
+
+    parent = {e["source"]: e["target"] for e in graph["edges"] if e["relation"] == "subprocess_of"}
+    for node_id in [i for i in keep if nodes[i]["type"] == "process"]:
+        current = parent.get(node_id)
+        while current and current not in keep:
+            keep.add(current)
+            current = parent.get(current)
+
+    edges = [e for e in graph["edges"] if e["source"] in keep and e["target"] in keep]
+
+    # Degree and display size describe this subgraph, not the whole one: a
+    # document is not drawn as a hub because of edges that were filtered out.
+    degrees: dict[str, int] = defaultdict(int)
+    for edge in edges:
+        degrees[edge["source"]] += 1
+        degrees[edge["target"]] += 1
+    kept_nodes = []
+    for node_id in keep:
+        node = dict(nodes[node_id])
+        node["degree"] = degrees[node_id]
+        node["size"] = _display_size(node["type"], node["degree"])
+        kept_nodes.append(node)
+    kept_nodes.sort(key=lambda n: (n["type"], n["id"]))
+
+    by_type: dict[str, int] = defaultdict(int)
+    for node in kept_nodes:
+        by_type[node["type"]] += 1
+    by_category: dict[str, int] = defaultdict(int)
+    for node in kept_nodes:
+        if node["type"] == "document":
+            by_category[node.get("category", "")] += 1
+
+    return {
+        "nodes": kept_nodes,
+        "edges": edges,
+        "stats": {
+            **graph.get("stats", {}),
+            "total_nodes": len(kept_nodes),
+            "total_edges": len(edges),
+            "types": dict(by_type),
+            "categories": dict(sorted(by_category.items())),
+            "filtered_to": sorted(codes),
+        },
+    }
 
 
 def find_shortest_path(

@@ -40,6 +40,9 @@ MAX_TOKENS = 1000  # no chunk is larger, except a single table row or line that 
 MIN_TOKENS = 120  # a section smaller than this is joined to the next one
 
 _HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
+# A leading `---` block carries metadata for the indexer (rag.py reads the
+# category out of it), not text anyone asked a question about.
+_FRONT_MATTER = re.compile(r"\A---\r?\n.*?\r?\n---\r?\n", re.S)
 _SENTENCE_END = re.compile(r"(?<=[.!?;])\s+")
 # The converter names files "<original stem>_<extension>.md".
 _SOURCE_KIND = re.compile(r"^(.*)_(pptx|docx|xlsx|pdf|png|jpe?g)$", re.I)
@@ -96,8 +99,12 @@ def _strip_comments(text: str) -> str:
     return re.sub(r"<!--.*?-->", "", text, flags=re.S)
 
 
+def _strip_front_matter(text: str) -> str:
+    return _FRONT_MATTER.sub("", text, count=1)
+
+
 def parse_blocks(text: str) -> list[Block]:
-    lines = _strip_comments(text).splitlines()
+    lines = _strip_comments(_strip_front_matter(text)).splitlines()
     blocks: list[Block] = []
     para: list[str] = []
 

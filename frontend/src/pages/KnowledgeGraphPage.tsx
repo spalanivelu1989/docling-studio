@@ -9,7 +9,10 @@ import {
   Drawer,
   IconButton,
   InputAdornment,
+  ListItemText,
+  MenuItem,
   Paper,
+  Select,
   Stack,
   TextField,
   Tooltip,
@@ -153,6 +156,9 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
   // built / partial / absent. The model is fetched the first time it is asked
   // for -- most visits never open it.
   const [viewMode, setViewMode] = useState<"graph" | "model" | "process">("graph");
+  // Which document categories the graph covers. Empty is every one of them,
+  // which is what the server does with an empty list.
+  const [categories, setCategories] = useState<string[]>([]);
   const [model, setModel] = useState<GraphModel | null>(null);
   const [modelError, setModelError] = useState<string | null>(null);
   const [selectedModelNode, setSelectedModelNode] = useState<ModelNode | null>(null);
@@ -165,10 +171,10 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
   useEffect(() => {
     if (viewMode !== "model" || model || modelError) return;
     api
-      .graphModel()
+      .graphModel(categories)
       .then(setModel)
       .catch((e: unknown) => setModelError(e instanceof Error ? e.message : String(e)));
-  }, [viewMode, model, modelError]);
+  }, [viewMode, model, modelError, categories]);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [isFocusNeighborhoodMode, setIsFocusNeighborhoodMode] = useState(false);
   const [currentZoomLevel, setCurrentZoomLevel] = useState(0.85);
@@ -226,10 +232,10 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
   const hasCenteredRef = useRef<boolean>(false);
 
   // Fetch graph data
-  const loadGraph = useCallback((force = false) => {
+  const loadGraph = useCallback((force = false, scope: string[] = categories) => {
     setLoading(true);
     setError(null);
-    const fetcher = force ? api.rebuildGraph() : api.graphData();
+    const fetcher = force ? api.rebuildGraph(scope) : api.graphData(scope);
     fetcher
       .then((data) => {
         setGraphData(data);
@@ -247,13 +253,42 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
         setError(err.message || "Failed to load knowledge graph");
       })
       .finally(() => setLoading(false));
-  }, []);
+  }, [categories]);
 
   useEffect(() => {
     if (active && !graphData) {
       loadGraph();
     }
   }, [active, graphData, loadGraph]);
+
+  // Changing the scope refetches: the server decides which nodes survive, and
+  // it also recomputes each node's degree for the graph actually shown.
+  const changeCategories = useCallback(
+    (next: string[]) => {
+      setCategories(next);
+      setSelectedNode(null);
+      // The model's label counts and sample instances are taken from the graph
+      // in view, so they are stale the moment the scope changes. Dropping it
+      // lets the lazy fetch pick up the new numbers.
+      setModel(null);
+      setModelError(null);
+      setSelectedModelNode(null);
+      loadGraph(false, next);
+    },
+    [loadGraph],
+  );
+
+  // Every category the graph knows about, whatever is being shown right now.
+  const [knownCategories, setKnownCategories] = useState<Record<string, number>>({});
+  useEffect(() => {
+    const seen = graphData?.stats.categories;
+    if (!seen) return;
+    // A narrowed response only reports the categories it kept, so the full set
+    // is remembered from the unfiltered load rather than shrinking with it.
+    setKnownCategories((known) =>
+      categories.length === 0 ? seen : { ...seen, ...known },
+    );
+  }, [graphData, categories]);
 
   // Filter nodes & links based on visibleTypes
   const { filteredNodes, filteredLinks, nodeMap } = useMemo(() => {
@@ -1281,6 +1316,45 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
               </Button>
             ))}
           </Stack>
+
+          {/* Which categories of document are in view. The model view keeps it
+              too: its schema does not change, but its label counts and sample
+              instances are read off the graph being shown. */}
+          {Object.keys(knownCategories).length > 0 && (
+            // A MUI Tooltip here would sit above the open menu -- tooltips are
+            // z-index 1500, menus 1300 -- and cover the options being clicked.
+            // A plain title attribute is a native tooltip: it follows the
+            // cursor and goes away on click.
+            <Select
+              multiple
+              size="small"
+              displayEmpty
+              value={categories}
+              onChange={(e) =>
+                changeCategories(typeof e.target.value === "string" ? e.target.value.split(",") : e.target.value)
+              }
+              disabled={loading}
+              title="Which document categories the graph covers. None selected covers all of them."
+              renderValue={(picked) => (
+                <Stack direction="row" spacing={0.6} sx={{ alignItems: "center" }}>
+                  <Layers size={13} />
+                  <span>{picked.length === 0 ? "All categories" : picked.join(", ")}</span>
+                </Stack>
+              )}
+              sx={{ height: 30, fontSize: 12, fontWeight: 600, minWidth: 150 }}
+            >
+              {Object.entries(knownCategories).map(([code, count]) => (
+                <MenuItem key={code} value={code} sx={{ py: 0.5 }}>
+                  <Checkbox size="small" checked={categories.includes(code)} sx={{ mr: 0.5 }} />
+                  <ListItemText
+                    primary={code}
+                    secondary={`${count} document${count === 1 ? "" : "s"}`}
+                    slotProps={{ primary: { sx: { fontSize: 13 } }, secondary: { sx: { fontSize: 11 } } }}
+                  />
+                </MenuItem>
+              ))}
+            </Select>
+          )}
 
           {activeQueryResult?.answer && (
             <Button
@@ -2429,9 +2503,19 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
 
             {selectedNode.filename && (
               <Box sx={{ p: 1.5, borderRadius: 2, bgcolor: "action.hover", mb: 2 }}>
-                <Typography variant="caption" sx={{ color: "text.secondary", display: "block", mb: 0.5 }}>
-                  Source Markdown Document
-                </Typography>
+                <Stack direction="row" spacing={1} sx={{ alignItems: "center", mb: 0.5 }}>
+                  <Typography variant="caption" sx={{ color: "text.secondary" }}>
+                    Source Markdown Document
+                  </Typography>
+                  {selectedNode.category && (
+                    <Chip
+                      size="small"
+                      variant="outlined"
+                      label={selectedNode.category}
+                      sx={{ height: 17, fontSize: 10, fontWeight: 700 }}
+                    />
+                  )}
+                </Stack>
                 <Typography variant="body2" sx={{ fontFamily: "monospace", fontSize: 12, wordBreak: "break-all", fontWeight: 600 }}>
                   {selectedNode.filename}
                 </Typography>

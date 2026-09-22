@@ -130,6 +130,10 @@ class RunRequest(BaseModel):
     max_steps: int = Field(default=6, ge=1, le=60)
     concurrency: int = Field(default=3, ge=1, le=8)
     question: str | None = None  # free text the user typed, kept for the audit trail
+    # Document categories the run may read. Empty is every one of them. Stored
+    # on the run beside the corpus fingerprint: what a run was allowed to see
+    # is part of reproducing it (§10).
+    categories: list[str] = Field(default_factory=list)
 
 
 class Review(BaseModel):
