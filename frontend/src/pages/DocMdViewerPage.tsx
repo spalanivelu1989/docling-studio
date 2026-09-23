@@ -1,16 +1,17 @@
 import {
   Alert,
+  Autocomplete,
   Box,
   Button,
   Chip,
   CircularProgress,
   IconButton,
-  MenuItem,
+  ListSubheader,
   Paper,
-  Select,
   Snackbar,
   Stack,
   Switch,
+  TextField,
   ToggleButton,
   ToggleButtonGroup,
   Tooltip,
@@ -33,6 +34,7 @@ import {
   FolderOpen,
   Layers,
   ScanEye,
+  Search,
   Sparkles,
   Trash2,
   ZoomIn,
@@ -40,10 +42,10 @@ import {
 } from "lucide-react";
 import { useEffect, useId, useRef, useState, type DragEvent, type ReactNode } from "react";
 import { Group, Panel, Separator } from "react-resizable-panels";
-import { api, type Upload } from "../api";
+import { api, type KbFileItem, type Upload } from "../api";
 import Markdown from "../components/Markdown";
 
-const ACCEPT_DOCS = ".pptx,.ppt,.docx,.doc,.xlsx,.xls,.pdf,.html,.htm,.xml,.png,.jpg,.jpeg,.webp,.bmp,.tiff";
+const ACCEPT_DOCS = ".pptx,.ppt,.docx,.doc,.xlsx,.xlsm,.xls,.pdf,.html,.htm,.xml,.csv,.txt,.json,.msg,.eml,.png,.jpg,.jpeg,.webp,.bmp,.tiff,.tif";
 const ACCEPT_MD = ".md,.markdown,.mdown,.mkd,.txt";
 
 const countLines = (text: string) => (text ? text.split("\n").length : 0);
@@ -107,8 +109,15 @@ export default function DocMdViewerPage() {
   const [mdFilename, setMdFilename] = useState<string | null>(null);
   const [mdView, setMdView] = useState<"rendered" | "raw">("rendered");
   const [mdConverting, setMdConverting] = useState(false);
-  const [kbFiles, setKbFiles] = useState<{ name: string; title: string; size: number }[]>([]);
+  const [kbFiles, setKbFiles] = useState<KbFileItem[]>([]);
+  // Keyed by source path, not file name. Two documents can share a name --
+  // knowledge_base/X.md and solvay-spark/pkg/markdown/X.md are different files
+  // -- and the server refuses a delete or a read aimed by name alone.
   const [selectedKbFile, setSelectedKbFile] = useState<string>("");
+  const [kbLoading, setKbLoading] = useState(false);
+  // Set when the chosen document has Markdown in the corpus but no original
+  // file on disk to show beside it.
+  const [noOriginal, setNoOriginal] = useState<string | null>(null);
 
   // Global settings
   const [syncScroll, setSyncScroll] = useState(true);
@@ -179,17 +188,43 @@ export default function DocMdViewerPage() {
     reader.readAsText(file, "utf-8");
   };
 
-  // Select markdown from knowledge base
-  const handleSelectKbFile = async (name: string) => {
-    if (!name) return;
-    setSelectedKbFile(name);
+  // Load an indexed document from the corpus into BOTH panes: its Markdown on
+  // the right, and the file that Markdown was converted from on the left. That
+  // pairing is the whole job of this page -- comparing them used to mean
+  // picking the Markdown here and then hunting the original up on disk to
+  // upload by hand.
+  const handleSelectKbFile = async (source: string) => {
+    if (!source) return;
+    const entry = kbFiles.find((f) => f.source === source);
+    const label = entry?.title || source;
+    setSelectedKbFile(source);
+    setKbLoading(true);
+    setNoOriginal(null);
     try {
-      const text = await api.kbFileContent(name);
+      const text = await api.kbFileContent(entry?.name || source, source);
       setMdContent(text);
-      setMdFilename(name);
-      setNotice(`Loaded ${name} from knowledge base.`);
+      setMdFilename(entry?.name || source);
+      setNotice(`Loaded ${label} from the knowledge base.`);
     } catch (err: unknown) {
-      setNotice(`Failed to load ${name}: ${(err as Error).message}`);
+      setNotice(`Failed to load ${label}: ${(err as Error).message}`);
+      setKbLoading(false);
+      return;
+    }
+
+    // The original is a bonus, not a requirement: a document added through the
+    // web UI has only its Markdown, and the Markdown side must still load.
+    try {
+      const data = await api.openKbOriginal(source);
+      setDoc(data);
+      setLeftTitle(data.filename);
+      setDocPage(1);
+      setNotice(`Loaded ${label} — ${data.filename} (${data.pages} pages) beside its Markdown.`);
+    } catch (err: unknown) {
+      setDoc(null);
+      setLeftTitle("Original Document");
+      setNoOriginal((err as Error).message);
+    } finally {
+      setKbLoading(false);
     }
   };
 
@@ -248,6 +283,7 @@ export default function DocMdViewerPage() {
     setMdContent("");
     setMdFilename(null);
     setSelectedKbFile("");
+    setNoOriginal(null);
     setNotice("Cleared review workspace.");
   };
 
@@ -499,14 +535,27 @@ export default function DocMdViewerPage() {
                   bgcolor: (t) => (t.palette.mode === "light" ? "#f1f3f7" : "#0d1117"),
                 }}
               >
-                {docLoading ? (
+                {docLoading || kbLoading ? (
                   <Box sx={{ height: "100%", display: "grid", placeItems: "center" }}>
                     <Stack spacing={2} sx={{ alignItems: "center", textAlign: "center" }}>
                       <CircularProgress size={36} />
                       <Typography variant="body2" sx={{ color: "text.secondary" }}>
-                        Rendering document pages with LibreOffice & Poppler...
+                        Rendering document pages with LibreOffice &amp; Poppler...
                       </Typography>
                     </Stack>
+                  </Box>
+                ) : noOriginal ? (
+                  /* The Markdown loaded and there is nothing to put beside it.
+                     Said here rather than in a toast, because this pane staying
+                     empty is the thing that needs explaining. */
+                  <Box sx={{ height: "100%", display: "grid", placeItems: "center", px: 3 }}>
+                    <Alert severity="info" sx={{ maxWidth: 460 }}>
+                      {noOriginal}
+                      <Typography sx={{ fontSize: 12.5, mt: 1, color: "text.secondary" }}>
+                        The Markdown is loaded on the right. Use <strong>Open Doc</strong> if you
+                        have the original file to compare it against.
+                      </Typography>
+                    </Alert>
                   </Box>
                 ) : doc && totalPages > 0 ? (
                   <Box sx={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
@@ -618,25 +667,90 @@ export default function DocMdViewerPage() {
                   )}
                 </Stack>
 
-                {/* Knowledge base selector dropdown */}
+                {/* Knowledge base picker: loads BOTH panes. An Autocomplete
+                    rather than a Select, because 214 documents is a list you
+                    search, not one you scroll -- and their names are long and
+                    near-identical ("L2C-WS020 - 16.07.2025 - ..."), so the part
+                    a reviewer remembers is rarely the part it is sorted by. */}
                 {kbFiles.length > 0 && (
-                  <Select
+                  <Autocomplete
+                    openOnFocus
                     size="small"
-                    displayEmpty
-                    value={selectedKbFile}
-                    onChange={(e) => handleSelectKbFile(e.target.value)}
-                    sx={{ height: 28, fontSize: 12, minWidth: 150 }}
-                    renderValue={(val) => (val ? String(val) : "From Knowledge Base")}
-                  >
-                    <MenuItem value="" disabled sx={{ fontSize: 12 }}>
-                      <em>Select from Knowledge Base...</em>
-                    </MenuItem>
-                    {kbFiles.map((kf) => (
-                      <MenuItem key={kf.name} value={kf.name} sx={{ fontSize: 12 }}>
-                        {kf.title}
-                      </MenuItem>
-                    ))}
-                  </Select>
+                    disabled={kbLoading}
+                    sx={{ width: { xs: 220, md: 300 } }}
+                    options={kbFiles}
+                    value={kbFiles.find((f) => f.source === selectedKbFile) ?? null}
+                    onChange={(_, f) => f && handleSelectKbFile(f.source ?? f.name)}
+                    isOptionEqualToValue={(a, b) => (a.source ?? a.name) === (b.source ?? b.name)}
+                    getOptionLabel={(f) => f.title || f.name}
+                    groupBy={(f) => f.category || "Unfiled"}
+                    filterOptions={(opts, { inputValue }) => {
+                      // Every word has to appear somewhere, in any order and in
+                      // any field. Typing "returns pdf" finds the returns PDF
+                      // whether the reviewer remembers the title, the format,
+                      // the category or the folder it was indexed from -- and
+                      // "ws020 minutes" finds the minutes without knowing that
+                      // the file name spells the date out in the middle.
+                      const words = inputValue.toLowerCase().split(/\s+/).filter(Boolean);
+                      if (!words.length) return opts;
+                      return opts.filter((f) => {
+                        const hay = `${f.title} ${f.name} ${f.category ?? ""} ${f.source ?? ""}`.toLowerCase();
+                        return words.every((w) => hay.includes(w));
+                      });
+                    }}
+                    renderInput={(params) => (
+                      <TextField
+                        {...params}
+                        placeholder={`Search ${kbFiles.length} documents…`}
+                        slotProps={{
+                          ...params.slotProps,
+                          input: {
+                            ...params.slotProps.input,
+                            startAdornment: (
+                              <>
+                                <Box sx={{ pl: 0.5, pr: 0.5, display: "flex", color: "text.secondary" }}>
+                                  {kbLoading ? <CircularProgress size={13} /> : <Search size={14} />}
+                                </Box>
+                                {params.slotProps.input.startAdornment}
+                              </>
+                            ),
+                          },
+                        }}
+                        sx={{ "& .MuiInputBase-root": { height: 28, fontSize: 12 },
+                              "& input": { fontSize: 12 } }}
+                      />
+                    )}
+                    renderGroup={(params) => (
+                      <Box key={params.key} component="li" sx={{ listStyle: "none" }}>
+                        <ListSubheader
+                          sx={{ bgcolor: "background.paper", lineHeight: "26px", fontSize: 10,
+                                fontWeight: 800, letterSpacing: ".05em", textTransform: "uppercase",
+                                color: "text.secondary", borderBottom: 1, borderColor: "divider" }}
+                        >
+                          {params.group}
+                        </ListSubheader>
+                        <Box component="ul" sx={{ p: 0, m: 0 }}>{params.children}</Box>
+                      </Box>
+                    )}
+                    renderOption={(props, f) => {
+                      const { key, ...rest } = props as { key?: string } & Record<string, unknown>;
+                      return (
+                        <Box component="li" key={f.source ?? f.name} {...rest}
+                             sx={{ display: "block !important", py: 0.7, px: 1.5 }}>
+                          <Typography sx={{ fontSize: 12, fontWeight: 600 }} noWrap>
+                            {f.title}
+                          </Typography>
+                          <Typography sx={{ fontSize: 10.5, color: "text.secondary" }} noWrap>
+                            {f.category ?? "—"}
+                            {f.chunks != null ? ` · ${f.chunks.toLocaleString()} chunks` : ""}
+                            {f.source ? ` · ${f.source.replace(/\/markdown\/.*$/, "")}` : ""}
+                          </Typography>
+                        </Box>
+                      );
+                    }}
+                    slotProps={{ paper: { sx: { width: 420 } }, listbox: { sx: { maxHeight: 420 } } }}
+                    noOptionsText="No document matches those words"
+                  />
                 )}
 
                 {/* Open MD File Button */}

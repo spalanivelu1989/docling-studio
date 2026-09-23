@@ -13,23 +13,31 @@ the indexed Markdown (rag.py).
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import queue
 import shutil
 import tempfile
+import threading
 import time
 import uuid
 import zipfile
 from pathlib import Path
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Form, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
+from fastapi.responses import (FileResponse, HTMLResponse, Response,
+                               StreamingResponse)
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+import ask_store
 import knowledge_graph
 import preview
 import rag
+import tracing
 import vlm_api
 from converter import VLM_PROVIDERS, convert
 
@@ -44,9 +52,32 @@ DIST = STATIC / "dist"
 KNOWLEDGE_BASE = BASE / "knowledge_base"
 # Docling handles more than these, but these are the formats this pipeline has
 # actually been exercised against.
-ACCEPTED = {".pptx", ".ppt", ".docx", ".doc", ".xlsx", ".xls", ".pdf", ".html", ".htm", ".xml"} | preview.IMAGE_FORMATS
+# What the pipeline will take in. Both halves have to agree: the preview pane
+# renders it through LibreOffice (see preview._readable for the two that need a
+# stand-in first) and converter.py turns it into Markdown. Adding a suffix here
+# without a converter for it produces a document that previews and then fails
+# to convert, which is worse than refusing it.
+#
+# .xlsm was the reverse of that -- converter.py has read macro-enabled
+# workbooks since spreadsheets were special-cased, but they were turned away
+# here before they ever reached it.
+ACCEPTED = {".pptx", ".ppt", ".docx", ".doc", ".xlsx", ".xlsm", ".xls", ".pdf",
+            ".html", ".htm", ".xml", ".txt", ".csv", ".json", ".msg",
+            ".eml"} | preview.IMAGE_FORMATS
 
-app = FastAPI(title="Docling Extraction UI")
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """Start and stop Langfuse tracing with the server.
+
+    Eager rather than lazy so that bad credentials are a line in this log
+    instead of a run that produces no trace and says nothing about why; a
+    checkout with no Langfuse keys logs that tracing is off and carries on."""
+    print(tracing.start())
+    yield
+    tracing.shutdown()
+
+
+app = FastAPI(title="Docling Extraction UI", lifespan=lifespan)
 
 # Every heavy endpoint below is declared `def`, not `async def`, so FastAPI runs
 # it in the threadpool. Conversion and LibreOffice are CPU-bound and blocking;
@@ -76,7 +107,12 @@ def _spa() -> HTMLResponse:
             " &amp;&amp; npm run build</code>, then reload.</p>",
             status_code=503,
         )
-    return HTMLResponse(page.read_text())
+    # The bundle file names are content-hashed, so the browser may keep them
+    # for ever -- but only if it re-reads this page, which is the one file that
+    # names them. Served with no freshness information at all, a browser is
+    # free to hold its own copy and keep loading the bundle that page referred
+    # to, so a rebuilt front end silently does not arrive.
+    return HTMLResponse(page.read_text(), headers={"Cache-Control": "no-cache"})
 
 
 # One page app for both screens; it reads the path to pick Extract or Ask.
@@ -200,7 +236,16 @@ def embed_doc(doc_id: str, category: str | None = None) -> dict:
     name = Path((job / "name.txt").read_text())
     KNOWLEDGE_BASE.mkdir(exist_ok=True)
     dest = KNOWLEDGE_BASE / f"{name.stem}{name.suffix.lower().replace('.', '_')}.md"
-    dest.write_text(md.read_text())
+    text = md.read_text()
+    # A category chosen here is a decision, and it has to survive on disk. The
+    # graph builds from Markdown and never reads the database, and `rag.py
+    # index` re-derives the category from the file -- so a choice kept only on
+    # the row shows up as a disagreement and is silently reset by the next
+    # index. Front matter is stripped before chunking and sits outside the
+    # fingerprint, so recording it costs nothing.
+    if category:
+        text = rag.declare_category(text, category)
+    dest.write_text(text)
 
     started = time.perf_counter()
     try:
@@ -275,6 +320,11 @@ def md_viewer_page() -> HTMLResponse:
 
 @app.get("/batch", response_class=HTMLResponse)
 def batch_page() -> HTMLResponse:
+    return _spa()
+
+
+@app.get("/coverage", response_class=HTMLResponse)
+def coverage_page() -> HTMLResponse:
     return _spa()
 
 
@@ -361,15 +411,189 @@ def query_graph_endpoint(req: GraphQueryRequest) -> dict:
     )
 
 
+def _original_name(markdown: Path) -> str | None:
+    """The file name a Markdown document was converted from.
+
+    The converter writes <stem>_<ext>.md, so "Pricing_xlsx.md" came from
+    "Pricing.xlsx". Nothing records this in the database -- rag_documents stores
+    the Markdown path, because the Markdown is what was chunked and embedded --
+    so the name is all there is to go on."""
+    stem, _, suffix = markdown.stem.rpartition("_")
+    if not stem or not suffix:
+        return None
+    return f"{stem}.{suffix}"
+
+
+def _upload_job_holding(name: str) -> Path | None:
+    """An upload job still holding `name`, if one is left.
+
+    A document that came in through the web UI has no original beside its
+    Markdown: knowledge_base/ holds the Markdown and nothing else. But the
+    upload it came from is not necessarily gone -- .workdir/<id>/ keeps the
+    file it was given until that upload is cleared, with its pages already
+    rendered. So the second place to look for an original is the job that
+    produced it, which is how a PDF added from the browser can still be
+    reviewed against its own Markdown.
+
+    Best effort by design: clearing the upload really does remove the only copy
+    of the original, and saying so is better than pretending otherwise.
+    """
+    if not WORKDIR.is_dir():
+        return None
+    wanted = name.lower()
+    for job in sorted(WORKDIR.iterdir()):
+        label = job / "name.txt"
+        if not label.is_file():
+            continue
+        try:
+            if label.read_text().strip().lower() != wanted:
+                continue
+        except OSError:
+            continue
+        source = next((p for p in job.glob("source.*") if p.is_file()), None)
+        if source is not None:
+            return source
+    return None
+
+
+def _original_of(markdown: Path) -> Path | None:
+    """The file a Markdown document was converted FROM, if it is still there.
+
+    Two places, in order: beside the markdown/ folder it was indexed from --
+    "solvay-spark/pkg/markdown/Pricing_xlsx.md" came from
+    "solvay-spark/pkg/Pricing.xlsx" -- and failing that, the upload job that
+    produced it. See _upload_job_holding.
+    """
+    name = _original_name(markdown)
+    if not name:
+        return None
+    candidate = markdown.parent.parent / name
+    if candidate.is_file() and candidate.suffix.lower() in ACCEPTED:
+        return candidate
+    kept = _upload_job_holding(name)
+    if kept is not None and kept.suffix.lower() in ACCEPTED:
+        return kept
+    return None
+
+
+@app.post("/api/kb/files/open")
+def open_kb_original(source: str) -> dict:
+    """Open an indexed document's ORIGINAL file for side-by-side review.
+
+    The Markdown half of the review page has always come from the corpus; the
+    document half had to be uploaded by hand, which meant finding the file on
+    disk to compare it against its own indexed Markdown. This loads it from the
+    same list, so a reviewer picks a document rather than hunting for it.
+
+    Rendering is the expensive part -- a hundred-page PDF is not quick -- so the
+    job id is derived from the path and a second open of the same document
+    reuses the pages already rendered.
+    """
+    path = Path(source)
+    if not path.is_absolute():
+        path = BASE / source
+    path = path.resolve()
+    # The list this is called from is built from the corpus, but the parameter
+    # is still a path from the browser: keep it inside the project.
+    if BASE.resolve() not in path.parents:
+        raise HTTPException(400, "That path is outside the project.")
+    if not path.is_file():
+        raise HTTPException(404, f"No such document: {source}")
+
+    original = _original_of(path)
+    if original is None:
+        name = _original_name(path) or path.name
+        raise HTTPException(
+            404,
+            {"message": f"No original found for '{name}'. It is not beside "
+                        f"{path.parent.name}/, and no upload still holds it -- so either it "
+                        f"was added as Markdown only, or the upload it came from was cleared."},
+        )
+
+    # When the original IS an upload job's source file, that job is already a
+    # valid document id with its pages rendered -- reuse it rather than copying
+    # the file next door and rendering it a second time.
+    if original.parent.parent == WORKDIR and original.name.startswith("source."):
+        job = original.parent
+        doc_id = job.name
+        pages, warning = 0, None
+        try:
+            pages = len(list((job / "preview").glob("page-*.png"))) or preview.render(
+                original, job / "preview")
+        except Exception as exc:
+            warning = str(exc)
+        return {
+            "id": doc_id,
+            "filename": (job / "name.txt").read_text().strip() or original.name,
+            "format": original.suffix.lstrip(".").lower(),
+            "size": original.stat().st_size,
+            "pages": pages,
+            "warning": warning,
+            "markdown_source": str(path.relative_to(BASE.resolve()))
+                               if BASE.resolve() in path.parents else str(path),
+            "from_upload": True,
+        }
+
+    doc_id = "kb" + hashlib.sha256(str(original).encode()).hexdigest()[:10]
+    job = WORKDIR / doc_id
+    job.mkdir(parents=True, exist_ok=True)
+    src = job / f"source{original.suffix.lower()}"
+    if not src.exists() or src.stat().st_mtime < original.stat().st_mtime:
+        shutil.copyfile(original, src)
+        shutil.rmtree(job / "preview", ignore_errors=True)
+    (job / "name.txt").write_text(original.name)
+
+    pages, warning = 0, None
+    try:
+        rendered = preview.page_path(job / "preview", 1)
+        if rendered.exists():
+            pages = len(list((job / "preview").glob("page-*.png")))
+        else:
+            pages = preview.render(src, job / "preview")
+    except Exception as exc:
+        warning = str(exc)
+
+    return {
+        "id": doc_id,
+        "filename": original.name,
+        "format": original.suffix.lstrip(".").lower(),
+        "size": original.stat().st_size,
+        "pages": pages,
+        "warning": warning,
+        "markdown_source": str(path.relative_to(BASE.resolve())) if BASE.resolve() in path.parents else str(path),
+    }
+
+
+@app.get("/api/coverage")
+def coverage_report(documents: bool = True) -> dict:
+    """Where the file system, the corpus and the graph disagree.
+
+    Read-only on purpose. Every gap it reports has a fix that is a decision
+    rather than a repair: indexing a file changes what the agents can retrieve,
+    and re-tagging one changes what a scoped run is allowed to read. So this
+    says what is true and leaves the choosing to a person.
+    """
+    import coverage as coverage_mod
+
+    return coverage_mod.collect(include_documents=documents)
+
+
 @app.get("/api/kb/files")
 def list_kb_files() -> list[dict]:
-    """List all documents in the knowledge base, combining documents indexed in pgvector
-    (from any source folder, such as solvay-spark/pkg/markdown) with any Markdown files
-    stored in knowledge_base/."""
+    """Every document in the knowledge base: the ones indexed in pgvector,
+    whatever folder they were indexed from, plus any Markdown sitting in
+    knowledge_base/ or solvay-spark/pkg/markdown/ that is not indexed yet.
+
+    Keyed by source path, not by file name. Two documents can share a name --
+    knowledge_base/X.md and solvay-spark/pkg/markdown/X.md are different files
+    -- and keying by name collapsed them into one row, so the count above the
+    list disagreed with the database and a delete had nothing to aim at."""
     items: dict[str, dict] = {}
 
-    # 1. Primary source of truth: the documents indexed in pgvector, across
-    #    every category database.
+    def add(key: str, item: dict) -> None:
+        items.setdefault(key, item)
+
+    # 1. The source of truth: what is indexed.
     try:
         for doc in rag.documents():
             p = Path(doc["source"])
@@ -389,7 +613,7 @@ def list_kb_files() -> list[dict]:
                 rel_source = str(p)
 
             indexed_at = doc["indexed_at"]
-            items[name] = {
+            add(str(p), {
                 "name": name,
                 "title": doc["title"] or p.stem,
                 "source": rel_source,
@@ -400,71 +624,85 @@ def list_kb_files() -> list[dict]:
                 "tokens": doc["tokens"],
                 "is_indexed": True,
                 "indexed_at": indexed_at.isoformat() if hasattr(indexed_at, "isoformat") else str(indexed_at),
-            }
+            })
     except Exception:
         pass
 
-    # 2. Also check files in knowledge_base/ directory
-    if KNOWLEDGE_BASE.is_dir():
-        for f in sorted(KNOWLEDGE_BASE.glob("*.md")):
+    # 2. Markdown on disk that nothing has indexed. A file already indexed from
+    #    this exact path is already in the list; one indexed from somewhere else
+    #    is a different document and gets a row of its own.
+    for folder in (KNOWLEDGE_BASE, BASE / "solvay-spark" / "pkg" / "markdown"):
+        if not folder.is_dir():
+            continue
+        for f in sorted(folder.glob("*.md")):
             if f.name.startswith((".", "~$")):
                 continue
-            if f.name not in items:
-                items[f.name] = {
-                    "name": f.name,
-                    "title": f.stem,
-                    "source": f"knowledge_base/{f.name}",
-                    "full_path": str(f.resolve()),
-                    "size": f.stat().st_size,
-                    "category": rag.category_for(f),
-                    "chunks": 0,
-                    "tokens": 0,
-                    "is_indexed": False,
-                    "indexed_at": None,
-                }
-
-    # 3. Also check solvay-spark/pkg/markdown if it exists
-    pkg_md = BASE / "solvay-spark" / "pkg" / "markdown"
-    if pkg_md.is_dir():
-        for f in sorted(pkg_md.glob("*.md")):
-            if f.name.startswith((".", "~$")):
+            full = str(f.resolve())
+            if full in items:
                 continue
-            if f.name not in items:
-                items[f.name] = {
-                    "name": f.name,
-                    "title": f.stem,
-                    "source": f"solvay-spark/pkg/markdown/{f.name}",
-                    "full_path": str(f.resolve()),
-                    "size": f.stat().st_size,
-                    "category": rag.category_for(f),
-                    "chunks": 0,
-                    "tokens": 0,
-                    "is_indexed": False,
-                    "indexed_at": None,
-                }
+            try:
+                rel = str(f.resolve().relative_to(BASE))
+            except Exception:
+                rel = str(f)
+            add(full, {
+                "name": f.name,
+                "title": f.stem,
+                "source": rel,
+                "full_path": full,
+                "size": f.stat().st_size,
+                "category": rag.category_for(f),
+                "chunks": 0,
+                "tokens": 0,
+                "is_indexed": False,
+                "indexed_at": None,
+            })
 
     return sorted(items.values(), key=lambda x: (not x["is_indexed"], x["title"].lower()))
 
 
 @app.get("/api/kb/files/{filename}")
-def get_kb_file(filename: str) -> FileResponse:
+def get_kb_file(filename: str, source: str | None = None) -> FileResponse:
+    # 0. Check explicit source path if provided
+    if source:
+        try:
+            cand = Path(source).resolve()
+            if cand.is_file() and BASE.resolve() in cand.parents:
+                return FileResponse(cand, media_type="text/markdown")
+            cand_rel = (BASE / source).resolve()
+            if cand_rel.is_file() and BASE.resolve() in cand_rel.parents:
+                return FileResponse(cand_rel, media_type="text/markdown")
+        except Exception:
+            pass
+
     fname = Path(filename).name
+
     # 1. Check knowledge_base/
     target = (KNOWLEDGE_BASE / fname).resolve()
     if target.is_file() and KNOWLEDGE_BASE.resolve() in target.parents:
         return FileResponse(target, media_type="text/markdown")
 
-    # 2. Check solvay-spark/pkg/markdown/
-    target_pkg = (BASE / "solvay-spark" / "pkg" / "markdown" / fname).resolve()
-    if target_pkg.is_file():
-        return FileResponse(target_pkg, media_type="text/markdown")
+    # 2. Check all registered category folders
+    for meta in rag.CATEGORIES.values():
+        folder = meta.get("folder")
+        if folder:
+            cand = (BASE / folder / fname).resolve()
+            if cand.is_file() and BASE.resolve() in cand.parents:
+                return FileResponse(cand, media_type="text/markdown")
 
-    # 3. Check the indexed source path, in any category database
+    # 3. Check solvay-spark common markdown paths
+    for sub in ("pkg", "dr"):
+        cand = (BASE / "solvay-spark" / sub / "markdown" / fname).resolve()
+        if cand.is_file() and BASE.resolve() in cand.parents:
+            return FileResponse(cand, media_type="text/markdown")
+
+    # 4. Check the indexed source path in database
     try:
         found = rag.find_document(fname)
+        if not found and not fname.endswith(".md"):
+            found = rag.find_document(f"{fname}.md")
         if found:
             db_path = Path(found).resolve()
-            if db_path.is_file():
+            if db_path.is_file() and BASE.resolve() in db_path.parents:
                 return FileResponse(db_path, media_type="text/markdown")
     except Exception:
         pass
@@ -473,19 +711,77 @@ def get_kb_file(filename: str) -> FileResponse:
 
 
 @app.delete("/api/kb/files/{filename}")
-def delete_kb_file(filename: str) -> dict:
+def delete_kb_file(filename: str, category: str | None = None,
+                   source: str | None = None) -> dict:
+    """Remove one indexed document and the chunks that belong to it.
+
+    A file name is not an identity: knowledge_base/X.md and
+    solvay-spark/pkg/markdown/X.md are two documents. `source` says which one
+    and is what the list sends; `category` narrows it when only that is known.
+    Without either, an ambiguous name is refused rather than guessed at --
+    deleting by name alone used to take both documents silently.
+
+    A source path *is* an identity, which it could not be while each category
+    had a database of its own and UNIQUE(source) only held inside each."""
     fname = Path(filename).name
-    deleted_db = False
     try:
-        deleted_db = rag.delete_document(fname) > 0
+        matches = rag.documents_named(fname)
     except Exception:
-        pass
+        matches = []
 
+    if len(matches) > 1 and not category and not source:
+        raise HTTPException(409, detail={
+            "message": (f"{len(matches)} indexed documents are named '{fname}'. "
+                        "Say which one: pass ?source=<path>."),
+            "matches": [{"category": m["category"], "title": m["title"],
+                         "source": m["source"]} for m in matches],
+        })
+
+    try:
+        removed = rag.delete_document(fname, category=category, source=source)
+    except ValueError as exc:            # an unknown category code
+        raise HTTPException(400, str(exc)) from None
+    except Exception as exc:
+        # This used to be swallowed, and the caller was told "deleted" anyway:
+        # the document stayed, the counts did not move, and the UI reported
+        # success. A database that cannot be reached is a failure, and the
+        # only useful thing to do with it is say so.
+        raise HTTPException(500, f"Could not delete '{fname}': {exc}") from None
+    deleted_db = removed > 0
+
+    # Only once nothing indexed still points at the file. Deleting one document
+    # of a name another also uses must not take the file out from under it --
+    # the row would survive with no file behind it.
     target = (KNOWLEDGE_BASE / fname).resolve()
-    if target.is_file() and KNOWLEDGE_BASE.resolve() in target.parents:
+    try:
+        remaining = rag.documents_named(fname)
+    except Exception as exc:
+        raise HTTPException(500, f"Could not delete '{fname}': {exc}") from None
+    file_removed = False
+    if (not remaining and target.is_file()
+            and KNOWLEDGE_BASE.resolve() in target.parents):
         target.unlink(missing_ok=True)
+        file_removed = True
 
-    return {"status": "deleted", "filename": filename, "deleted_from_db": deleted_db}
+    # Nothing was deleted anywhere. Saying "deleted" here is what made a
+    # mis-addressed delete look like a stuck counter: the number was right,
+    # the answer was wrong. If the name exists under a different category,
+    # name them -- the list row was simply out of date.
+    if not deleted_db and not file_removed:
+        elsewhere = [m["category"] for m in remaining]
+        if category and elsewhere:
+            raise HTTPException(404, detail={
+                "message": (f"No document named '{fname}' is filed under "
+                            f"{category}. It is in {', '.join(sorted(set(elsewhere)))}. "
+                            "Refresh the list and try again."),
+                "matches": [{"category": m["category"], "title": m["title"],
+                             "source": m["source"]} for m in remaining],
+            })
+        raise HTTPException(404, f"Nothing to delete: no document or file named '{fname}'.")
+
+    return {"status": "deleted", "filename": filename, "deleted_from_db": deleted_db,
+            "documents_deleted": removed, "category": category or "",
+            "remaining": len(remaining), "file_removed": file_removed}
 
 
 @app.post("/api/kb/batch-insert")
@@ -882,7 +1178,13 @@ def embed_batch(batch_id: str, category: str | None = None) -> StreamingResponse
 
                 try:
                     dest = KNOWLEDGE_BASE / md_file.name
-                    dest.write_text(md_file.read_text(encoding="utf-8"), encoding="utf-8")
+                    text = md_file.read_text(encoding="utf-8")
+                    # Same reason as the single-document path: a category
+                    # chosen for a batch has to be on disk, or the next index
+                    # over knowledge_base/ files every one of them as UNFILED.
+                    if category:
+                        text = rag.declare_category(text, category)
+                    dest.write_text(text, encoding="utf-8")
 
                     res = rag.index_path(dest, category=category)
                     succeeded += 1
@@ -953,6 +1255,35 @@ def embed_batch(batch_id: str, category: str | None = None) -> StreamingResponse
     )
 
 
+@app.get("/api/rag/chunk/{chunk_id}")
+def rag_chunk(chunk_id: str) -> dict:
+    """One indexed chunk, in the shape the Ask page's sources already use.
+
+    The Ask page never needs this: a question hands it whole Source objects.
+    The Evidence Agent does -- a claim's source names a chunk and quotes a
+    sentence of it, and nothing else. To open the document that sentence came
+    from, the page has to turn `PKG:412` back into the passage, its heading
+    and the file it was indexed from, which is exactly what this returns."""
+    row = rag.chunk(chunk_id)
+    if not row:
+        raise HTTPException(404, f"No chunk {chunk_id}")
+    return {
+        "n": 0,
+        "title": row["title"],
+        "section": row["heading_path"],
+        "content": row["content"],
+        "category": row["category"],
+        "score": 0,
+        "similarity": None,
+        "bm25": None,
+        "vector_rank": None,
+        "keyword_rank": None,
+        "file": Path(row["source"]).name,
+        "source_path": row["source"],
+        "tokens": row["tokens"],
+    }
+
+
 @app.get("/api/rag/status")
 def rag_status() -> dict:
     """What the Ask page needs to know before the first question."""
@@ -974,22 +1305,29 @@ def rag_status() -> dict:
         "documents": 0,
         "chunks": 0,
         "categories": [],
+        "ingest_categories": [],
         "error": None,
     }
     if "DATABASE_URL" not in missing:
         try:
             info["documents"], info["chunks"] = rag.counts()
             held = {code: (docs, chunks) for code, docs, chunks in rag.totals()}
-            # Only the categories that exist as a database. A code in
-            # rag.CATEGORIES whose database has never been created -- or has
-            # been dropped -- is a default waiting to be used, not a place to
-            # search, and listing it would offer somewhere that is not there.
+            # What there is to search: a category with something in it. A
+            # registered category holding nothing is not a place to search, and
+            # listing it would offer a filter that can only return nothing.
             info["categories"] = [
-                described
-                for code in list(rag.CATEGORIES) + [c for c in held if c not in rag.CATEGORIES]
-                if (described := {**rag.describe(code),
-                                  "documents": held.get(code, (0, 0))[0],
-                                  "chunks": held.get(code, (0, 0))[1]})["exists"]
+                {**rag.describe(code), "documents": held[code][0], "chunks": held[code][1]}
+                for code in sorted(held)
+            ]
+            # Where a document may be FILED, which is a different question from
+            # where it may be searched. An empty category is a perfectly good
+            # destination, and leaving it out is how every document added from
+            # the UI ended up unfiled by default.
+            info["ingest_categories"] = [
+                {**rag.describe(code),
+                 "documents": held.get(code, (0, 0))[0],
+                 "chunks": held.get(code, (0, 0))[1]}
+                for code in list(rag.CATEGORIES) + [c for c in sorted(held) if c not in rag.CATEGORIES]
             ]
         except Exception as exc:  # no tables yet, server down, bad credentials
             info["error"] = str(exc).splitlines()[0]
@@ -1015,6 +1353,8 @@ class FitGapRun(BaseModel):
     question: str | None = None
     # Empty means every category, matching the Ask, Graph and Evidence pages.
     categories: list[str] = Field(default_factory=list)
+    # The session holding documents the analyst attached to this run, if any.
+    upload_session: str | None = None
 
 
 class FitGapReview(BaseModel):
@@ -1039,15 +1379,56 @@ def ask(body: Question) -> StreamingResponse:
     def sse(event: str, data) -> str:
         return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
+    question = body.question.strip()
+    run_id = f"ask_{uuid.uuid4().hex[:10]}"
+
     def events():
+        # The history is written as the answer streams, not after it: a tab
+        # closed mid-answer should still leave the question and the excerpts
+        # behind. A failure to record must never cost the answer, so the
+        # browser is told the run is unsaved and the pipeline runs anyway.
+        conn = None
         try:
-            for event, data in rag.ask_events(body.question.strip(), body.k, body.mode, categories):
+            conn = ask_store.connect()
+            ask_store.create_schema(conn)
+            ask_store.start_run(conn, {
+                "id": run_id,
+                "question": question,
+                "mode": body.mode,
+                "k": body.k,
+                "categories": categories,
+                "answer_model": rag.ANSWER_MODEL,
+                "embed_model": rag.EMBED_MODEL,
+                "corpus_fingerprint": _corpus_fingerprint(categories),
+            })
+            yield sse("run", {"id": run_id})
+        except Exception as exc:
+            conn = None
+            yield sse("run", {"id": run_id, "not_saved": f"{type(exc).__name__}: {exc}"})
+
+        written: list[str] = []
+        terms: list[str] = []
+        try:
+            for event, data in rag.ask_events(question, body.k, body.mode, categories):
+                if event == "stage" and data.get("terms"):
+                    terms = data["terms"]
+                elif event == "sources" and conn is not None:
+                    _try(ask_store.save_sources, conn, run_id, data, terms)
+                elif event == "token":
+                    written.append(data)
+                elif event == "done" and conn is not None:
+                    _try(ask_store.finish_run, conn, run_id, "".join(written), data)
                 yield sse(event, data)
         # rag.py exits with a message when a key or DATABASE_URL is missing.
         except SystemExit as exc:
+            if conn is not None:
+                _try(ask_store.fail_run, conn, run_id, str(exc), "".join(written))
             yield sse("error", {"message": str(exc)})
         except Exception as exc:
-            yield sse("error", {"message": f"{type(exc).__name__}: {exc}"})
+            message = f"{type(exc).__name__}: {exc}"
+            if conn is not None:
+                _try(ask_store.fail_run, conn, run_id, message, "".join(written))
+            yield sse("error", {"message": message})
 
     return StreamingResponse(
         events(),
@@ -1094,9 +1475,9 @@ def fitgap_status() -> dict:
     except Exception as exc:
         info["error"] = f"{type(exc).__name__}: {exc}"
     try:
-        # The corpus is not in the Fit/Gap database -- it is spread across the
-        # category databases a run retrieves from, so the counts come from
-        # there and are broken down the same way the Ask page shows them.
+        # The runs and the corpus share a database, but not a table: these are
+        # the documents a run may retrieve from, broken down the same way the
+        # Ask page shows them.
         info["documents"], info["chunks"] = rag.counts()
         info["categories"] = [
             {"code": code, "documents": docs, "chunks": chunks}
@@ -1108,6 +1489,21 @@ def fitgap_status() -> dict:
         info["graph"] = knowledge_graph.extract_graph()["stats"]
     except Exception:
         info["graph"] = None
+    fg_uploads = _uploads()
+    info["uploads"] = {
+        "ttl_hours": fg_uploads.TTL_HOURS,
+        "max_files": fg_uploads.MAX_FILES,
+        "accepted": sorted(ACCEPTED),
+        "database": rag.database_name(fg_uploads.database_url()),
+    }
+    try:
+        # Expired attachments are swept whenever the page that offers them is
+        # opened. Only if the session database exists: an installation nobody
+        # has uploaded to should not grow one to be told it is empty.
+        if fg_uploads.live():
+            fg_uploads.sweep()
+    except Exception:
+        pass
     return info
 
 
@@ -1196,6 +1592,205 @@ def fitgap_run(req: "FitGapRun") -> StreamingResponse:
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+# --- documents attached to one agent session ----------------------------------
+#
+# Shared by the Fit-Gap Copilot and the Rollout Agent, which is why these are
+# /api/uploads rather than /api/fitgap/uploads. They never reach the corpus:
+# each is converted, chunked and embedded into a Postgres schema of its own
+# inside docling_session -- a different database from the one the corpus is in
+# -- given a knowledge graph of its own, and swept once the session expires.
+# See uploads.py for why a schema rather than a database per session.
+
+
+def _uploads():
+    import uploads as fg_uploads
+
+    return fg_uploads
+
+
+@app.post("/api/uploads")
+def session_upload(
+    files: list[UploadFile],
+    session: str = Form(default=""),
+    role: str = Form(default=""),
+) -> StreamingResponse:
+    """Convert, chunk, embed and graph one or more documents into a session.
+
+    `role` says what the documents are in the analysis -- a country's As-Is,
+    the Global Template, SAP Best Practice content -- which is what lets the
+    Rollout Agent run a three-way comparison instead of a two-document one.
+
+    Streamed, because converting a deck takes far longer than embedding it and
+    a single spinner would hide which stage is slow."""
+    fg_uploads = _uploads()
+    try:
+        role = fg_uploads.check_role(role or None)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+    if not files:
+        raise HTTPException(400, "No files uploaded")
+    accepted = []
+    for f in files:
+        name = Path(f.filename or "document").name
+        if name.startswith((".", "~$")):
+            continue
+        if Path(name).suffix.lower() not in ACCEPTED:
+            raise HTTPException(
+                400, f"Unsupported format '{Path(name).suffix}'. Expected one of {sorted(ACCEPTED)}."
+            )
+        accepted.append((name, f))
+    if not accepted:
+        raise HTTPException(400, "No supported documents in the upload")
+
+    def sse(event: str, data: dict) -> str:
+        return f"event: {event}\ndata: {json.dumps(data, default=str)}\n\n"
+
+    def events():
+        try:
+            fg_uploads.sweep()
+            sid = session.strip()
+            if sid and not fg_uploads.exists(sid):
+                sid = ""  # expired while the page was open; start a fresh one
+            if not sid:
+                sid = fg_uploads.new_session()
+            yield sse("session", {"session": sid})
+        except Exception as exc:
+            yield sse("error", {"message": f"{type(exc).__name__}: {exc}"})
+            return
+
+        total = len(accepted)
+        added = 0
+        for i, (name, upload_file) in enumerate(accepted, 1):
+            yield sse("start", {"index": i, "total": total, "filename": name})
+            tmp = Path(tempfile.mkdtemp()) / name
+            try:
+                with open(tmp, "wb") as out:
+                    shutil.copyfileobj(upload_file.file, out)
+                # add_file runs on a worker so its stages can be forwarded as
+                # they start rather than after the file is finished. Converting
+                # a large deck is much the slowest stage and naming it is the
+                # difference between a progress bar and a frozen one.
+                stages: queue.Queue = queue.Queue()
+                box: dict = {}
+
+                def work(tmp=tmp, name=name, role=role, box=box, stages=stages):
+                    try:
+                        box["result"] = fg_uploads.add_file(
+                            sid, tmp, name, role,
+                            on_event=lambda stage, detail: stages.put(("stage", {"stage": stage, **detail})),
+                        )
+                    except Exception as exc:
+                        box["error"] = f"{type(exc).__name__}: {exc}"
+                    finally:
+                        # The worker owns its own connections to the session
+                        # database; nothing else will close them.
+                        fg_uploads.close()
+                        stages.put(("__end__", {}))
+
+                threading.Thread(target=work, daemon=True).start()
+                while True:
+                    kind, payload = stages.get()
+                    if kind == "__end__":
+                        break
+                    yield sse("stage", {"index": i, "total": total, "filename": name, **payload})
+                if box.get("error"):
+                    yield sse("file_error", {"index": i, "total": total, "filename": name,
+                                             "message": box["error"]})
+                else:
+                    added += 1
+                    yield sse("done_file", {"index": i, "total": total, **box["result"]})
+            except Exception as exc:
+                yield sse("file_error", {"index": i, "total": total, "filename": name,
+                                         "message": f"{type(exc).__name__}: {exc}"})
+            finally:
+                shutil.rmtree(tmp.parent, ignore_errors=True)
+        try:
+            yield sse("done", {"added": added, "total": total, **fg_uploads.info(sid)})
+        except Exception as exc:
+            yield sse("error", {"message": f"{type(exc).__name__}: {exc}"})
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.get("/api/uploads/{session}")
+def session_upload_status(session: str) -> dict:
+    fg_uploads = _uploads()
+    try:
+        fg_uploads.sweep()
+        return fg_uploads.info(session)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+    except Exception as exc:
+        raise HTTPException(500, f"{type(exc).__name__}: {exc}") from exc
+
+
+@app.get("/api/uploads/{session}/files/{name}/markdown")
+def session_upload_markdown(session: str, name: str) -> Response:
+    """The converted Markdown of one attached document, so a citation from an
+    attachment opens the same way a citation from the corpus does."""
+    fg_uploads = _uploads()
+    try:
+        text = fg_uploads.markdown(session, name)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+    if text is None:
+        raise HTTPException(404, f"'{name}' is not in this session")
+    return Response(text, media_type="text/markdown")
+
+
+@app.get("/api/uploads/{session}/entities")
+def session_upload_entities(session: str, roles: list[str] | None = Query(default=None)) -> dict:
+    """What the attachment has in common with the corpus and what is only in
+    it -- the same comparison the agent's upload_entities tool returns."""
+    fg_uploads = _uploads()
+    try:
+        if not fg_uploads.exists(session):
+            raise HTTPException(404, "This upload session has expired")
+        return fg_uploads.compare(session, roles or None)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+
+
+@app.delete("/api/uploads/{session}")
+def session_upload_drop(session: str) -> dict:
+    fg_uploads = _uploads()
+    try:
+        fg_uploads.drop(session)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+    return {"dropped": True, "session": session}
+
+
+@app.patch("/api/uploads/{session}/files/{name}")
+def session_upload_retag(session: str, name: str, role: str = Query(...)) -> dict:
+    """Change what a document is in the analysis. No re-conversion and no
+    re-embedding: the role is metadata, the vectors do not depend on it."""
+    fg_uploads = _uploads()
+    try:
+        out = fg_uploads.set_role(session, name, role)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+    if not out.get("updated"):
+        raise HTTPException(404, f"'{name}' is not in this session")
+    return {**out, **fg_uploads.info(session)}
+
+
+@app.delete("/api/uploads/{session}/files/{name}")
+def session_upload_remove(session: str, name: str) -> dict:
+    fg_uploads = _uploads()
+    try:
+        out = fg_uploads.remove_file(session, name)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+    if not out.get("removed"):
+        raise HTTPException(404, f"'{name}' is not in this session")
+    return {**out, **fg_uploads.info(session)}
 
 
 @app.get("/api/fitgap/runs")
@@ -1335,6 +1930,213 @@ def fitgap_review(entry_id: int, body: "FitGapReview") -> dict:
 # near-duplicate and hub-artefact judgement on top.
 
 
+# --- the Rollout Agent --------------------------------------------------------
+#
+# Fit-to-Standard analysis for a country rollout: the country's As-Is,
+# attached to the session, compared against the Global Template in the corpus
+# and -- when a source for it is attached -- SAP Best Practice. See rollout/.
+
+
+class RolloutRun(BaseModel):
+    # Optional: empty asks the agent to identify the template process itself.
+    scope_bpml: str = ""
+    # What the run analyses: the country's As-Is, or an SAP Best Practice
+    # document read as the subject to find where the template has drifted
+    # from SAP standard.
+    subject: str = "country_as_is"
+    country: str = Field(default="", max_length=80)
+    country_context: str = Field(default="", max_length=4000)
+    sap_release: str = Field(default="", max_length=200)
+    gt_version: str = Field(default="", max_length=120)
+    question: str | None = None
+    upload_session: str = ""
+    categories: list[str] = Field(default_factory=list)
+
+
+class RolloutDecision(BaseModel):
+    gap_id: str = Field(min_length=1, max_length=40)
+    reviewer: str = Field(min_length=1, max_length=120)
+    verdict: str
+    disposition: str = ""
+    comment: str = ""
+
+
+def _rollout_request(req: "RolloutRun"):
+    from rollout.schemas import SUBJECTS, RunRequest
+
+    try:
+        categories = [rag.check_category(c) for c in req.categories]
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+    if req.subject not in SUBJECTS:
+        raise HTTPException(400, f"subject must be one of {sorted(SUBJECTS)}")
+    return RunRequest(**{**req.model_dump(), "categories": categories})
+
+
+@app.get("/rollout", response_class=HTMLResponse)
+@app.get("/fit-to-standard", response_class=HTMLResponse)
+def rollout_page() -> HTMLResponse:
+    return _spa()
+
+
+@app.get("/api/rollout/status")
+def rollout_status() -> dict:
+    """What the Rollout Agent can see before the first run: the BPML sheet it
+    reads the Global Template from, the corpus categories, the model, and what
+    an analyst may attach."""
+    from rollout import agent as ro_agent, store as ro_store
+    from rollout.schemas import (DEVIATION_TYPES, DISPOSITIONS, DIMENSIONS, SUBJECTS,
+                                 LOCALIZATION_STATES, RATING_MEANING)
+    from fitgap import bpml as fg_bpml
+
+    fg_uploads = _uploads()
+    info: dict = {
+        "bpml": fg_bpml.stats(),
+        "model": ro_agent.MODEL,
+        "prompt_hash": ro_agent.prompt_hash(),
+        "max_tool_calls": ro_agent.MAX_TOOL_CALLS,
+        "anthropic_key": bool(os.environ.get("ANTHROPIC_API_KEY")),
+        "runs": 0,
+        "decisions": 0,
+        "error": None,
+        # The controlled vocabularies, so the page renders the same labels the
+        # validator enforces instead of a second copy that can drift.
+        "vocabulary": {
+            "deviation_types": DEVIATION_TYPES,
+            "dispositions": DISPOSITIONS,
+            "localization_states": LOCALIZATION_STATES,
+            "dimensions": {k: {"label": v[0], "weight": round(v[1] * 100)}
+                           for k, v in DIMENSIONS.items()},
+            "ratings": {str(k): v for k, v in RATING_MEANING.items()},
+        },
+        # What a run can be about, and which upload role each one requires, so
+        # the page does not keep its own copy of that pairing.
+        "subjects": [
+            {"value": sub.key, "label": sub.label, "role": sub.role,
+             "localization": sub.localization, "score_b": sub.score_b}
+            for sub in SUBJECTS.values()
+        ],
+        "uploads": {
+            "ttl_hours": fg_uploads.TTL_HOURS,
+            "max_files": fg_uploads.MAX_FILES,
+            "accepted": sorted(ACCEPTED),
+            "database": rag.database_name(fg_uploads.database_url()),
+            "roles": [{"value": r, "label": fg_uploads.ROLE_LABEL[r]} for r in fg_uploads.ROLES],
+        },
+    }
+    try:
+        info.update(ro_store.stats())
+    except Exception as exc:
+        info["error"] = f"{type(exc).__name__}: {exc}"
+    try:
+        info["documents"], info["chunks"] = rag.counts()
+        info["categories"] = [
+            {"code": code, "documents": docs, "chunks": chunks}
+            for code, docs, chunks in rag.totals()
+        ]
+    except Exception as exc:
+        info["corpus_error"] = f"{type(exc).__name__}: {exc}"
+    return info
+
+
+@app.post("/api/rollout/preview")
+def rollout_preview(req: "RolloutRun") -> dict:
+    from rollout.orchestrator import preview as ro_preview
+
+    out = ro_preview(_rollout_request(req))
+    if out.get("error"):
+        raise HTTPException(400, out["error"])
+    return out
+
+
+@app.post("/api/rollout/run")
+def rollout_run(req: "RolloutRun") -> StreamingResponse:
+    """Stream one Fit-to-Standard analysis as server-sent events: `scope`,
+    `stage`, `tool_call`, `asis`, `gate`, `analysis`, `scores`, `done`."""
+    from rollout.orchestrator import run as ro_run
+
+    request = _rollout_request(req)
+
+    def sse(event: str, data) -> str:
+        return f"event: {event}\ndata: {json.dumps(data, default=str)}\n\n"
+
+    def events():
+        try:
+            for event, data in ro_run(request):
+                yield sse(event, data)
+        except SystemExit as exc:
+            yield sse("error", {"message": str(exc)})
+        except Exception as exc:
+            yield sse("error", {"message": f"{type(exc).__name__}: {exc}"})
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.get("/api/rollout/runs")
+def rollout_runs(limit: int = 40) -> list[dict]:
+    from rollout import store as ro_store
+
+    conn = ro_store.connect()  # shared; not ours to close
+    ro_store.create_schema(conn)
+    return ro_store.list_runs(conn, limit)
+
+
+@app.get("/api/rollout/runs/{run_id}")
+def rollout_get_run(run_id: str) -> dict:
+    from rollout import store as ro_store
+
+    conn = ro_store.connect()
+    ro_store.create_schema(conn)
+    run = ro_store.get_run(conn, run_id)
+    if not run:
+        raise HTTPException(404, "Run not found")
+    return run
+
+
+@app.post("/api/rollout/runs/{run_id}/decisions")
+def rollout_decide(run_id: str, body: "RolloutDecision") -> dict:
+    """Record a human decision on one gap. The agent proposes; this is where a
+    named person disposes, and the proposal is never overwritten."""
+    from rollout import store as ro_store
+
+    if body.verdict not in ("accept", "reject", "defer"):
+        raise HTTPException(400, "verdict must be accept, reject or defer")
+    conn = ro_store.connect()
+    ro_store.create_schema(conn)
+    if not ro_store.get_run(conn, run_id):
+        raise HTTPException(404, "Run not found")
+    return ro_store.save_decision(conn, run_id, body.gap_id, body.reviewer,
+                                  body.verdict, body.disposition, body.comment)
+
+
+@app.get("/api/rollout/runs/{run_id}/export")
+def rollout_export(run_id: str, format: str = "md"):
+    """The analysis as Markdown or JSON, for a workshop pack."""
+    from rollout import store as ro_store
+    from rollout.export import to_markdown
+
+    conn = ro_store.connect()
+    ro_store.create_schema(conn)
+    run = ro_store.get_run(conn, run_id)
+    if not run:
+        raise HTTPException(404, "Run not found")
+    if format == "json":
+        return StreamingResponse(
+            iter([json.dumps(run, indent=2, default=str)]),
+            media_type="application/json",
+            headers={"Content-Disposition": f'attachment; filename="{run_id}.json"'},
+        )
+    return StreamingResponse(
+        iter([to_markdown(run)]),
+        media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{run_id}.md"'},
+    )
+
+
 @app.get("/evidence", response_class=HTMLResponse)
 @app.get("/investigate", response_class=HTMLResponse)
 def evidence_page() -> HTMLResponse:
@@ -1363,6 +2165,12 @@ def evidence_status() -> dict:
     except Exception:
         pass
     try:
+        from evidence import store as ev_store
+
+        info["history"] = ev_store.stats()
+    except Exception as exc:
+        info["history"] = {"runs": 0, "answered": 0, "error": f"{type(exc).__name__}: {exc}"}
+    try:
         d = independence.load()
         info["duplicate_groups"] = [sorted(g) for g in d.groups]
         info["duplicate_threshold"] = independence.DUPLICATE_AT
@@ -1389,10 +2197,16 @@ class EvidenceQuestion(BaseModel):
 
 @app.post("/api/evidence/ask")
 def evidence_ask(body: EvidenceQuestion) -> StreamingResponse:
-    """Stream one investigation as server-sent events: `tool_call` as each
-    engine is queried, then `answer` or `error`. A sync generator, so
-    Starlette iterates it in the threadpool."""
-    from evidence import agent as ev_agent
+    """Stream one investigation as server-sent events: `run` with the id it is
+    being recorded under, `tool_call` as each engine is queried, then `answer`
+    or `error`. A sync generator, so Starlette iterates it in the threadpool.
+
+    The run is written to evidence_runs as it goes rather than at the end, so
+    an investigation whose stream is dropped -- the tab closed, the browser
+    gone -- still leaves behind what it had done by then."""
+    import uuid
+
+    from evidence import agent as ev_agent, store as ev_store
 
     def sse(event: str, data) -> str:
         return f"event: {event}\ndata: {json.dumps(data, default=str)}\n\n"
@@ -1402,15 +2216,50 @@ def evidence_ask(body: EvidenceQuestion) -> StreamingResponse:
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from None
 
+    question = body.question.strip()
+    run_id = f"ev_{uuid.uuid4().hex[:10]}"
+
     def events():
+        conn = None
+        calls: list[dict] = []
+        try:
+            conn = ev_store.connect()
+            ev_store.create_schema(conn)
+            ev_store.start_run(conn, {
+                "id": run_id, "question": question, "holdout": body.holdout,
+                "categories": categories, "model": ev_agent.MODEL,
+                "prompt_hash": ev_agent.prompt_hash(),
+                "corpus_fingerprint": _corpus_fingerprint(categories),
+            })
+            yield sse("run", {"id": run_id})
+        except Exception as exc:
+            # History is worth having, not worth refusing to answer over.
+            conn = None
+            yield sse("run", {"id": run_id, "not_saved": f"{type(exc).__name__}: {exc}"})
+
         try:
             for event, data in ev_agent.run(
-                body.question.strip(), holdout=body.holdout, categories=categories
+                question, holdout=body.holdout, categories=categories
             ):
+                if conn is not None:
+                    try:
+                        if event == "tool_call":
+                            calls.append(data)
+                            ev_store.save_calls(conn, run_id, calls)
+                        elif event == "answer":
+                            ev_store.finish_run(conn, run_id, data, calls)
+                        elif event == "error":
+                            ev_store.fail_run(conn, run_id, str(data.get("message", "")), calls)
+                    except Exception:
+                        conn = None  # stop trying; the answer still streams
                 yield sse(event, data)
         except SystemExit as exc:
+            if conn is not None:
+                _try(ev_store.fail_run, conn, run_id, str(exc), calls)
             yield sse("error", {"message": str(exc)})
         except Exception as exc:
+            if conn is not None:
+                _try(ev_store.fail_run, conn, run_id, f"{type(exc).__name__}: {exc}", calls)
             yield sse("error", {"message": f"{type(exc).__name__}: {exc}"})
 
     return StreamingResponse(
@@ -1420,6 +2269,132 @@ def evidence_ask(body: EvidenceQuestion) -> StreamingResponse:
     )
 
 
+def _try(fn, *args) -> None:
+    """Best effort: a bookkeeping write must never turn into the error the
+    caller reports."""
+    try:
+        fn(*args)
+    except Exception:
+        pass
+
+
+def _corpus_fingerprint(categories: list[str]) -> str:
+    """What the run could have read, hashed the way the Copilot's and the
+    Rollout Agent's records hash it."""
+    import hashlib
+
+    try:
+        conn = rag.connection()
+        rows = (conn.execute("SELECT source, fingerprint FROM rag_documents"
+                             " WHERE category = ANY(%s)", (categories,)).fetchall()
+                if categories else
+                conn.execute("SELECT source, fingerprint FROM rag_documents").fetchall())
+        h = hashlib.sha256()
+        for _, fp in sorted(rows):
+            h.update(fp.encode())
+        return h.hexdigest()[:16]
+    except Exception:
+        return ""
+
+
+@app.get("/api/evidence/runs")
+def evidence_runs(limit: int = 50) -> list[dict]:
+    """Past investigations, newest first."""
+    from evidence import store as ev_store
+
+    conn = ev_store.connect()
+    ev_store.create_schema(conn)
+    return ev_store.list_runs(conn, limit=max(1, min(limit, 200)))
+
+
+@app.get("/api/evidence/runs/{run_id}")
+def evidence_run(run_id: str) -> dict:
+    """One investigation in full: the question, every tool call, the answer."""
+    from evidence import store as ev_store
+
+    conn = ev_store.connect()
+    ev_store.create_schema(conn)
+    run = ev_store.get_run(conn, run_id)
+    if not run:
+        raise HTTPException(404, f"No investigation {run_id}")
+    return run
+
+
+@app.delete("/api/evidence/runs/{run_id}")
+def evidence_run_delete(run_id: str) -> dict:
+    from evidence import store as ev_store
+
+    conn = ev_store.connect()
+    ev_store.create_schema(conn)
+    if not ev_store.delete_run(conn, run_id):
+        raise HTTPException(404, f"No investigation {run_id}")
+    return {"status": "deleted", "id": run_id}
+
+
+# --- Ask RAG history ----------------------------------------------------------
+# Same shape as the Evidence Agent's, and deliberately so: a person who has
+# learned one history panel should not have to learn a second.
+
+
+@app.get("/api/ask/runs")
+def ask_runs(limit: int = 50, search: str = "") -> dict:
+    """Past questions, newest first, optionally filtered by their text."""
+    conn = ask_store.connect()
+    ask_store.create_schema(conn)
+    return {
+        "runs": ask_store.list_runs(conn, limit=max(1, min(limit, 200)), search=search),
+        "retention": ask_store.RETENTION,
+    }
+
+
+@app.get("/api/ask/runs/{run_id}")
+def ask_run(run_id: str) -> dict:
+    """One question in full: the settings, every excerpt it read, the answer."""
+    conn = ask_store.connect()
+    ask_store.create_schema(conn)
+    run = ask_store.get_run(conn, run_id)
+    if not run:
+        raise HTTPException(404, f"No question {run_id}")
+    # Whether the corpus has changed since. A reopened answer is evidence of
+    # what the corpus said then, and saying so is the difference between
+    # history and a stale cache pretending to be current.
+    run["corpus_changed"] = bool(
+        run["corpus_fingerprint"]
+        and run["corpus_fingerprint"] != _corpus_fingerprint(run["categories"])
+    )
+    return run
+
+
+@app.delete("/api/ask/runs/{run_id}")
+def ask_run_delete(run_id: str) -> dict:
+    conn = ask_store.connect()
+    ask_store.create_schema(conn)
+    if not ask_store.delete_run(conn, run_id):
+        raise HTTPException(404, f"No question {run_id}")
+    return {"status": "deleted", "id": run_id}
+
+
+@app.delete("/api/ask/runs")
+def ask_runs_clear() -> dict:
+    conn = ask_store.connect()
+    ask_store.create_schema(conn)
+    return {"status": "cleared", "removed": ask_store.clear(conn)}
+
+
 # Hashed JS/CSS bundles of the built front end. check_dir=False so the API
 # still starts before the first build.
-app.mount("/assets", StaticFiles(directory=DIST / "assets", check_dir=False), name="assets")
+class _ImmutableAssets(StaticFiles):
+    """The built assets, cached for a year.
+
+    Every file under /assets carries a content hash in its name, so a change
+    produces a new name rather than new content at the same name. That makes
+    them safe to cache immutably -- and the freshness of the page that names
+    them is handled in _spa above."""
+
+    def file_response(self, *args, **kwargs):  # type: ignore[override]
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return response
+
+
+app.mount("/assets", _ImmutableAssets(directory=DIST / "assets", check_dir=False), name="assets")

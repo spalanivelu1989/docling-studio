@@ -17,3 +17,10 @@ anthropic
 # listed because fitgap imports it directly.
 openpyxl
 pydantic
+# tracing.py: optional LLM observability. Installed either way; with no
+# LANGFUSE_* keys in the environment nothing is sent and nothing is imported
+# beyond this module. The Anthropic instrumentor is what records the model
+# calls themselves, so it is not optional relative to langfuse.
+langfuse
+opentelemetry-instrumentation-anthropic
+opentelemetry-instrumentation-threading

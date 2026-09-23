@@ -4,9 +4,10 @@ Reviews sit alongside entries and never overwrite them: the register has to
 keep showing what the Copilot proposed next to what the human decided, or the
 next evaluation has nothing to measure.
 
-These tables are not per-category -- a run reads every category and records one
-result -- so they live in their own database, `<base>_fitgap`, beside the
-per-category ones rather than inside any of them.
+These tables are not per-category -- a run reads every category it is pointed
+at and records one result -- so they carry no category column. They live in the
+main database beside the corpus they were written from; they had a database of
+their own while each category did, and came back with them.
 """
 
 from __future__ import annotations
@@ -23,25 +24,22 @@ import rag  # noqa: E402
 from .schemas import FitGapEntry, Review, VerifiedEntry  # noqa: E402
 
 
-# The runs, entries and reviews database. RAG_DATABASE_URL_FITGAP moves it, the
-# same way a category can be moved.
-FITGAP_DATABASE = "FITGAP"
-
-
 def database_url() -> str:
-    return rag.database_url(FITGAP_DATABASE)
+    """Where the runs, entries and reviews live: the main database, beside the
+    corpus they were written from."""
+    return rag.base_url()
 
 
 def connect():
-    """A connection to the Fit/Gap database, created if it is not there yet.
+    """A connection to the database holding the tables below.
 
-    Retrieval does not come through here: search_corpus goes to every category
-    database via rag.search, and this connection only ever sees the tables
-    below.
+    It is the same database the corpus is in, and the same connection
+    rag.search uses; `schema=False` only says that this caller does not need
+    the corpus schema checked on its account.
 
     The connection is shared and cached per thread, so callers must not close
-    it; rag.close_shards() releases a thread's connections when it is done."""
-    return rag.shard_connection(rag.ensure_database(FITGAP_DATABASE), schema=False)
+    it; rag.close() releases a thread's connection when it is done."""
+    return rag.connection(schema=False)
 
 
 def create_schema(conn=None) -> None:
@@ -108,28 +106,37 @@ def create_schema(conn=None) -> None:
         conn.execute(
             "ALTER TABLE fitgap_runs ADD COLUMN IF NOT EXISTS categories jsonb NOT NULL DEFAULT '[]'::jsonb"
         )
+        # What the analyst attached to the session, if anything: the session id
+        # and the document names. Recorded because the attachment changes what
+        # the run could read, and a register entry that cites an upload is only
+        # reproducible if the run says which one -- the upload itself is gone
+        # within hours, so the names are the whole record.
+        conn.execute(
+            "ALTER TABLE fitgap_runs ADD COLUMN IF NOT EXISTS uploads jsonb NOT NULL DEFAULT '{}'::jsonb"
+        )
 
 
 def corpus_fingerprint(conn=None, categories: list[str] | None = None) -> str:
     """The hash of the material a run could read, so it can be reproduced
     against exactly that material (§10).
 
-    It covers every category database the run was allowed to reach, not one
-    connection's worth -- and not the whole corpus when the run was scoped to
-    part of it, or the fingerprint would claim the run saw documents it could
-    never retrieve. `conn` is ignored; it remains in the signature for callers
-    that still pass one."""
+    It covers what the run was allowed to reach -- not the whole corpus when the
+    run was scoped to part of it, or the fingerprint would claim the run saw
+    documents it could never retrieve. `conn` is ignored; it remains in the
+    signature for callers that still pass one.
+
+    It hashes (source, fingerprint) and never a row id, which is why the
+    consolidation that renumbered the chunks did not move it."""
     import hashlib
 
-    rows: list[tuple[str, str]] = []
-    for url, cats in rag.shards(categories or None):
-        conn_ = rag.shard_connection(url)
-        if cats:
-            rows += conn_.execute(
-                "SELECT source, fingerprint FROM rag_documents WHERE category = ANY(%s)", (cats,)
-            ).fetchall()
-        else:
-            rows += conn_.execute("SELECT source, fingerprint FROM rag_documents").fetchall()
+    codes = [rag.check_category(c) for c in (categories or []) if c]
+    conn_ = rag.connection()
+    if codes:
+        rows = conn_.execute(
+            "SELECT source, fingerprint FROM rag_documents WHERE category = ANY(%s)", (codes,)
+        ).fetchall()
+    else:
+        rows = conn_.execute("SELECT source, fingerprint FROM rag_documents").fetchall()
     h = hashlib.sha256()
     for _, fingerprint in sorted(rows):
         h.update(fingerprint.encode())
@@ -140,15 +147,16 @@ def start_run(conn, run: dict) -> None:
     conn.execute(
         """INSERT INTO fitgap_runs
            (id, mode, scope_bpml, scope_label, question, country, model, prompt_hash,
-            params, holdout, corpus_fingerprint, categories)
+            params, holdout, corpus_fingerprint, categories, uploads)
            VALUES (%(id)s, %(mode)s, %(scope_bpml)s, %(scope_label)s, %(question)s, %(country)s,
                    %(model)s, %(prompt_hash)s, %(params)s, %(holdout)s, %(corpus_fingerprint)s,
-                   %(categories)s)
+                   %(categories)s, %(uploads)s)
            ON CONFLICT (id) DO NOTHING""",
         {**run,
          "country": json.dumps(run.get("country")) if run.get("country") else None,
          "params": json.dumps(run.get("params", {})),
-         "categories": json.dumps(run.get("categories") or [])},
+         "categories": json.dumps(run.get("categories") or []),
+         "uploads": json.dumps(run.get("uploads") or {})},
     )
     conn.commit()
 
@@ -187,7 +195,7 @@ def list_runs(conn, limit: int = 40) -> list[dict]:
         """SELECT r.id, r.mode, r.scope_bpml, r.scope_label, r.question, r.holdout, r.status,
                   r.started_at, r.finished_at, r.model,
                   (SELECT count(*) FROM fitgap_entries e WHERE e.run_id = r.id) AS entries,
-                  r.synthesis, r.categories
+                  r.synthesis, r.categories, r.uploads
            FROM fitgap_runs r ORDER BY r.started_at DESC LIMIT %s""",
         (limit,),
     ).fetchall()
@@ -204,6 +212,7 @@ def list_runs(conn, limit: int = 40) -> list[dict]:
         out.append({
             "id": r[0], "mode": r[1], "scope_bpml": r[2], "scope_label": r[3], "question": r[4],
             "holdout": r[5], "status": status, "categories": r[12] or [],
+            "uploads": r[13] or {},
             "started_at": r[7].isoformat() if r[7] else None,
             "finished_at": r[8].isoformat() if r[8] else None,
             "model": r[9], "entries": r[10],
@@ -226,7 +235,7 @@ def get_run(conn, run_id: str) -> dict | None:
     r = conn.execute(
         """SELECT id, mode, scope_bpml, scope_label, question, country, model, prompt_hash,
                   params, holdout, corpus_fingerprint, started_at, finished_at, status,
-                  input_tokens, output_tokens, synthesis, categories
+                  input_tokens, output_tokens, synthesis, categories, uploads
            FROM fitgap_runs WHERE id = %s""",
         (run_id,),
     ).fetchone()
@@ -235,7 +244,7 @@ def get_run(conn, run_id: str) -> dict | None:
     run = {
         "id": r[0], "mode": r[1], "scope_bpml": r[2], "scope_label": r[3], "question": r[4],
         "country": r[5], "model": r[6], "prompt_hash": r[7], "params": r[8], "holdout": r[9],
-        "corpus_fingerprint": r[10], "categories": r[17] or [],
+        "corpus_fingerprint": r[10], "categories": r[17] or [], "uploads": r[18] or {},
         "started_at": r[11].isoformat() if r[11] else None,
         "finished_at": r[12].isoformat() if r[12] else None,
         "status": r[13], "input_tokens": r[14], "output_tokens": r[15],

@@ -2,7 +2,6 @@ import {
   Box,
   Chip,
   Divider,
-  IconButton,
   InputAdornment,
   Paper,
   Stack,
@@ -11,9 +10,10 @@ import {
   Typography,
   alpha,
 } from "@mui/material";
-import { ChevronDown, ChevronRight, CornerDownRight, FileText, Search, X } from "lucide-react";
+import { ChevronDown, ChevronRight, CornerDownRight, FileText, Search } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 import type { GraphData, GraphNode } from "../api";
+import { clearAdornment, clearOnEscape } from "./ClearAdornment";
 
 /** The BPML taxonomy as a tree, and the chain back up from any step.
  *
@@ -236,6 +236,7 @@ export default function ProcessFlowView({ graph, onFocusNode }: Props) {
             placeholder="Find a process, step or SPARK key…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={clearOnEscape(() => setQuery(""))}
             slotProps={{
               input: {
                 startAdornment: (
@@ -243,13 +244,7 @@ export default function ProcessFlowView({ graph, onFocusNode }: Props) {
                     <Search size={14} />
                   </InputAdornment>
                 ),
-                endAdornment: query ? (
-                  <InputAdornment position="end">
-                    <IconButton size="small" onClick={() => setQuery("")}>
-                      <X size={13} />
-                    </IconButton>
-                  </InputAdornment>
-                ) : null,
+                endAdornment: clearAdornment(query, () => setQuery(""), { size: 13 }),
               },
             }}
           />

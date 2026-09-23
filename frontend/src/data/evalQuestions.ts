@@ -1,4 +1,11 @@
-/** The sixteen evaluation questions from docs/three-engine-eval-questions.md.
+/** The evaluation questions from docs/three-engine-eval-questions.md.
+ *
+ *  Q1-Q16 are grounded in the PKG corpus. D1-D6 are grounded in DR, whose
+ *  failure modes are different in kind: a workshop leaves questions open, a
+ *  transcript records a proposal the minutes never ratify, and the same
+ *  session arrives twice under two file names. C1-C5 need both, and exist to
+ *  test whether an engine reads across both corpora and reconciles them rather
+ *  than answering from whichever half it reached first.
  *
  *  Each one is grounded in a specific passage of the Solvay SPARK corpus and
  *  built to provoke one named failure. Every BPML scope below was checked
@@ -8,12 +15,19 @@
 
 export type Engine = "rag" | "graph" | "copilot";
 
+/** Which document categories a question needs. "PKG+DR" means neither half of
+ *  the corpus can answer it alone -- the point is whether an engine reaches
+ *  across both and reconciles what they say. */
+export type QuestionCategory = "PKG" | "DR" | "PKG+DR";
+
 /** How each engine is expected to do — the prediction being scored, not a
  *  claim about what it will actually answer. */
 export type Expectation = "strong" | "partial" | "weak" | "blind";
 
 export interface EvalQuestion {
   id: string;
+  /** The corpus this question is grounded in. */
+  category: QuestionCategory;
   /** "Is the fact right?" (Q1-Q8) or "Is its standing right?" (Q9-Q16). */
   half: 1 | 2;
   /** The single dimension this question isolates. */
@@ -48,6 +62,7 @@ export const HALVES: Record<1 | 2, { title: string; blurb: string }> = {
 export const EVAL_QUESTIONS: EvalQuestion[] = [
   {
     id: "Q1",
+    category: "PKG",
     half: 1,
     axis: "Ontology limits",
     question:
@@ -63,6 +78,7 @@ export const EVAL_QUESTIONS: EvalQuestion[] = [
   },
   {
     id: "Q2",
+    category: "PKG",
     half: 1,
     axis: "False connectivity",
     question: "How does Solvay@eCommerce connect to SOVOS?",
@@ -79,6 +95,7 @@ export const EVAL_QUESTIONS: EvalQuestion[] = [
   },
   {
     id: "Q3",
+    category: "PKG",
     half: 1,
     axis: "Versioning",
     question:
@@ -94,6 +111,7 @@ export const EVAL_QUESTIONS: EvalQuestion[] = [
   },
   {
     id: "Q4",
+    category: "PKG",
     half: 1,
     axis: "Entity identity",
     question: "What does SPARK-21999 cover?",
@@ -110,6 +128,7 @@ export const EVAL_QUESTIONS: EvalQuestion[] = [
   },
   {
     id: "Q5",
+    category: "PKG",
     half: 1,
     axis: "Cross-document exception",
     question:
@@ -125,6 +144,7 @@ export const EVAL_QUESTIONS: EvalQuestion[] = [
   },
   {
     id: "Q6",
+    category: "PKG",
     half: 1,
     axis: "Table fidelity",
     question:
@@ -141,6 +161,7 @@ export const EVAL_QUESTIONS: EvalQuestion[] = [
   },
   {
     id: "Q7",
+    category: "PKG",
     half: 1,
     axis: "Contradiction detection",
     question: "Does a Forecast Check delivery block stop a purchase requisition being created?",
@@ -155,6 +176,7 @@ export const EVAL_QUESTIONS: EvalQuestion[] = [
   },
   {
     id: "Q8",
+    category: "PKG",
     half: 1,
     axis: "Enumeration",
     question:
@@ -173,6 +195,7 @@ export const EVAL_QUESTIONS: EvalQuestion[] = [
 
   {
     id: "Q9",
+    category: "PKG",
     half: 2,
     axis: "Attribution across siblings",
     question: "For a commission contract, is the contract settled by self-billing?",
@@ -188,6 +211,7 @@ export const EVAL_QUESTIONS: EvalQuestion[] = [
   },
   {
     id: "Q10",
+    category: "PKG",
     half: 2,
     axis: "Documented unknown",
     question:
@@ -204,6 +228,7 @@ export const EVAL_QUESTIONS: EvalQuestion[] = [
   },
   {
     id: "Q11",
+    category: "PKG",
     half: 2,
     axis: "Request vs decision",
     question: "Should sales from ECC to S/4HANA be avoided during the interim period?",
@@ -220,6 +245,7 @@ export const EVAL_QUESTIONS: EvalQuestion[] = [
   },
   {
     id: "Q12",
+    category: "PKG",
     half: 2,
     axis: "Explicit exclusion",
     question: "Which M3 order types does the eCommerce–SAP interface support?",
@@ -235,6 +261,7 @@ export const EVAL_QUESTIONS: EvalQuestion[] = [
   },
   {
     id: "Q13",
+    category: "PKG",
     half: 2,
     axis: "Ontology ≠ inventory",
     question: "Which external systems does the L2C landscape integrate with?",
@@ -251,6 +278,7 @@ export const EVAL_QUESTIONS: EvalQuestion[] = [
   },
   {
     id: "Q14",
+    category: "PKG",
     half: 2,
     axis: "Which copy",
     question:
@@ -267,6 +295,7 @@ export const EVAL_QUESTIONS: EvalQuestion[] = [
   },
   {
     id: "Q15",
+    category: "PKG",
     half: 2,
     axis: "Direction",
     question:
@@ -283,6 +312,7 @@ export const EVAL_QUESTIONS: EvalQuestion[] = [
   },
   {
     id: "Q16",
+    category: "PKG",
     half: 2,
     axis: "Provenance",
     question:
@@ -297,6 +327,197 @@ export const EVAL_QUESTIONS: EvalQuestion[] = [
     mustNot: "Quote a transcribed document number with no provenance caveat.",
     heavy: true,
     expect: { rag: "partial", graph: "blind", copilot: "partial" },
+  },
+  // ---------------------------------------------------------------- DR corpus
+  // Grounded in solvay-spark/dr/markdown. A workshop record fails differently
+  // from a specification: it defers, it proposes without deciding, and it
+  // arrives twice under two names.
+  {
+    id: "D1",
+    category: "DR",
+    half: 2,
+    axis: "Proposal vs decision",
+    question:
+      "For returnable packaging, was the sales-order-based solution or the EWM solution chosen, and what was settled about ATP for packaging materials?",
+    scope: "4.5.1",
+    scopeLabel: "Accept and entering sales orders",
+    steps: 23,
+    tests:
+      "Nothing was chosen. L2C-WS022 demonstrated the sales-driven process and closed with five open items, every one owned by I2D and due \u201cTBC Next Session\u201d, including whether EWM can invoice unreturned packaging. On ATP the minutes confirm the opposite of a solution: no ATP runs for these materials and manual follow-up is required.",
+    watchFor:
+      "Reporting the demonstrated process as the decision. A transcript is full of someone explaining how the standard solution works; that is a demonstration, not an agreement.",
+    mustNot: "State that returnable packaging is settled on either the sales-order or the EWM solution.",
+    heavy: true,
+    expect: { rag: "partial", graph: "blind", copilot: "strong" },
+  },
+  {
+    id: "D2",
+    category: "DR",
+    half: 2,
+    axis: "Unowned actions",
+    question:
+      "What did the master data follow-up session decide about customer material info records, and who owns the outcome?",
+    scope: "4.5.1.4",
+    scopeLabel: "Create Standard Order",
+    steps: 1,
+    tests:
+      "L2C-WS048 (01.08.2025) closes with 28 action items. Almost every one carries owner TBD and due date TBD, including \u201cverify whether CMIR prioritize ship-to over sold-to\u201d. Only two carry a date at all. The honest answer names the question and says nobody owns it.",
+    watchFor:
+      "An answer that reads the action item as the answer \u2014 \u201cCMIR prioritise ship-to\u201d \u2014 when the item is the question, not its resolution.",
+    mustNot: "Attribute an owner to an action item whose owner is TBD.",
+    expect: { rag: "partial", graph: "blind", copilot: "strong" },
+  },
+  {
+    id: "D3",
+    category: "DR",
+    half: 2,
+    axis: "Which copy",
+    question:
+      "How many independent records are there of the returnable packaging workshop, and do they agree?",
+    scope: "4.5.1",
+    scopeLabel: "Accept and entering sales orders",
+    steps: 23,
+    tests:
+      "Four files carry L2C-WS022: a deck, minutes, and two transcripts that are byte-for-byte identical under different names. There are three independent records, not four. The same trap exists for L2C-WS002.",
+    watchFor:
+      "Counting files as sources. Two identical transcripts quoted as mutual corroboration is the failure the independence check exists to catch \u2014 verify it fires.",
+    mustNot: "Present the two identical transcripts as two sources that agree.",
+    heavy: true,
+    expect: { rag: "weak", graph: "partial", copilot: "strong" },
+  },
+  {
+    id: "D4",
+    category: "DR",
+    half: 1,
+    axis: "Cross-stream deferral",
+    question:
+      "Who is responsible for deciding how returnable packaging material is determined at delivery level, and how large containers are handled?",
+    scope: "4.5.1",
+    scopeLabel: "Accept and entering sales orders",
+    steps: 23,
+    tests:
+      "Both were handed out of Lead to Cash. Packaging determination was deferred to I2D as an open item; large fleets (rail cars, containers) sit with Transportation Management, where the minutes record identified gaps and ongoing discussions with SAP. Small fleets (cylinders, IBCs) stay in EWM.",
+    watchFor:
+      "Answering as though L2C owns it, because the L2C workshop is where the discussion appears. The corpus is a Lead to Cash corpus, which makes every answer look like an L2C answer.",
+    expect: { rag: "partial", graph: "weak", copilot: "partial" },
+  },
+  {
+    id: "D5",
+    category: "DR",
+    half: 2,
+    axis: "Session supersession",
+    question:
+      "What is the current state of the pricing procedure design, and which session last touched it?",
+    scope: "4.5.1.3",
+    scopeLabel: "Determine Order Type",
+    steps: 1,
+    tests:
+      "Pricing runs across L2C-WS015 (Part 1, 13.05.2025), L2C-WS016 (Part 2) and a dedicated configuration meeting on 06.11.2025 whose minutes close with 20 action items, all TBD, including whether to remove condition types and subtotals such as Net Value Two. The later session supersedes the earlier decks.",
+    watchFor:
+      "Quoting the May workshop deck as current when a November meeting reopened the procedure. Three near-identical WS015 pricing decks also invite a copy being read as a second opinion.",
+    expect: { rag: "partial", graph: "weak", copilot: "partial" },
+  },
+  {
+    id: "D6",
+    category: "DR",
+    half: 1,
+    axis: "Register is not evidence",
+    question:
+      "According to the L2C fit register, which processes are FITs, and does the register say why?",
+    scope: "4.0",
+    scopeLabel: "Lead to Cash",
+    steps: 128,
+    tests:
+      "The register lists tickets with one-line summaries and an owner \u2014 SPARK-18542 appears as \u201cO-020-020 Determine Order Type - FIT\u201d with a user story, nothing more. It records a classification; it does not evidence one. A companion file is titled FITs with missing description.",
+    watchFor:
+      "Treating a register row as a design decision with reasoning behind it. The register is the single densest file in DR and dominates retrieval, so it will surface for almost any FIT question.",
+    mustNot: "Present a register row as the rationale for a classification.",
+    expect: { rag: "weak", graph: "partial", copilot: "strong" },
+  },
+  // ------------------------------------------------------- PKG + DR, combined
+  // Each of these was checked by retrieving it three times -- unfiltered, PKG
+  // only, DR only -- and kept because neither half answers it correctly alone.
+  {
+    id: "C1",
+    category: "PKG+DR",
+    half: 2,
+    axis: "Open question later closed",
+    question:
+      "Do customer material info records prioritise ship-to over sold-to, and is that still an open question?",
+    scope: "4.5.1.4",
+    scopeLabel: "Create Standard Order",
+    steps: 1,
+    tests:
+      "DR leaves it open: L2C-WS048 on 01.08.2025 lists “verify whether CMIR prioritize ship-to over sold-to” with owner TBD. PKG answers it: the functional specification dated 2025-10-31 sets the sequence — ship-to CMIR first, then sold-to — and notes the shipping-condition half is standard configuration. The dates settle it; the specification is the later word.",
+    watchFor:
+      "DR alone reports an unresolved question. PKG alone reports a settled design and never mentions it was open. Both are wrong: the answer is that the August question was closed in October.",
+    mustNot: "Report the question as still open without the specification, or as never having been open.",
+    heavy: true,
+    expect: { rag: "partial", graph: "weak", copilot: "strong" },
+  },
+  {
+    id: "C2",
+    category: "PKG+DR",
+    half: 1,
+    axis: "Two coding schemes",
+    question: "Which process step does SPARK-18542 belong to, and is it a FIT?",
+    scope: "4.5.1.3",
+    scopeLabel: "Determine Order Type",
+    steps: 1,
+    tests:
+      "The two halves index it differently. PKG's specification titles it “4.5.1.3 Determine Order Type - FIT”; DR's register keys the same ticket to dash code “O-020-020”. Both are right and they must be reconciled. The FIT label also sits on an interface specification carrying mapping, message type, routing and reprocessing sections — worth questioning.",
+    watchFor:
+      "Reporting one code and not the other, or treating 4.5.1.3 and O-020-020 as two different steps. Also a FIT taken at face value when the document beneath it specifies an interface build.",
+    expect: { rag: "partial", graph: "partial", copilot: "strong" },
+  },
+  {
+    id: "C3",
+    category: "PKG+DR",
+    half: 1,
+    axis: "Specification and workshop",
+    question:
+      "What does SPARK-22234 require for the signed PDF invoice, and what did the outputs workshop say about EDI, IDOC and forms?",
+    scope: "4.7.1.3",
+    scopeLabel: "Create Billing Document",
+    steps: 1,
+    tests:
+      "PKG holds the SOVOS interface specification; DR holds the L2C-WS006 outputs deck with its minutes and transcript. Verified as the most balanced question in the set: five PKG chunks and five DR chunks in one unfiltered retrieval.",
+    watchFor:
+      "An answer built only from the specification, which describes the intended flow but not what the workshop raised about output determination across EDI, IDOC and forms.",
+    expect: { rag: "strong", graph: "weak", copilot: "strong" },
+  },
+  {
+    id: "C4",
+    category: "PKG+DR",
+    half: 2,
+    axis: "Design vs conclusion",
+    question:
+      "How is the invoice split handled, and what did the billing workshop conclude about it?",
+    scope: "4.7.1.3",
+    scopeLabel: "Create Billing Document",
+    steps: 1,
+    tests:
+      "PKG has the SPARK-49618 billing split enhancement and the billing-types workbook; DR has the L2C-WS018 billing deck and its two-part transcript. Verified end to end through the Evidence Agent: eleven PKG chunks and four DR chunks in one answer.",
+    watchFor:
+      "Reporting the custom BAdI split as settled without the workshop, or the workshop discussion without the enhancement that specifies the logic.",
+    expect: { rag: "strong", graph: "weak", copilot: "strong" },
+  },
+  {
+    id: "C5",
+    category: "PKG+DR",
+    half: 2,
+    axis: "Corpus asymmetry",
+    question:
+      "What is the agreed approach for agent commissions settlement in S/4, and which document specifies the commissions reporting?",
+    scope: "4.0",
+    scopeLabel: "Lead to Cash",
+    steps: 128,
+    tests:
+      "Both halves are needed and a single search does not find them: one unfiltered retrieval returns ten DR chunks and no PKG at all, because workshop vocabulary dominates. The agent recovers by reformulating toward specification language. Tests whether an engine notices it has only half the picture.",
+    watchFor:
+      "Answering entirely from WS-045, WS-046 and WS017-02 minutes and never reaching the cross-stream commissions process or the reporting-needs workbook in PKG. One query is not enough here; the failure is stopping after it.",
+    heavy: true,
+    expect: { rag: "weak", graph: "weak", copilot: "strong" },
   },
 ];
 
@@ -314,3 +535,25 @@ export const ENGINE_LABEL: Record<Engine, string> = {
 };
 
 export const AXES = Array.from(new Set(EVAL_QUESTIONS.map((q) => q.axis)));
+
+/** The pickers' option order.
+ *
+ *  MUI's Autocomplete repeats a group header whenever the options are not
+ *  already sorted by group, and the questions are authored in the order they
+ *  were written, which interleaves the two halves within DR and PKG+DR. This
+ *  is the same set, ordered so each header appears once. */
+export const EVAL_QUESTIONS_BY_GROUP: EvalQuestion[] = (() => {
+  const rank: Record<QuestionCategory, number> = { PKG: 0, DR: 1, "PKG+DR": 2 };
+  return [...EVAL_QUESTIONS].sort(
+    (a, b) =>
+      rank[a.category] - rank[b.category] ||
+      a.half - b.half ||
+      a.id.localeCompare(b.id, undefined, { numeric: true }),
+  );
+})();
+
+export const CATEGORY_LABEL: Record<QuestionCategory, string> = {
+  PKG: "PKG · specifications",
+  DR: "DR · workshops and minutes",
+  "PKG+DR": "PKG + DR · needs both",
+};

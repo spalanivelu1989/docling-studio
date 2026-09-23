@@ -82,9 +82,36 @@ def _display_size(type_: str, degree: int) -> float:
     return 9 + min(degree * 0.5, 10)  # spec
 
 
+def _declared_category(path: Path) -> str | None:
+    """The category a file declares in its own front matter, if it does.
+
+    Only the head of the file is read: front matter is a leading block, and
+    some of these documents are a megabyte of table."""
+    import rag
+
+    try:
+        with path.open(encoding="utf-8", errors="replace") as fh:
+            head = fh.read(2048)
+    except OSError:
+        return None
+    declared = rag.front_matter(head).get("category")
+    if not declared:
+        return None
+    try:
+        return rag.check_category(declared)
+    except ValueError:
+        return None
+
+
 def collect_files() -> list[tuple[Path, str, str]]:
     """(path, source path relative to the project, category) for every Markdown
-    file in the graph's scope."""
+    file in the graph's scope.
+
+    A file's own front matter outranks the folder it sits in, matching
+    rag.category_for so the graph and the corpus file a document the same way.
+    They used not to: a category chosen in the UI was written to the database
+    row and nowhere else, the graph could only see the folder, and the two
+    disagreed about the same document."""
     files: list[tuple[Path, str, str]] = []
     seen: set[str] = set()
     for folder, code in source_folders():
@@ -96,7 +123,7 @@ def collect_files() -> list[tuple[Path, str, str]]:
                 rel = str(path.relative_to(BASE_DIR))
             except ValueError:
                 rel = str(path)
-            files.append((path, rel, code))
+            files.append((path, rel, _declared_category(path) or code))
     return files
 
 # One colour per entity type, matching TYPE_CONFIG on the Knowledge Graph page.
@@ -416,16 +443,30 @@ def load_process_register() -> dict[str, Any]:
     return _register_cache
 
 
-def extract_graph(force: bool = False) -> dict[str, Any]:
+def extract_graph(
+    force: bool = False,
+    files: list[tuple[Path, str, str]] | None = None,
+    cache: bool = True,
+) -> dict[str, Any]:
     """Every entity and relation in every category's Markdown.
 
     Categories are not filtered here: the whole graph is built and cached once,
     and filter_by_categories cuts it down for a caller that wants one. A cached
     graph is only used when it was built from the same set of files, so adding
-    a category does not silently serve a graph that predates it."""
-    files_to_process = collect_files()
+    a category does not silently serve a graph that predates it.
+
+    `files` builds the graph from a specific set of Markdown files instead of
+    the corpus, which is how the Fit-Gap Copilot gets a graph of a document
+    somebody uploaded for one session. Pass `cache=False` with it: that graph
+    is nobody else's, and writing it to the shared cache file would serve one
+    session's upload to every other reader of the graph.
+
+    The streams, systems and the BPML hierarchy are built either way, so a
+    graph of one uploaded file lands in the same taxonomy as the corpus graph
+    and the two can be compared node for node."""
+    files_to_process = collect_files() if files is None else list(files)
     fingerprint = _sources_fingerprint(files_to_process)
-    if not force and CACHE_FILE.is_file():
+    if not force and cache and CACHE_FILE.is_file():
         try:
             with open(CACHE_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
@@ -700,11 +741,12 @@ def extract_graph(force: bool = False) -> dict[str, Any]:
     }
 
     # Cache to disk
-    try:
-        with open(CACHE_FILE, "w", encoding="utf-8") as f:
-            json.dump(result, f, indent=2)
-    except Exception as e:
-        logger.warning("Failed to cache graph: %s", e)
+    if cache:
+        try:
+            with open(CACHE_FILE, "w", encoding="utf-8") as f:
+                json.dump(result, f, indent=2)
+        except Exception as e:
+            logger.warning("Failed to cache graph: %s", e)
 
     return result
 

@@ -57,6 +57,7 @@ import {
   type KbFileItem,
   type RagStatus,
 } from "../api";
+import { clearAdornment, clearOnEscape } from "../components/ClearAdornment";
 
 interface StagedFile {
   id: string;
@@ -122,6 +123,9 @@ export default function AddToKnowledgeBasePage({ active }: { active: boolean }) 
 
   // Staging state
   const [stagedFiles, setStagedFiles] = useState<StagedFile[]>([]);
+  // Nothing is asked about which corpus these join: they land in
+  // knowledge_base/, which is the folder UNFILED claims, and every run reads
+  // the whole corpus.
   const [dragging, setDragging] = useState(false);
   const [filterQuery, setFilterQuery] = useState("");
   const [kbFilterQuery, setKbFilterQuery] = useState("");
@@ -141,25 +145,51 @@ export default function AddToKnowledgeBasePage({ active }: { active: boolean }) 
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [fileToDelete, setFileToDelete] = useState<KbFileItem | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  // A delete that removed nothing used to close the dialog and report success,
+  // so the only visible symptom was a count that would not move.
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [isRepoMinimized, setIsRepoMinimized] = useState(false);
 
   const abortControllerRef = useRef<AbortController | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const folderInputRef = useRef<HTMLInputElement | null>(null);
 
+  // Every number on this page comes from here, and every path that can change
+  // the corpus calls it -- including the ones that fail. A batch that errors or
+  // is stopped halfway has still inserted the documents it got through, so
+  // leaving the counts alone would report a corpus that no longer exists.
   const loadStatus = useCallback(() => {
-    api.ragStatus().then(setRagStatus).catch(() => setRagStatus(null));
+    const status = api.ragStatus()
+      .then(setRagStatus)
+      .catch(() => setRagStatus(null));
     setLoadingKbFiles(true);
-    api.kbFiles()
+    const files = api.kbFiles()
       .then(setKbFiles)
       .catch(() => setKbFiles([]))
       .finally(() => setLoadingKbFiles(false));
+    return Promise.all([status, files]);
   }, []);
 
   useEffect(() => {
     if (active) {
       loadStatus();
     }
+  }, [active, loadStatus]);
+
+  // The corpus also changes from places this page cannot see: the Convert and
+  // Batch Convert tabs, the CLI, a second browser window. Coming back to the
+  // page is the moment those numbers are about to be read, so that is when
+  // they are re-read.
+  useEffect(() => {
+    if (!active) return;
+    const onFocus = () => loadStatus();
+    const onVisible = () => { if (!document.hidden) loadStatus(); };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [active, loadStatus]);
 
   // Handle file addition
@@ -286,6 +316,8 @@ export default function AddToKnowledgeBasePage({ active }: { active: boolean }) 
         setCurrentFileIndex(null);
         setCurrentFileName("");
         abortControllerRef.current = null;
+        // Whatever got through before the failure is in the corpus now.
+        loadStatus();
       },
     };
 
@@ -308,18 +340,35 @@ export default function AddToKnowledgeBasePage({ active }: { active: boolean }) 
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
     }
+    // An aborted batch has already inserted everything it reached, so the
+    // counts have moved even though the run did not finish.
+    loadStatus();
   };
 
   // Delete confirmed KB file
   const handleConfirmDelete = async () => {
     if (!fileToDelete) return;
     setIsDeleting(true);
+    setDeleteError(null);
     try {
-      await api.deleteKbFile(fileToDelete.name);
+      // The list row knows the path this document was indexed from, and that
+      // identifies it. Sending it is what stops a document that only shares a
+      // file name going with it.
+      // full_path, not source: the server stores the resolved absolute path,
+      // and source is shown relative to the project. Without one the server
+      // refuses an ambiguous name, which is the right answer.
+      const res = await api.deleteKbFile(fileToDelete.name, fileToDelete.full_path);
       setFileToDelete(null);
       loadStatus();
+      if (!res.deleted_from_db && !res.file_removed) {
+        setErrorMessage(`'${fileToDelete.name}' was not removed — nothing matched it.`);
+      }
     } catch (err) {
-      console.error("Failed to delete KB file", err);
+      // Keep the dialog open and say why. The server refuses a delete it
+      // cannot address, and that message is the one thing that explains an
+      // unchanged count.
+      setDeleteError(err instanceof Error ? err.message : "Delete failed.");
+      loadStatus();
     } finally {
       setIsDeleting(false);
     }
@@ -341,6 +390,19 @@ export default function AddToKnowledgeBasePage({ active }: { active: boolean }) 
     });
     return Object.entries(counts).sort((a, b) => b[1] - a[1]);
   }, [kbFiles]);
+
+  // The list counts two different things: documents indexed in pgvector and
+  // Markdown files sitting in the workspace with nothing indexed behind them.
+  // Showing only the total is what made the header disagree with the database
+  // count above it, with no way to see where the difference came from.
+  const indexedCount = useMemo(() => kbFiles.filter((f) => f.is_indexed).length, [kbFiles]);
+  const unindexedCount = kbFiles.length - indexedCount;
+  // /api/rag/status and /api/kb/files count the same rows of the same table,
+  // so once both have loaded they cannot honestly differ. If they do, one
+  // response is older than the other and the page is showing a corpus that is
+  // no longer there -- worth saying out loud rather than picking one.
+  const countsDisagree =
+    !!ragStatus && !loadingKbFiles && kbFiles.length > 0 && ragStatus.documents !== indexedCount;
 
   const filteredKbFiles = useMemo(() => {
     let result = kbFiles;
@@ -425,7 +487,7 @@ export default function AddToKnowledgeBasePage({ active }: { active: boolean }) 
                 </Typography>
               </Stack>
               <Typography variant="body2" sx={{ color: "text.secondary", maxWidth: 750 }}>
-                Upload Markdown files directly into the PostgreSQL pgvector database. Each file is parsed, chunked with
+                Upload Markdown files straight into the corpus. Each file is parsed, chunked with
                 structure awareness, and embedded using <strong>Ollama BGE-M3 (1024d)</strong> for hybrid RAG search.
               </Typography>
             </Box>
@@ -443,12 +505,16 @@ export default function AddToKnowledgeBasePage({ active }: { active: boolean }) 
                 />
               </Tooltip>
 
-              <Tooltip title="Total documents & chunks currently stored in PostgreSQL pgvector">
+              <Tooltip title={countsDisagree
+                ? `${ragStatus?.documents ?? 0} documents in PostgreSQL pgvector, but the list below `
+                  + `reports ${indexedCount}. One of the two is stale -- press refresh.`
+                : "Documents and chunks currently stored in PostgreSQL pgvector"}>
                 <Chip
                   size="small"
                   icon={<Database size={14} />}
                   label={`${ragStatus?.documents ?? 0} docs · ${(ragStatus?.chunks ?? 0).toLocaleString()} chunks`}
                   variant="outlined"
+                  color={countsDisagree ? "warning" : "default"}
                   sx={{ fontWeight: 600, fontVariantNumeric: "tabular-nums" }}
                 />
               </Tooltip>
@@ -677,6 +743,7 @@ export default function AddToKnowledgeBasePage({ active }: { active: boolean }) 
                 placeholder="Filter files..."
                 value={filterQuery}
                 onChange={(e) => setFilterQuery(e.target.value)}
+                onKeyDown={clearOnEscape(() => setFilterQuery(""))}
                 slotProps={{
                   input: {
                     startAdornment: (
@@ -684,6 +751,8 @@ export default function AddToKnowledgeBasePage({ active }: { active: boolean }) 
                         <Search size={15} />
                       </InputAdornment>
                     ),
+                    endAdornment: clearAdornment(filterQuery, () => setFilterQuery(""),
+                                                 { label: "Clear filter" }),
                     sx: { fontSize: 13, height: 34, width: { xs: 150, sm: 220 } },
                   },
                 }}
@@ -833,7 +902,26 @@ export default function AddToKnowledgeBasePage({ active }: { active: boolean }) 
                 <Typography variant="h6" sx={{ fontWeight: 750, letterSpacing: "-0.01em" }}>
                   Knowledge Base Repository Documents
                 </Typography>
-                <Chip size="small" label={`${kbFiles.length}`} sx={{ fontWeight: 700 }} />
+                {/* The database count first, so this chip and the one in the
+                    header are the same number. The table can hold more rows
+                    than the corpus holds documents -- a Markdown file in the
+                    workspace that nothing has indexed is a row with no
+                    document behind it -- and when it does, the chip says so
+                    rather than quietly disagreeing with the header. */}
+                <Tooltip title={unindexedCount
+                  ? `${indexedCount} indexed in pgvector, ${kbFiles.length} rows below: `
+                    + `${unindexedCount} file(s) are in the workspace with nothing indexed behind them`
+                  : `${indexedCount} indexed in pgvector, and every row below is one of them`}>
+                  <Chip size="small" sx={{ fontWeight: 700 }}
+                        label={unindexedCount ? `${indexedCount} of ${kbFiles.length}` : `${indexedCount}`} />
+                </Tooltip>
+                {unindexedCount > 0 && (
+                  <Tooltip title="Markdown files in the workspace with no document indexed behind them. They are searchable only once indexed.">
+                    <Chip size="small" variant="outlined" color="warning"
+                          label={`${unindexedCount} not indexed`}
+                          sx={{ fontWeight: 600, fontSize: 11 }} />
+                  </Tooltip>
+                )}
                 <AnimatePresence>
                   {isRepoMinimized && (
                     <motion.div
@@ -877,6 +965,7 @@ export default function AddToKnowledgeBasePage({ active }: { active: boolean }) 
                       placeholder="Search repository..."
                       value={kbFilterQuery}
                       onChange={(e) => setKbFilterQuery(e.target.value)}
+                      onKeyDown={clearOnEscape(() => setKbFilterQuery(""))}
                       slotProps={{
                         input: {
                           startAdornment: (
@@ -884,6 +973,7 @@ export default function AddToKnowledgeBasePage({ active }: { active: boolean }) 
                               <Search size={15} />
                             </InputAdornment>
                           ),
+                          endAdornment: clearAdornment(kbFilterQuery, () => setKbFilterQuery("")),
                           sx: { fontSize: 13, height: 34, width: { xs: 140, sm: 190 } },
                         },
                       }}
@@ -1067,7 +1157,7 @@ export default function AddToKnowledgeBasePage({ active }: { active: boolean }) 
                                     <IconButton
                                       size="small"
                                       color="error"
-                                      onClick={() => setFileToDelete(file)}
+                                      onClick={() => { setDeleteError(null); setFileToDelete(file); }}
                                     >
                                       <Trash2 size={14} />
                                     </IconButton>
@@ -1090,7 +1180,7 @@ export default function AddToKnowledgeBasePage({ active }: { active: boolean }) 
       {/* Delete Confirmation Modal */}
       <Dialog
         open={Boolean(fileToDelete)}
-        onClose={() => !isDeleting && setFileToDelete(null)}
+        onClose={() => !isDeleting && (setDeleteError(null), setFileToDelete(null))}
         maxWidth="xs"
         fullWidth
         slotProps={{
@@ -1164,6 +1254,11 @@ export default function AddToKnowledgeBasePage({ active }: { active: boolean }) 
               )}
             </Box>
           )}
+          {deleteError && (
+            <Alert severity="error" sx={{ mt: 2, fontSize: 12.5 }}>
+              {deleteError}
+            </Alert>
+          )}
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>
           <Button
@@ -1171,7 +1266,7 @@ export default function AddToKnowledgeBasePage({ active }: { active: boolean }) 
             color="inherit"
             size="small"
             disabled={isDeleting}
-            onClick={() => setFileToDelete(null)}
+            onClick={() => { setDeleteError(null); setFileToDelete(null); }}
             sx={{ textTransform: "none", fontWeight: 600 }}
           >
             Cancel

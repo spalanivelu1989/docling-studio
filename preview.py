@@ -119,6 +119,43 @@ def image_to_png(src: Path, dest: Path) -> None:
         im.convert("RGB").save(dest, "PNG")
 
 
+def _readable(src: Path, work: Path) -> Path:
+    """A stand-in LibreOffice can lay out sensibly, or `src` unchanged.
+
+    Three formats reach it as something technically openable and useless to
+    look at. A .json is usually minified, so Writer renders one line off the
+    edge of the page; it is re-indented first. A .msg does open -- Writer will
+    take the OLE2 container and lay out its raw bytes, which for a four-line
+    email came to fourteen pages of binary -- so the message is turned into a
+    small HTML page instead, header table then body, and that is what gets
+    rendered: one page. A .eml goes the same way, or Writer shows the raw MIME,
+    boundaries and all.
+    """
+    suffix = src.suffix.lower()
+    if suffix == ".json":
+        import json
+
+        try:
+            text = json.dumps(json.loads(src.read_text(encoding="utf-8", errors="replace")),
+                              indent=2, ensure_ascii=False)
+        except Exception:
+            return src  # malformed: show it as it actually is
+        stand_in = work / f"{src.stem}.txt"
+        stand_in.write_text(text, encoding="utf-8")
+        return stand_in
+    if suffix in (".msg", ".eml"):
+        import mail_reader
+
+        try:
+            html = mail_reader.to_html(src)
+        except Exception:
+            return src
+        stand_in = work / f"{src.stem}.html"
+        stand_in.write_text(html, encoding="utf-8")
+        return stand_in
+    return src
+
+
 def render(src: Path, out_dir: Path, dpi: int = PREVIEW_DPI) -> int:
     """Render every page of `src` into out_dir as page-0001.png ... Returns count."""
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -128,6 +165,7 @@ def render(src: Path, out_dir: Path, dpi: int = PREVIEW_DPI) -> int:
     work = out_dir / ".work"
     work.mkdir(exist_ok=True)
     try:
+        src = _readable(src, work)
         pdf = src if src.suffix.lower() == ".pdf" else _to_pdf(src, work)
         pages = _to_pngs(pdf, work, dpi)
         # Renumber to a fixed width so the API can address pages by index.

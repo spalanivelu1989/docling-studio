@@ -1,6 +1,6 @@
 import {
-  Alert, Autocomplete, Box, Button, Checkbox, Chip, CircularProgress, Collapse, Divider, Drawer,
-  IconButton, LinearProgress, ListItemText, ListSubheader, Menu, MenuItem, Paper, Select, Slider,
+  Alert, Autocomplete, Box, Button, Chip, CircularProgress, Collapse, Divider, Drawer,
+  IconButton, LinearProgress, ListSubheader, Menu, MenuItem, Paper, Select, Slider,
   Stack, Switch, Tab, Tabs, TextField, ToggleButton, ToggleButtonGroup, Tooltip, Typography,
 } from "@mui/material";
 import { alpha, useTheme } from "@mui/material/styles";
@@ -9,18 +9,229 @@ import {
   Ban, Blocks, BookOpenCheck, Braces, CalendarClock, Check, ChevronDown, ChevronRight, CircleAlert,
   CircleCheck, CircleHelp, Cog, Compass, Dices, Download, Eye, FileSpreadsheet, FileText, FlaskConical,
   GitBranch, Hammer, History, Layers, Network, Quote, Scale, Search, SendHorizontal, ShieldCheck,
-  Sparkles, Square, Target, TriangleAlert, Wrench, X,
+  Paperclip, Sparkles, Square, Target, TriangleAlert, Trash2, Upload, Wrench, X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
-  EVAL_QUESTIONS, EXPECTATION_LABEL, ENGINE_LABEL, HALVES,
+  CATEGORY_LABEL, EVAL_QUESTIONS, EVAL_QUESTIONS_BY_GROUP, EXPECTATION_LABEL, ENGINE_LABEL, HALVES,
   type EvalQuestion, type Engine, type Expectation,
 } from "../data/evalQuestions";
 import {
-  fitgap, runFitGap,
+  fitgap, runFitGap, uploadSessionDocuments,
   type BpmlProcess, type FitGapClass, type FitGapEntry, type FitGapEvidence, type FitGapIssue,
   type FitGapPreview, type FitGapRunSummary, type FitGapStatus, type FitGapSynthesis,
+  type UploadComparison, type UploadSession,
 } from "../api";
+import { clearAdornment, clearOnEscape } from "../components/ClearAdornment";
+
+/* -------------------------------------------------------------- attachments */
+
+/** Documents the analyst attached to this Copilot session.
+ *
+ *  They are converted by Docling, embedded into a Postgres schema of their
+ *  own and given a knowledge graph of their own -- in a different database from
+ *  the corpus, so they are NOT added to it. The panel says so, because an
+ *  analyst dropping a draft specification into a chat box has every reason to
+ *  assume the opposite.
+ */
+function Attachments({
+  session, data, comparison, busy, error, disabled, accepted, ttlHours, maxFiles,
+  onAdd, onRemove, onClear,
+}: {
+  session: string;
+  data: UploadSession | null;
+  comparison: UploadComparison | null;
+  busy: { filename: string; index: number; total: number; stage: string } | null;
+  error: string | null;
+  disabled: boolean;
+  accepted: string[];
+  ttlHours: number;
+  maxFiles: number;
+  onAdd: (files: File[]) => void;
+  onRemove: (name: string) => void;
+  onClear: () => void;
+}) {
+  const theme = useTheme();
+  const input = useRef<HTMLInputElement | null>(null);
+  const [over, setOver] = useState(false);
+  const [showEntities, setShowEntities] = useState(false);
+  const files = data?.files ?? [];
+  const full = files.length >= maxFiles;
+
+  const expiry = (() => {
+    if (!data?.expires_at) return "";
+    const mins = Math.round((new Date(data.expires_at).getTime() - Date.now()) / 60000);
+    if (mins <= 0) return "expired";
+    return mins < 90 ? `${mins} min` : `${Math.round(mins / 60)} h`;
+  })();
+
+  const STAGES: Record<string, string> = {
+    converting: "converting with Docling",
+    embedding: "chunking and embedding",
+    graph: "extracting entities",
+  };
+
+  return (
+    <Box
+      onDragOver={(e) => { e.preventDefault(); if (!disabled && !full) setOver(true); }}
+      onDragLeave={() => setOver(false)}
+      onDrop={(e) => {
+        e.preventDefault();
+        setOver(false);
+        if (disabled || full) return;
+        const dropped = Array.from(e.dataTransfer.files);
+        if (dropped.length) onAdd(dropped);
+      }}
+      sx={{
+        mt: 1.75, px: 1.5, py: 1.25, borderRadius: 2,
+        border: "1px dashed",
+        borderColor: over ? "primary.main" : "divider",
+        bgcolor: over ? alpha(theme.palette.primary.main, 0.06) : "transparent",
+        transition: "background-color .15s, border-color .15s",
+      }}
+    >
+      <input
+        ref={input}
+        type="file"
+        multiple
+        hidden
+        accept={accepted.join(",")}
+        onChange={(e) => {
+          const chosen = Array.from(e.target.files ?? []);
+          if (chosen.length) onAdd(chosen);
+          e.target.value = "";
+        }}
+      />
+
+      <Stack direction="row" spacing={1} sx={{ alignItems: "center", flexWrap: "wrap", gap: 0.75 }}>
+        <Paperclip size={14} color={theme.palette.text.secondary} />
+        <Typography sx={{ fontSize: 12.5, fontWeight: 700 }}>
+          Your documents
+        </Typography>
+        {files.length > 0 && (
+          <Chip
+            size="small"
+            label={`${files.length} · ${(data?.chunks ?? 0).toLocaleString()} chunks`}
+            sx={{ height: 19, fontSize: 10.5 }}
+          />
+        )}
+        <Box sx={{ flex: 1 }} />
+        {files.length > 0 && (
+          <Button size="small" variant="text" color="inherit" disabled={disabled}
+                  startIcon={<Trash2 size={13} />} onClick={onClear}
+                  sx={{ fontSize: 11.5, color: "text.secondary" }}>
+            Discard all
+          </Button>
+        )}
+        <Button
+          size="small"
+          variant="outlined"
+          startIcon={<Upload size={14} />}
+          disabled={disabled || full || !!busy}
+          onClick={() => input.current?.click()}
+          sx={{ fontSize: 12 }}
+        >
+          {files.length ? "Add more" : "Attach"}
+        </Button>
+      </Stack>
+
+      {files.length === 0 && !busy && (
+        <Typography sx={{ fontSize: 11.5, color: "text.secondary", mt: 0.6 }}>
+          Drop a PDF, Word, Excel or PowerPoint file here to compare it against the corpus.
+          It is converted, embedded and graphed in a store of its own — never added to the
+          permanent knowledge bases.
+        </Typography>
+      )}
+
+      <AnimatePresence initial={false}>
+        {busy && (
+          <Box component={motion.div} key="busy"
+               initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }}
+               exit={{ opacity: 0, height: 0 }} sx={{ mt: 1 }}>
+            <Stack direction="row" spacing={1} sx={{ alignItems: "center", mb: 0.5 }}>
+              <CircularProgress size={12} />
+              <Typography sx={{ fontSize: 11.5, color: "text.secondary" }}>
+                {busy.total > 1 ? `${busy.index}/${busy.total} · ` : ""}
+                {busy.filename} — {STAGES[busy.stage] ?? busy.stage}
+              </Typography>
+            </Stack>
+            <LinearProgress sx={{ height: 3, borderRadius: 2 }} />
+          </Box>
+        )}
+      </AnimatePresence>
+
+      {files.length > 0 && (
+        <Stack direction="row" useFlexGap sx={{ flexWrap: "wrap", gap: 0.6, mt: 1 }}>
+          {files.map((f) => (
+            <Chip
+              key={f.name}
+              size="small"
+              icon={<FileText size={12} />}
+              label={`${f.name} · ${f.chunks} chunk${f.chunks === 1 ? "" : "s"}`}
+              onDelete={disabled || busy ? undefined : () => onRemove(f.name)}
+              deleteIcon={<X size={12} />}
+              sx={{ height: 23, fontSize: 11, maxWidth: 380 }}
+            />
+          ))}
+        </Stack>
+      )}
+
+      {error && (
+        <Typography sx={{ fontSize: 11.5, color: "error.main", mt: 0.75 }}>{error}</Typography>
+      )}
+
+      {files.length > 0 && (
+        <>
+          <Stack direction="row" spacing={1.25} sx={{ alignItems: "center", mt: 1, flexWrap: "wrap", gap: 0.5 }}>
+            <Typography sx={{ fontSize: 11, color: "text.secondary" }}>
+              Held in <code>{data?.database}.{data?.schema}</code> · deleted in {expiry}
+              {ttlHours ? ` of no use` : ""} · not searchable from the Ask page or any other run
+            </Typography>
+            <Box sx={{ flex: 1 }} />
+            {comparison && (comparison.shared + comparison.new) > 0 && (
+              <Button size="small" variant="text" onClick={() => setShowEntities((v) => !v)}
+                      endIcon={<ChevronDown size={13} style={{ transform: showEntities ? "rotate(180deg)" : undefined, transition: "transform .2s" }} />}
+                      sx={{ fontSize: 11.5 }}>
+                {comparison.shared} known to the corpus · {comparison.new} new
+              </Button>
+            )}
+          </Stack>
+          <Collapse in={showEntities}>
+            <Stack direction="row" useFlexGap sx={{ flexWrap: "wrap", gap: 0.5, mt: 1 }}>
+              {(comparison?.entities ?? []).slice(0, 40).map((e) => (
+                <Tooltip
+                  key={e.node_id}
+                  title={
+                    e.in_corpus
+                      ? `${e.type} · mentioned by ${e.corpus_mentions} corpus document${e.corpus_mentions === 1 ? "" : "s"}${e.corpus_documents.length ? `: ${e.corpus_documents.join(", ")}` : ""}`
+                      : `${e.type} · nothing in the corpus mentions this`
+                  }
+                >
+                  <Chip
+                    size="small"
+                    label={e.label}
+                    variant={e.in_corpus ? "filled" : "outlined"}
+                    color={e.in_corpus ? "default" : "warning"}
+                    sx={{ height: 21, fontSize: 10.5, maxWidth: 260 }}
+                  />
+                </Tooltip>
+              ))}
+            </Stack>
+            <Typography sx={{ fontSize: 11, color: "text.secondary", mt: 0.75 }}>
+              Outlined chips are entities only the attachment mentions. The Copilot is told to
+              report a disagreement between an attachment and the corpus rather than pick a winner.
+            </Typography>
+          </Collapse>
+        </>
+      )}
+      {session && files.length === 0 && !busy && (
+        <Typography sx={{ fontSize: 10.5, color: "text.disabled", mt: 0.5 }}>
+          Session {session} is empty.
+        </Typography>
+      )}
+    </Box>
+  );
+}
 
 /* ------------------------------------------------------------------ classes */
 
@@ -795,7 +1006,7 @@ function ExpectationDot({ value }: { value: Expectation }) {
   );
 }
 
-/** The sixteen corpus-grounded evaluation questions, as a searchable list.
+/** The corpus-grounded evaluation questions, as a searchable list.
  *  Picking one sets both the question and the BPML scope it belongs to, so a
  *  register can be run over exactly the process step the question is about. */
 function QuestionPicker({
@@ -811,7 +1022,7 @@ function QuestionPicker({
   const [open, setOpen] = useState(false);
 
   const options = useMemo<EvalQuestion[]>(
-    () => EVAL_QUESTIONS.filter((q) => !axis || q.axis === axis),
+    () => EVAL_QUESTIONS_BY_GROUP.filter((q) => !axis || q.axis === axis),
     [axis],
   );
   const heavyCount = options.filter((q) => q.heavy).length;
@@ -834,7 +1045,7 @@ function QuestionPicker({
         </Tooltip>
       </Stack>
 
-      {/* Filtering 16 questions by the dimension they isolate is faster than
+      {/* Filtering the set by the dimension each question isolates is faster than
           reading them all, and it makes the shape of the set visible. */}
       <Stack direction="row" useFlexGap sx={{ flexWrap: "wrap", gap: 0.6, mb: 1.25 }}>
         <Chip
@@ -861,7 +1072,10 @@ function QuestionPicker({
         onClose={() => setOpen(false)}
         value={value}
         options={options}
-        groupBy={(q) => HALVES[q.half].title}
+        // Grouped by corpus first: which half of the corpus a question needs
+        // is the coarser distinction, and the ones that need both are the
+        // point of keeping the categories apart.
+        groupBy={(q) => `${CATEGORY_LABEL[q.category]}  ·  ${HALVES[q.half].title}`}
         isOptionEqualToValue={(a, b) => a.id === b.id}
         getOptionLabel={(q) => q.question}
         onChange={(_, q) => (q ? onPick(q) : onClear())}
@@ -961,7 +1175,7 @@ function QuestionBriefing({
   q, onRun, running, maxSteps,
 }: { q: EvalQuestion; onRun: () => void; running: boolean; maxSteps: number }) {
   const theme = useTheme();
-  // Some of the sixteen sit on a single level-4 step and map cleanly onto a
+  // Some questions sit on a single level-4 step and map cleanly onto a
   // register run. Others are corpus-wide and their scope is a whole subtree,
   // so a default run classifies a fraction of it. Say so rather than letting
   // the step counter imply the question was answered.
@@ -1096,9 +1310,9 @@ export default function FitGapPage({ active, onShowInGraph }: Props) {
 
   const [mode, setMode] = useState<"A" | "B">("A");
   const [holdout, setHoldout] = useState(false);
-  // Document categories a run may read. Empty is all of them, matching the
-  // server. Enforced on every worker session, not passed per tool call.
-  const [categories, setCategories] = useState<string[]>([]);
+  // Every run reads the whole corpus. Runs made while the scope could be
+  // narrowed still record what they were pointed at, and the history below
+  // still shows it, but a new run is not given the choice.
   const [country, setCountry] = useState("");
   const countryError = (() => {
     if (!country.trim()) return null;
@@ -1119,6 +1333,18 @@ export default function FitGapPage({ active, onShowInGraph }: Props) {
   const [reviewer, setReviewer] = useState(() => {
     try { return localStorage.getItem("fitgap.reviewer") ?? ""; } catch { return ""; }
   });
+  // Documents attached to this session. The id is kept in localStorage so a
+  // reload does not orphan a store the analyst is still working with; the
+  // server sweeps it either way once it expires.
+  const [uploadSession, setUploadSession] = useState(() => {
+    try { return localStorage.getItem("fitgap.uploads") ?? ""; } catch { return ""; }
+  });
+  const [uploads, setUploads] = useState<UploadSession | null>(null);
+  const [comparison, setComparison] = useState<UploadComparison | null>(null);
+  const [uploading, setUploading] =
+    useState<{ filename: string; index: number; total: number; stage: string } | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+
   const [history, setHistory] = useState<FitGapRunSummary[]>([]);
   const [historyAnchor, setHistoryAnchor] = useState<null | HTMLElement>(null);
   const controller = useRef<AbortController | null>(null);
@@ -1132,6 +1358,37 @@ export default function FitGapPage({ active, onShowInGraph }: Props) {
     fitgap.status().then(setStatus).catch(() => setStatus(null));
     fitgap.runs().then(setHistory).catch(() => setHistory([]));
   }, [active]);
+
+  const refreshUploads = useCallback(async (id: string) => {
+    if (!id) { setUploads(null); setComparison(null); return; }
+    try {
+      const info = await fitgap.uploads.status(id);
+      if (!info.exists) {
+        // Swept while the tab was open. Forget it rather than show a store
+        // that is no longer there.
+        setUploadSession("");
+        setUploads(null);
+        setComparison(null);
+        return;
+      }
+      setUploads(info);
+      setComparison(info.documents > 0 ? await fitgap.uploads.entities(id) : null);
+    } catch {
+      setUploads(null);
+      setComparison(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      if (uploadSession) localStorage.setItem("fitgap.uploads", uploadSession);
+      else localStorage.removeItem("fitgap.uploads");
+    } catch { /* private mode */ }
+  }, [uploadSession]);
+
+  useEffect(() => {
+    if (active) void refreshUploads(uploadSession);
+  }, [active, uploadSession, refreshUploads]);
 
   // Resolve what the user typed into a real place in the BPML tree while they
   // type, so the scope is never a surprise once the run starts.
@@ -1148,10 +1405,10 @@ export default function FitGapPage({ active, onShowInGraph }: Props) {
 
   useEffect(() => {
     if (!scope) { setPlan(null); return; }
-    fitgap.preview({ scope_bpml: scope.code, max_steps: maxSteps, concurrency, mode, holdout, categories })
+    fitgap.preview({ scope_bpml: scope.code, max_steps: maxSteps, concurrency, mode, holdout, categories: [] })
       .then(setPlan)
       .catch(() => setPlan(null));
-  }, [scope, maxSteps, concurrency, mode, holdout, categories]);
+  }, [scope, maxSteps, concurrency, mode, holdout]);
 
   const doneCount = steps.filter((s) => s.state === "done" || s.state === "failed").length;
   const current = steps.find((s) => s.code === openEntry);
@@ -1186,7 +1443,8 @@ export default function FitGapPage({ active, onShowInGraph }: Props) {
     try {
       await runFitGap(
         {
-          mode, scope_bpml: scope.code, holdout, max_steps: maxSteps, concurrency, categories,
+          mode, scope_bpml: scope.code, holdout, max_steps: maxSteps, concurrency, categories: [],
+          upload_session: (uploads?.documents ?? 0) > 0 ? uploadSession : null,
           // Tag the run with the eval id so a stored register can be traced
           // back to the question that produced it.
           question: picked ? `[${picked.id} · ${picked.axis}] ${question.trim()}` : question.trim() || null,
@@ -1226,6 +1484,45 @@ export default function FitGapPage({ active, onShowInGraph }: Props) {
     setRunning(false);
   }
 
+  async function addUploads(files: File[]) {
+    setUploadError(null);
+    let id = uploadSession;
+    try {
+      await uploadSessionDocuments(files, id, "other", {
+        session: (d) => { id = d.session; setUploadSession(d.session); },
+        start: (d) => setUploading({ ...d, stage: "converting" }),
+        stage: (d) => setUploading({ index: d.index, total: d.total, filename: d.filename, stage: d.stage }),
+        doneFile: () => undefined,
+        fileError: (d) => setUploadError(`${d.filename}: ${d.message}`),
+        done: (d) => { setUploads(d); setUploading(null); },
+        error: (m) => setUploadError(m),
+      });
+    } catch (e) {
+      setUploadError((e as Error).message);
+    } finally {
+      setUploading(null);
+      await refreshUploads(id);
+    }
+  }
+
+  async function removeUpload(name: string) {
+    try {
+      await fitgap.uploads.remove(uploadSession, name);
+    } catch (e) {
+      setUploadError((e as Error).message);
+    }
+    await refreshUploads(uploadSession);
+  }
+
+  async function clearUploads() {
+    const id = uploadSession;
+    setUploadSession("");
+    setUploads(null);
+    setComparison(null);
+    setUploadError(null);
+    try { if (id) await fitgap.uploads.drop(id); } catch { /* already swept */ }
+  }
+
   async function loadRun(id: string) {
     try {
       const run = await fitgap.run(id);
@@ -1235,7 +1532,6 @@ export default function FitGapPage({ active, onShowInGraph }: Props) {
       setPicked(EVAL_QUESTIONS.find((q) => (run.question || "").startsWith(`[${q.id} `)) ?? null);
       setMode(run.mode);
       setHoldout(run.holdout);
-      setCategories(run.categories ?? []);
       setCountry(run.country ? JSON.stringify(run.country, null, 2) : "");
       setSteps(run.entries.map((e) => ({ code: e.bpml_code, name: e.step_name, state: "done", tools: [], entry: e })));
       setSynth((run.synthesis && "reuse" in run.synthesis ? run.synthesis : null) as FitGapSynthesis | null);
@@ -1314,6 +1610,11 @@ export default function FitGapPage({ active, onShowInGraph }: Props) {
                         {r.reuse_pct !== null ? ` · ${r.reuse_pct}% reuse` : ""}
                         {r.holdout ? " · holdout" : ""}
                         {r.categories?.length ? ` · ${r.categories.join(", ")}` : ""}
+                        {/* The attachment itself is swept within hours, so the
+                            names are all a reopened register can show. */}
+                        {r.uploads?.documents?.length
+                          ? ` · +${plural(r.uploads.documents.length, "attachment")}`
+                          : ""}
                         {r.status === "abandoned" ? " · abandoned" : ""}
                       </Typography>
                     </Box>
@@ -1344,11 +1645,13 @@ export default function FitGapPage({ active, onShowInGraph }: Props) {
             value={question}
             onChange={(e) => { setQuestion(e.target.value); if (picked) setPicked(null); }}
             onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); start(); } }}
-            placeholder="Ask the Copilot about a slice of the process, or pick one of the 16 evaluation questions below"
+            placeholder={`Ask the Copilot about a slice of the process, or pick one of the ${EVAL_QUESTIONS.length} evaluation questions below`}
             slotProps={{
               input: {
                 sx: { fontSize: 15, alignItems: "flex-start" },
                 startAdornment: <Box sx={{ pt: 0.35, pr: 1.25, color: "primary.main" }}><Sparkles size={18} /></Box>,
+                endAdornment: clearAdornment(question, () => { setQuestion(""); setPicked(null); },
+                                             { size: 16, label: "Clear question", top: true }),
               },
             }}
           />
@@ -1366,6 +1669,21 @@ export default function FitGapPage({ active, onShowInGraph }: Props) {
                                   maxSteps={maxSteps} />
               )}
             </AnimatePresence>
+
+            <Attachments
+              session={uploadSession}
+              data={uploads}
+              comparison={comparison}
+              busy={uploading}
+              error={uploadError}
+              disabled={running}
+              accepted={status?.uploads?.accepted ?? [".pdf", ".docx", ".xlsx", ".pptx"]}
+              ttlHours={status?.uploads?.ttl_hours ?? 12}
+              maxFiles={status?.uploads?.max_files ?? 12}
+              onAdd={addUploads}
+              onRemove={removeUpload}
+              onClear={clearUploads}
+            />
           </Box>
 
           <Divider sx={{ my: 1.75 }} />
@@ -1378,8 +1696,12 @@ export default function FitGapPage({ active, onShowInGraph }: Props) {
               value={scopeText}
               onChange={(e) => setScopeText(e.target.value)}
               onFocus={() => setShowPicker(true)}
+              onKeyDown={clearOnEscape(() => setScopeText(""))}
               sx={{ flex: "1 1 320px" }}
-              slotProps={{ input: { startAdornment: <Box sx={{ pr: 1, color: "text.secondary" }}><Search size={15} /></Box> } }}
+              slotProps={{ input: {
+                startAdornment: <Box sx={{ pr: 1, color: "text.secondary" }}><Search size={15} /></Box>,
+                endAdornment: clearAdornment(scopeText, () => setScopeText(""), { label: "Clear scope" }),
+              } }}
             />
             <AnimatePresence mode="wait">
               {scope && (
@@ -1462,51 +1784,6 @@ export default function FitGapPage({ active, onShowInGraph }: Props) {
                 <Slider size="small" min={1} max={6} value={concurrency} onChange={(_, v) => setConcurrency(v as number)} valueLabelDisplay="auto" />
               </Box>
               <Box sx={{ maxWidth: 320 }}>
-                {(status?.categories?.length ?? 0) > 0 && (
-                  <Box sx={{ mb: 1.5 }}>
-                    <Typography variant="overline" color="text.secondary">Corpus</Typography>
-                    {/* A native title, not a MUI Tooltip: a Tooltip renders
-                        above the open menu and would cover the options. */}
-                    <Select
-                      multiple
-                      size="small"
-                      fullWidth
-                      displayEmpty
-                      value={categories}
-                      onChange={(e) =>
-                        setCategories(typeof e.target.value === "string" ? e.target.value.split(",") : e.target.value)
-                      }
-                      disabled={running}
-                      title="Which document categories the run may read. None selected reads all of them."
-                      renderValue={(picked) => (
-                        <Stack direction="row" spacing={0.6} sx={{ alignItems: "center" }}>
-                          <Layers size={14} />
-                          <span>{picked.length === 0 ? "All categories" : picked.join(", ")}</span>
-                        </Stack>
-                      )}
-                      sx={{ fontSize: 13 }}
-                    >
-                      {(status?.categories ?? []).map((c) => (
-                        <MenuItem key={c.code} value={c.code} disabled={c.chunks === 0} sx={{ py: 0.5 }}>
-                          <Checkbox size="small" checked={categories.includes(c.code)} sx={{ mr: 0.5 }} />
-                          <ListItemText
-                            primary={c.code}
-                            secondary={
-                              c.chunks === 0
-                                ? "empty"
-                                : `${c.documents} document${c.documents === 1 ? "" : "s"} · ${c.chunks.toLocaleString()} chunks`
-                            }
-                            slotProps={{ primary: { sx: { fontSize: 13 } }, secondary: { sx: { fontSize: 11 } } }}
-                          />
-                        </MenuItem>
-                      ))}
-                    </Select>
-                    <Typography sx={{ fontSize: 11, color: "text.secondary", mt: 0.5 }}>
-                      A narrowed run records its scope, and the classifier is told what it cannot
-                      reach so a missing specification is reported as UNKNOWN rather than a GAP.
-                    </Typography>
-                  </Box>
-                )}
                 <Stack direction="row"  spacing={1} sx={{ alignItems: "center" }}>
                   <Switch size="small" checked={holdout} onChange={(e) => setHoldout(e.target.checked)} />
                   <Typography sx={{ fontSize: 13, fontWeight: 600 }}>Evaluation holdout</Typography>

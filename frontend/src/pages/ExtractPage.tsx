@@ -13,7 +13,7 @@ import { Group, Panel, Separator } from "react-resizable-panels";
 import { api, type Conversion, type EmbedResult, type Upload } from "../api";
 import Markdown from "../components/Markdown";
 
-const ACCEPT = ".pptx,.ppt,.docx,.doc,.xlsx,.xls,.pdf,.html,.htm,.xml,.png,.jpg,.jpeg";
+const ACCEPT = ".pptx,.ppt,.docx,.doc,.xlsx,.xlsm,.xls,.pdf,.html,.htm,.xml,.csv,.txt,.json,.msg,.eml,.png,.jpg,.jpeg,.webp,.bmp,.tiff,.tif";
 const PROVIDERS = [
   { value: "claude", label: "Claude (Anthropic API)" },
   { value: "openai", label: "GPT (OpenAI API)" },
@@ -40,6 +40,10 @@ export default function ExtractPage({ onAsk }: { onAsk: () => void }) {
   const [copied, setCopied] = useState(false);
   const [previewMissing, setPreviewMissing] = useState(false);
   const [embedded, setEmbedded] = useState<EmbedResult | null>(null);
+  // Nothing is asked about where the document is filed. It lands in
+  // knowledge_base/, which is the folder UNFILED claims, so that is what it is
+  // filed as unless its own front matter says otherwise -- and since no run is
+  // scoped to a category any more, every run reads it either way.
   const fileInput = useRef<HTMLInputElement>(null);
   const dragDepth = useRef(0);
 
@@ -298,7 +302,7 @@ export default function ExtractPage({ onAsk }: { onAsk: () => void }) {
                       </IconButton>
                     </span>
                   </Tooltip>
-                  <Tooltip title="Chunk this Markdown, embed it with Ollama bge-m3 (1024d) and store it in PostgreSQL pgvector, so the Ask page can answer from it">
+                  <Tooltip title="Chunk this Markdown, embed it with Ollama bge-m3 (1024d) and store it, so the Ask page can answer from it">
                     <span>
                       <Button
                         size="small"

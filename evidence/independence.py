@@ -122,24 +122,31 @@ def load(conn=None, force: bool = False) -> Duplicates:
     with _lock:
         if _cached is not None and not force:
             return _cached
-    # One pass per category database. Document ids restart in each one, so the
-    # pairs are resolved to titles inside the loop and only then merged. Two
-    # copies of the same document filed under different categories therefore
-    # go unnoticed, which is the price of giving a category its own database;
-    # duplicates within a category, which is what this guards against, are
-    # still found.
+    # One pass over the whole corpus. This used to be one pass per category
+    # database, with the pairs resolved to titles inside the loop and only then
+    # merged, and it could not see the same document filed under two
+    # categories -- the comparison never crossed a database. It does now.
+    #
+    # Without a corpus there is nothing to compare, which is not an error: the
+    # scorer asks for this on every run, and an installation with no index yet
+    # should score its evidence as independent rather than fail.
     pairs_by_title: list[tuple[str, str, float]] = []
-    if conn is not None:
-        passes = [conn]
-    else:
-        passes = [rag.shard_connection(url) for url, _ in rag.shards()]
-    for c in passes:
+    reachable = True
+    try:
+        c = conn if conn is not None else rag.connection()
         rows = c.execute(_centroids_sql(), {"threshold": DUPLICATE_AT}).fetchall()
         titles = dict(c.execute("SELECT id, title FROM rag_documents").fetchall())
-        for a_id, b_id, sim in rows:
-            a, b = titles.get(a_id), titles.get(b_id)
-            if a and b:
-                pairs_by_title.append((a, b, float(sim)))
+        pairs_by_title = [
+            (titles[a_id], titles[b_id], float(sim))
+            for a_id, b_id, sim in rows
+            if titles.get(a_id) and titles.get(b_id)
+        ]
+    except Exception as exc:
+        # Not cached below, so a corpus that is briefly unreachable disables
+        # this for one call rather than for the life of the process.
+        reachable = False
+        print(f"  ! near-duplicate check skipped: {exc.__class__.__name__}: "
+              f"{str(exc).splitlines()[0]}", file=sys.stderr)
 
     pairs: dict[tuple[str, str], float] = {}
     # Union-find over the near-duplicate pairs, so a chain of three versions
@@ -169,6 +176,7 @@ def load(conn=None, force: bool = False) -> Duplicates:
         grouped.setdefault(find(t), set()).add(t)
 
     dupes = Duplicates(groups=[g for g in grouped.values() if len(g) > 1], pairs=pairs)
-    with _lock:
-        _cached = dupes
+    if reachable:
+        with _lock:
+            _cached = dupes
     return dupes

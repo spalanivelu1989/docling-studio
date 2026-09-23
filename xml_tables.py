@@ -98,12 +98,22 @@ def _render_element(elem: ET.Element, level: int = 2) -> list[str]:
                 if stag not in cols and _is_leaf(sub):
                     cols.append(stag)
 
+        # An element's own text is content, and it was being dropped: the
+        # columns were built from attributes and leaf sub-children only, so
+        # <Step seq="1">Create the order</Step> produced a @seq column and
+        # lost the sentence. It survived only in the raw XML at the bottom,
+        # which is why a reader saw headings with nothing under them.
+        if any((item.text or "").strip() for item in items):
+            cols.append("Text")
+
         if cols:
             table_rows = []
             for item in items:
                 row = []
                 for col in cols:
-                    if col.startswith("@"):
+                    if col == "Text":
+                        val = (item.text or "").strip()
+                    elif col.startswith("@"):
                         val = item.attrib.get(col[1:], "")
                     else:
                         sub = next((s for s in item if _clean_tag(s.tag) == col), None)
@@ -112,10 +122,22 @@ def _render_element(elem: ET.Element, level: int = 2) -> list[str]:
                 table_rows.append(row)
             lines.extend(_format_table(cols, table_rows))
         else:
-            # If items are not leaf nodes, render individually
+            # Neither attributes nor children: a repeated run of text, which
+            # is what a list of <Paragraph> elements is. Rendered as
+            # paragraphs rather than as a heading per empty item.
             for idx, item in enumerate(items, start=1):
+                own = (item.text or "").strip()
+                if _is_leaf(item) and own:
+                    lines.append(f"{own}\n")
+                    continue
                 lines.append(f"{prefix}## {group_tag} [{idx}]\n")
                 lines.extend(_render_element(item, level=level + 2))
+
+    # Mixed content: an element that has children AND text of its own. The
+    # text is the sentence; losing it keeps the structure and drops the point.
+    own_text = (elem.text or "").strip()
+    if own_text and len(elem):
+        lines.append(f"{own_text}\n")
 
     # Render complex non-repeating children
     for comp in complex_children:

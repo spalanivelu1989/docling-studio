@@ -15,6 +15,8 @@ from typing import Any, Callable
 
 import pydantic
 
+import tracing
+
 from . import bpml, tools
 from .schemas import FitGapEntry, VerifiedEntry
 
@@ -77,9 +79,10 @@ every entry is proposed, and a named Solvay process lead accepts or rejects it.
 You see the corpus only through your tools. Work in this order:
 
 1. get_scope on the step's code, to read its name, description and place in the hierarchy.
-2. graph_entity / graph_neighbors for identity: resolve the step's SUBJECT (a system, a \
-SPARK ticket, a dash code) and pull what is linked to it. The graph does not contain \
-dotted BPML codes -- do not waste a call looking one up.
+2. graph_entity / graph_neighbors for identity: resolve the step's own BPML code, or its \
+SUBJECT (a system, a SPARK ticket, a dash code), and pull what is linked to it. The graph \
+holds the BPML codes the register and the documents mention, so the step's code is worth \
+one call; a step the graph does not hold returns no match and says so.
 3. search_corpus for substance. Run at least two queries: one containing the exact BPML \
 code verbatim (BM25 matches codes that meaning-based search misses), and one on the step \
 name plus any ticket IDs or system names step 2 found.
@@ -117,7 +120,7 @@ def _client():
 
 
 def _user_message(step: bpml.Process, mode: str, country: dict | None, question: str | None,
-                  categories: tuple[str, ...] = ()) -> str:
+                  categories: tuple[str, ...] = (), upload_session: str = "") -> str:
     ancestry = " › ".join(f"{a.code} {a.name}" for a in tools._ancestry(step))
     parts = [
         f"BPML step: {step.code} — {step.name}",
@@ -144,6 +147,27 @@ def _user_message(step: bpml.Process, mode: str, country: dict | None, question:
             "project lacks a design: classify UNKNOWN and say in open_questions which "
             "category would have to be searched, rather than calling it a GAP."
         )
+    if upload_session:
+        import uploads
+
+        names = uploads.titles(upload_session)
+        if names:
+            parts.append(
+                "The analyst attached "
+                + (f"{len(names)} documents" if len(names) > 1 else "one document")
+                + " to this session:\n"
+                + "\n".join(f"  - {n}" for n in names[:12])
+                + "\n\nRead "
+                + ("them" if len(names) > 1 else "it")
+                + " with search_uploads and start from upload_entities. "
+                + ("They are" if len(names) > 1 else "It is")
+                + " NOT part of the corpus and carry no authority over it: treat "
+                + ("them" if len(names) > 1 else "it")
+                + " as what one analyst brought to the table, and say so when you cite "
+                + ("them" if len(names) > 1 else "it")
+                + ". Where the upload and the corpus disagree, report the disagreement in "
+                "open_questions rather than picking a winner."
+            )
     parts.append(
         f"Classify this step and submit one register entry. bpml_code must be exactly "
         f"\"{step.code}\". Budget: {MAX_TOOL_CALLS} tool calls."
@@ -169,9 +193,10 @@ def run_step(
     client = _client()
     system = SYSTEM_B if mode == "B" else SYSTEM_A
     messages: list[dict[str, Any]] = [
-        {"role": "user", "content": _user_message(step, mode, country, question, sess.categories)}
+        {"role": "user", "content": _user_message(step, mode, country, question, sess.categories,
+                                                  sess.uploads)}
     ]
-    tool_defs = tools.definitions(mode)
+    tool_defs = tools.definitions(mode, has_uploads=bool(sess.uploads))
 
     calls = 0
     in_tokens = out_tokens = last_in_tokens = 0
@@ -260,20 +285,29 @@ def run_step(
             calls += 1
             t0 = time.time()
             fn = tools.DISPATCH.get(use.name)
-            if fn is None:
-                result: dict = {"error": f"unknown tool {use.name}"}
-            else:
-                try:
-                    result = fn(sess, **dict(use.input))
-                except TypeError as exc:
-                    result = {"error": f"bad arguments: {exc}"}
-                except Exception as exc:
-                    result = {"error": f"{type(exc).__name__}: {exc}"}
-            call = tools.ToolCall(
-                name=use.name, arguments=dict(use.input),
-                summary=tools.summarise(use.name, dict(use.input), result),
-                ms=int((time.time() - t0) * 1000), error=result.get("error"),
-            )
+            args = dict(use.input)
+            with tracing.observation(use.name,
+                                     as_type=tools.OBSERVATION_TYPE.get(use.name, "tool"),
+                                     input=args) as observed:
+                if fn is None:
+                    result: dict = {"error": f"unknown tool {use.name}"}
+                else:
+                    try:
+                        result = fn(sess, **args)
+                    except TypeError as exc:
+                        result = {"error": f"bad arguments: {exc}"}
+                    except Exception as exc:
+                        result = {"error": f"{type(exc).__name__}: {exc}"}
+                call = tools.ToolCall(
+                    name=use.name, arguments=args,
+                    summary=tools.summarise(use.name, args, result),
+                    ms=int((time.time() - t0) * 1000), error=result.get("error"),
+                    sources=tools.describe_sources(use.name, args, result, sess),
+                )
+                observed.update(output=result,
+                                metadata={"summary": call.summary, "sources": call.sources})
+                if call.error:
+                    observed.update(level="ERROR", status_message=call.error)
             sess.record(call)
             if on_tool:
                 on_tool(call)

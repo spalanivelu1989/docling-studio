@@ -1,0 +1,1263 @@
+{
+  "version": "3.0.0",
+  "visualisation": {
+    "nodes": [
+      {
+        "id": "n:1",
+        "position": {
+          "x": -172.57670381043374,
+          "y": -358.1548483116444
+        }
+      },
+      {
+        "id": "n:2",
+        "position": {
+          "x": -134.74163457638613,
+          "y": -61.444204314355446
+        }
+      },
+      {
+        "id": "n:3",
+        "position": {
+          "x": 117.43528497019362,
+          "y": -129.0354241954178
+        }
+      },
+      {
+        "id": "n:4",
+        "position": {
+          "x": 426.5711279279496,
+          "y": -23.351935572070232
+        }
+      },
+      {
+        "id": "n:5",
+        "position": {
+          "x": 317.7719925769305,
+          "y": 205.24703477686904
+        }
+      },
+      {
+        "id": "n:6",
+        "position": {
+          "x": 52.32717110672462,
+          "y": 149.24683851366316
+        }
+      },
+      {
+        "id": "n:7",
+        "position": {
+          "x": -376.4778861974569,
+          "y": -709.877930468018
+        }
+      },
+      {
+        "id": "n:8",
+        "position": {
+          "x": 175.8961621490221,
+          "y": -27.06078341852738
+        }
+      },
+      {
+        "id": "n:9",
+        "position": {
+          "x": -525.0129325996202,
+          "y": 273.3218696972136
+        }
+      },
+      {
+        "id": "n:10",
+        "position": {
+          "x": -250.1007647693736,
+          "y": 182.02599165461075
+        }
+      },
+      {
+        "id": "n:11",
+        "position": {
+          "x": 52.382534704188394,
+          "y": 820.1372412650305
+        }
+      },
+      {
+        "id": "n:12",
+        "position": {
+          "x": 764.4030021790444,
+          "y": 308.0465614477071
+        }
+      },
+      {
+        "id": "n:13",
+        "position": {
+          "x": -411.88135195983256,
+          "y": -169.03196266715767
+        }
+      },
+      {
+        "id": "n:14",
+        "position": {
+          "x": -21.26142063130613,
+          "y": 426.9853973976282
+        }
+      },
+      {
+        "id": "n:15",
+        "position": {
+          "x": 436.54718196268794,
+          "y": -635.9160485269439
+        }
+      }
+    ]
+  },
+  "dataModel": {
+    "version": "3.0.0",
+    "graphSchemaRepresentation": {
+      "version": "1.0.0",
+      "graphSchema": {
+        "nodeLabels": [
+          {
+            "$id": "nl:1",
+            "token": "Process",
+            "properties": [
+              {
+                "$id": "p:1",
+                "token": "processId",
+                "type": {
+                  "type": "string"
+                },
+                "nullable": false
+              }
+            ]
+          },
+          {
+            "$id": "nl:10",
+            "token": "BusinessRule",
+            "properties": [
+              {
+                "$id": "p:18",
+                "token": "subject",
+                "type": {
+                  "type": "string"
+                },
+                "nullable": false
+              }
+            ]
+          },
+          {
+            "$id": "nl:11",
+            "token": "Decision",
+            "properties": [
+              {
+                "$id": "p:19",
+                "token": "subject",
+                "type": {
+                  "type": "string"
+                },
+                "nullable": false
+              }
+            ]
+          },
+          {
+            "$id": "nl:12",
+            "token": "OpenQuestion",
+            "properties": [
+              {
+                "$id": "p:20",
+                "token": "subject",
+                "type": {
+                  "type": "string"
+                },
+                "nullable": false
+              }
+            ]
+          },
+          {
+            "$id": "nl:13",
+            "token": "Requirement",
+            "properties": [
+              {
+                "$id": "p:21",
+                "token": "requirementId",
+                "type": {
+                  "type": "string"
+                },
+                "nullable": false
+              }
+            ]
+          },
+          {
+            "$id": "nl:14",
+            "token": "AuthorizationProfile",
+            "properties": [
+              {
+                "$id": "p:22",
+                "token": "name",
+                "type": {
+                  "type": "string"
+                },
+                "nullable": false
+              }
+            ]
+          },
+          {
+            "$id": "nl:15",
+            "token": "Configuration",
+            "properties": [
+              {
+                "$id": "p:23",
+                "token": "name",
+                "type": {
+                  "type": "string"
+                },
+                "nullable": false
+              }
+            ]
+          },
+          {
+            "$id": "nl:2",
+            "token": "Step",
+            "properties": [
+              {
+                "$id": "p:2",
+                "token": "stepId",
+                "type": {
+                  "type": "string"
+                },
+                "nullable": false
+              },
+              {
+                "$id": "p:3",
+                "token": "jiraKey",
+                "type": {
+                  "type": "string"
+                },
+                "nullable": false
+              }
+            ]
+          },
+          {
+            "$id": "nl:3",
+            "token": "WricefObject",
+            "properties": [
+              {
+                "$id": "p:4",
+                "token": "wricefId",
+                "type": {
+                  "type": "string"
+                },
+                "nullable": false
+              },
+              {
+                "$id": "p:5",
+                "token": "objectType",
+                "type": {
+                  "type": "string"
+                },
+                "nullable": false
+              },
+              {
+                "$id": "p:6",
+                "token": "fitGap",
+                "type": {
+                  "type": "string"
+                },
+                "nullable": false
+              },
+              {
+                "$id": "p:7",
+                "token": "complexity",
+                "type": {
+                  "type": "string"
+                },
+                "nullable": false
+              },
+              {
+                "$id": "p:8",
+                "token": "direction",
+                "type": {
+                  "type": "string"
+                },
+                "nullable": false
+              },
+              {
+                "$id": "p:9",
+                "token": "status",
+                "type": {
+                  "type": "string"
+                },
+                "nullable": false
+              }
+            ]
+          },
+          {
+            "$id": "nl:4",
+            "token": "Interface",
+            "properties": [
+              {
+                "$id": "p:10",
+                "token": "interfaceId",
+                "type": {
+                  "type": "string"
+                },
+                "nullable": false
+              }
+            ]
+          },
+          {
+            "$id": "nl:5",
+            "token": "System",
+            "properties": [
+              {
+                "$id": "p:11",
+                "token": "systemId",
+                "type": {
+                  "type": "string"
+                },
+                "nullable": false
+              }
+            ]
+          },
+          {
+            "$id": "nl:6",
+            "token": "SapObject",
+            "properties": [
+              {
+                "$id": "p:12",
+                "token": "sapObjectId",
+                "type": {
+                  "type": "string"
+                },
+                "nullable": false
+              },
+              {
+                "$id": "p:13",
+                "token": "tag",
+                "type": {
+                  "type": "string"
+                },
+                "nullable": false
+              },
+              {
+                "$id": "p:14",
+                "token": "status",
+                "type": {
+                  "type": "string"
+                },
+                "nullable": false
+              }
+            ]
+          },
+          {
+            "$id": "nl:7",
+            "token": "OrgUnit",
+            "properties": [
+              {
+                "$id": "p:15",
+                "token": "orgUnitId",
+                "type": {
+                  "type": "string"
+                },
+                "nullable": false
+              }
+            ]
+          },
+          {
+            "$id": "nl:8",
+            "token": "Role",
+            "properties": [
+              {
+                "$id": "p:16",
+                "token": "name",
+                "type": {
+                  "type": "string"
+                },
+                "nullable": false
+              }
+            ]
+          },
+          {
+            "$id": "nl:9",
+            "token": "Country",
+            "properties": [
+              {
+                "$id": "p:17",
+                "token": "isoCode",
+                "type": {
+                  "type": "string"
+                },
+                "nullable": false
+              }
+            ]
+          }
+        ],
+        "relationshipTypes": [
+          {
+            "$id": "rt:1",
+            "token": "HAS_SUBPROCESS",
+            "properties": []
+          },
+          {
+            "$id": "rt:10",
+            "token": "USES_OBJECT",
+            "properties": []
+          },
+          {
+            "$id": "rt:11",
+            "token": "PERFORMED_BY",
+            "properties": []
+          },
+          {
+            "$id": "rt:12",
+            "token": "HAS_REQUIREMENT",
+            "properties": []
+          },
+          {
+            "$id": "rt:13",
+            "token": "GOVERNS",
+            "properties": []
+          },
+          {
+            "$id": "rt:14",
+            "token": "GOVERNS",
+            "properties": []
+          },
+          {
+            "$id": "rt:15",
+            "token": "APPLIES_IN",
+            "properties": []
+          },
+          {
+            "$id": "rt:16",
+            "token": "BELONGS_TO",
+            "properties": []
+          },
+          {
+            "$id": "rt:17",
+            "token": "CREATES",
+            "properties": []
+          },
+          {
+            "$id": "rt:18",
+            "token": "IS_PART_OF",
+            "properties": []
+          },
+          {
+            "$id": "rt:19",
+            "token": "USES",
+            "properties": []
+          },
+          {
+            "$id": "rt:2",
+            "token": "HAS_STEP",
+            "properties": []
+          },
+          {
+            "$id": "rt:20",
+            "token": "DEPENDS_ON",
+            "properties": []
+          },
+          {
+            "$id": "rt:21",
+            "token": "HAS_TRIGGER",
+            "properties": []
+          },
+          {
+            "$id": "rt:22",
+            "token": "SOURCED_FROM",
+            "properties": []
+          },
+          {
+            "$id": "rt:23",
+            "token": "IS_SECURED_BY",
+            "properties": []
+          },
+          {
+            "$id": "rt:24",
+            "token": "PROVIDES_ACCESS_TO",
+            "properties": []
+          },
+          {
+            "$id": "rt:25",
+            "token": "RECEIVES_NOTIFICATION_OF",
+            "properties": []
+          },
+          {
+            "$id": "rt:3",
+            "token": "NEXT",
+            "properties": []
+          },
+          {
+            "$id": "rt:4",
+            "token": "ADDRESSES",
+            "properties": []
+          },
+          {
+            "$id": "rt:5",
+            "token": "DEPENDS_ON",
+            "properties": []
+          },
+          {
+            "$id": "rt:6",
+            "token": "IMPLEMENTS",
+            "properties": []
+          },
+          {
+            "$id": "rt:7",
+            "token": "CHANGES_OBJECT",
+            "properties": []
+          },
+          {
+            "$id": "rt:8",
+            "token": "SOURCE_SYSTEM",
+            "properties": []
+          },
+          {
+            "$id": "rt:9",
+            "token": "TARGET_SYSTEM",
+            "properties": []
+          }
+        ],
+        "nodeObjectTypes": [
+          {
+            "$id": "n:1",
+            "labels": [
+              {
+                "$ref": "#nl:1"
+              }
+            ]
+          },
+          {
+            "$id": "n:2",
+            "labels": [
+              {
+                "$ref": "#nl:2"
+              }
+            ]
+          },
+          {
+            "$id": "n:3",
+            "labels": [
+              {
+                "$ref": "#nl:3"
+              }
+            ]
+          },
+          {
+            "$id": "n:4",
+            "labels": [
+              {
+                "$ref": "#nl:4"
+              }
+            ]
+          },
+          {
+            "$id": "n:5",
+            "labels": [
+              {
+                "$ref": "#nl:5"
+              }
+            ]
+          },
+          {
+            "$id": "n:6",
+            "labels": [
+              {
+                "$ref": "#nl:6"
+              }
+            ]
+          },
+          {
+            "$id": "n:7",
+            "labels": [
+              {
+                "$ref": "#nl:7"
+              }
+            ]
+          },
+          {
+            "$id": "n:8",
+            "labels": [
+              {
+                "$ref": "#nl:8"
+              }
+            ]
+          },
+          {
+            "$id": "n:9",
+            "labels": [
+              {
+                "$ref": "#nl:9"
+              }
+            ]
+          },
+          {
+            "$id": "n:10",
+            "labels": [
+              {
+                "$ref": "#nl:10"
+              }
+            ]
+          },
+          {
+            "$id": "n:11",
+            "labels": [
+              {
+                "$ref": "#nl:11"
+              }
+            ]
+          },
+          {
+            "$id": "n:12",
+            "labels": [
+              {
+                "$ref": "#nl:12"
+              }
+            ]
+          },
+          {
+            "$id": "n:13",
+            "labels": [
+              {
+                "$ref": "#nl:13"
+              }
+            ]
+          },
+          {
+            "$id": "n:14",
+            "labels": [
+              {
+                "$ref": "#nl:14"
+              }
+            ]
+          },
+          {
+            "$id": "n:15",
+            "labels": [
+              {
+                "$ref": "#nl:15"
+              }
+            ]
+          }
+        ],
+        "relationshipObjectTypes": [
+          {
+            "$id": "r:1",
+            "type": {
+              "$ref": "#rt:1"
+            },
+            "from": {
+              "$ref": "#n:1"
+            },
+            "to": {
+              "$ref": "#n:1"
+            }
+          },
+          {
+            "$id": "r:2",
+            "type": {
+              "$ref": "#rt:2"
+            },
+            "from": {
+              "$ref": "#n:1"
+            },
+            "to": {
+              "$ref": "#n:2"
+            }
+          },
+          {
+            "$id": "r:3",
+            "type": {
+              "$ref": "#rt:3"
+            },
+            "from": {
+              "$ref": "#n:2"
+            },
+            "to": {
+              "$ref": "#n:2"
+            }
+          },
+          {
+            "$id": "r:4",
+            "type": {
+              "$ref": "#rt:4"
+            },
+            "from": {
+              "$ref": "#n:3"
+            },
+            "to": {
+              "$ref": "#n:2"
+            }
+          },
+          {
+            "$id": "r:5",
+            "type": {
+              "$ref": "#rt:5"
+            },
+            "from": {
+              "$ref": "#n:3"
+            },
+            "to": {
+              "$ref": "#n:3"
+            }
+          },
+          {
+            "$id": "r:6",
+            "type": {
+              "$ref": "#rt:6"
+            },
+            "from": {
+              "$ref": "#n:3"
+            },
+            "to": {
+              "$ref": "#n:4"
+            }
+          },
+          {
+            "$id": "r:7",
+            "type": {
+              "$ref": "#rt:7"
+            },
+            "from": {
+              "$ref": "#n:3"
+            },
+            "to": {
+              "$ref": "#n:6"
+            }
+          },
+          {
+            "$id": "r:8",
+            "type": {
+              "$ref": "#rt:8"
+            },
+            "from": {
+              "$ref": "#n:4"
+            },
+            "to": {
+              "$ref": "#n:5"
+            }
+          },
+          {
+            "$id": "r:9",
+            "type": {
+              "$ref": "#rt:9"
+            },
+            "from": {
+              "$ref": "#n:4"
+            },
+            "to": {
+              "$ref": "#n:5"
+            }
+          },
+          {
+            "$id": "r:10",
+            "type": {
+              "$ref": "#rt:10"
+            },
+            "from": {
+              "$ref": "#n:2"
+            },
+            "to": {
+              "$ref": "#n:6"
+            }
+          },
+          {
+            "$id": "r:11",
+            "type": {
+              "$ref": "#rt:11"
+            },
+            "from": {
+              "$ref": "#n:2"
+            },
+            "to": {
+              "$ref": "#n:8"
+            }
+          },
+          {
+            "$id": "r:12",
+            "type": {
+              "$ref": "#rt:12"
+            },
+            "from": {
+              "$ref": "#n:2"
+            },
+            "to": {
+              "$ref": "#n:13"
+            }
+          },
+          {
+            "$id": "r:13",
+            "type": {
+              "$ref": "#rt:13"
+            },
+            "from": {
+              "$ref": "#n:10"
+            },
+            "to": {
+              "$ref": "#n:2"
+            }
+          },
+          {
+            "$id": "r:14",
+            "type": {
+              "$ref": "#rt:14"
+            },
+            "from": {
+              "$ref": "#n:10"
+            },
+            "to": {
+              "$ref": "#n:6"
+            }
+          },
+          {
+            "$id": "r:15",
+            "type": {
+              "$ref": "#rt:15"
+            },
+            "from": {
+              "$ref": "#n:10"
+            },
+            "to": {
+              "$ref": "#n:9"
+            }
+          },
+          {
+            "$id": "r:16",
+            "type": {
+              "$ref": "#rt:16"
+            },
+            "from": {
+              "$ref": "#n:7"
+            },
+            "to": {
+              "$ref": "#n:7"
+            }
+          },
+          {
+            "$id": "r:17",
+            "type": {
+              "$ref": "#rt:17"
+            },
+            "from": {
+              "$ref": "#n:5"
+            },
+            "to": {
+              "$ref": "#n:6"
+            }
+          },
+          {
+            "$id": "r:18",
+            "type": {
+              "$ref": "#rt:18"
+            },
+            "from": {
+              "$ref": "#n:6"
+            },
+            "to": {
+              "$ref": "#n:6"
+            }
+          },
+          {
+            "$id": "r:19",
+            "type": {
+              "$ref": "#rt:19"
+            },
+            "from": {
+              "$ref": "#n:4"
+            },
+            "to": {
+              "$ref": "#n:5"
+            }
+          },
+          {
+            "$id": "r:20",
+            "type": {
+              "$ref": "#rt:20"
+            },
+            "from": {
+              "$ref": "#n:15"
+            },
+            "to": {
+              "$ref": "#n:15"
+            }
+          },
+          {
+            "$id": "r:21",
+            "type": {
+              "$ref": "#rt:21"
+            },
+            "from": {
+              "$ref": "#n:3"
+            },
+            "to": {
+              "$ref": "#n:6"
+            }
+          },
+          {
+            "$id": "r:22",
+            "type": {
+              "$ref": "#rt:22"
+            },
+            "from": {
+              "$ref": "#n:6"
+            },
+            "to": {
+              "$ref": "#n:6"
+            }
+          },
+          {
+            "$id": "r:23",
+            "type": {
+              "$ref": "#rt:23"
+            },
+            "from": {
+              "$ref": "#n:6"
+            },
+            "to": {
+              "$ref": "#n:14"
+            }
+          },
+          {
+            "$id": "r:24",
+            "type": {
+              "$ref": "#rt:24"
+            },
+            "from": {
+              "$ref": "#n:5"
+            },
+            "to": {
+              "$ref": "#n:6"
+            }
+          },
+          {
+            "$id": "r:25",
+            "type": {
+              "$ref": "#rt:25"
+            },
+            "from": {
+              "$ref": "#n:8"
+            },
+            "to": {
+              "$ref": "#n:6"
+            }
+          }
+        ],
+        "constraints": [
+          {
+            "$id": "c:1",
+            "name": "processId_Process_key",
+            "constraintType": "key",
+            "entityType": "node",
+            "nodeLabel": {
+              "$ref": "#nl:1"
+            },
+            "properties": [
+              {
+                "$ref": "#p:1"
+              }
+            ]
+          },
+          {
+            "$id": "c:2",
+            "name": "stepId_Step_key",
+            "constraintType": "key",
+            "entityType": "node",
+            "nodeLabel": {
+              "$ref": "#nl:2"
+            },
+            "properties": [
+              {
+                "$ref": "#p:2"
+              }
+            ]
+          },
+          {
+            "$id": "c:3",
+            "name": "wricefId_WricefObject_key",
+            "constraintType": "key",
+            "entityType": "node",
+            "nodeLabel": {
+              "$ref": "#nl:3"
+            },
+            "properties": [
+              {
+                "$ref": "#p:4"
+              }
+            ]
+          },
+          {
+            "$id": "c:4",
+            "name": "objectType_WricefObject_propertyExistence",
+            "constraintType": "propertyExistence",
+            "entityType": "node",
+            "nodeLabel": {
+              "$ref": "#nl:3"
+            },
+            "properties": [
+              {
+                "$ref": "#p:5"
+              }
+            ]
+          },
+          {
+            "$id": "c:5",
+            "name": "fitGap_WricefObject_propertyExistence",
+            "constraintType": "propertyExistence",
+            "entityType": "node",
+            "nodeLabel": {
+              "$ref": "#nl:3"
+            },
+            "properties": [
+              {
+                "$ref": "#p:6"
+              }
+            ]
+          },
+          {
+            "$id": "c:6",
+            "name": "complexity_WricefObject_propertyExistence",
+            "constraintType": "propertyExistence",
+            "entityType": "node",
+            "nodeLabel": {
+              "$ref": "#nl:3"
+            },
+            "properties": [
+              {
+                "$ref": "#p:7"
+              }
+            ]
+          },
+          {
+            "$id": "c:7",
+            "name": "direction_WricefObject_propertyExistence",
+            "constraintType": "propertyExistence",
+            "entityType": "node",
+            "nodeLabel": {
+              "$ref": "#nl:3"
+            },
+            "properties": [
+              {
+                "$ref": "#p:8"
+              }
+            ]
+          },
+          {
+            "$id": "c:8",
+            "name": "status_WricefObject_propertyExistence",
+            "constraintType": "propertyExistence",
+            "entityType": "node",
+            "nodeLabel": {
+              "$ref": "#nl:3"
+            },
+            "properties": [
+              {
+                "$ref": "#p:9"
+              }
+            ]
+          },
+          {
+            "$id": "c:9",
+            "name": "interfaceId_Interface_key",
+            "constraintType": "key",
+            "entityType": "node",
+            "nodeLabel": {
+              "$ref": "#nl:4"
+            },
+            "properties": [
+              {
+                "$ref": "#p:10"
+              }
+            ]
+          },
+          {
+            "$id": "c:10",
+            "name": "systemId_System_key",
+            "constraintType": "key",
+            "entityType": "node",
+            "nodeLabel": {
+              "$ref": "#nl:5"
+            },
+            "properties": [
+              {
+                "$ref": "#p:11"
+              }
+            ]
+          },
+          {
+            "$id": "c:11",
+            "name": "sapObjectId_SapObject_key",
+            "constraintType": "key",
+            "entityType": "node",
+            "nodeLabel": {
+              "$ref": "#nl:6"
+            },
+            "properties": [
+              {
+                "$ref": "#p:12"
+              }
+            ]
+          },
+          {
+            "$id": "c:12",
+            "name": "orgUnitId_OrgUnit_key",
+            "constraintType": "key",
+            "entityType": "node",
+            "nodeLabel": {
+              "$ref": "#nl:7"
+            },
+            "properties": [
+              {
+                "$ref": "#p:15"
+              }
+            ]
+          },
+          {
+            "$id": "c:13",
+            "name": "name_Role_key",
+            "constraintType": "key",
+            "entityType": "node",
+            "nodeLabel": {
+              "$ref": "#nl:8"
+            },
+            "properties": [
+              {
+                "$ref": "#p:16"
+              }
+            ]
+          },
+          {
+            "$id": "c:14",
+            "name": "isoCode_Country_key",
+            "constraintType": "key",
+            "entityType": "node",
+            "nodeLabel": {
+              "$ref": "#nl:9"
+            },
+            "properties": [
+              {
+                "$ref": "#p:17"
+              }
+            ]
+          },
+          {
+            "$id": "c:15",
+            "name": "subject_BusinessRule_key",
+            "constraintType": "key",
+            "entityType": "node",
+            "nodeLabel": {
+              "$ref": "#nl:10"
+            },
+            "properties": [
+              {
+                "$ref": "#p:18"
+              }
+            ]
+          },
+          {
+            "$id": "c:16",
+            "name": "subject_Decision_key",
+            "constraintType": "key",
+            "entityType": "node",
+            "nodeLabel": {
+              "$ref": "#nl:11"
+            },
+            "properties": [
+              {
+                "$ref": "#p:19"
+              }
+            ]
+          },
+          {
+            "$id": "c:17",
+            "name": "subject_OpenQuestion_key",
+            "constraintType": "key",
+            "entityType": "node",
+            "nodeLabel": {
+              "$ref": "#nl:12"
+            },
+            "properties": [
+              {
+                "$ref": "#p:20"
+              }
+            ]
+          },
+          {
+            "$id": "c:18",
+            "name": "requirementId_Requirement_key",
+            "constraintType": "key",
+            "entityType": "node",
+            "nodeLabel": {
+              "$ref": "#nl:13"
+            },
+            "properties": [
+              {
+                "$ref": "#p:21"
+              }
+            ]
+          },
+          {
+            "$id": "c:19",
+            "name": "name_AuthorizationProfile_key",
+            "constraintType": "key",
+            "entityType": "node",
+            "nodeLabel": {
+              "$ref": "#nl:14"
+            },
+            "properties": [
+              {
+                "$ref": "#p:22"
+              }
+            ]
+          },
+          {
+            "$id": "c:20",
+            "name": "name_Configuration_key",
+            "constraintType": "key",
+            "entityType": "node",
+            "nodeLabel": {
+              "$ref": "#nl:15"
+            },
+            "properties": [
+              {
+                "$ref": "#p:23"
+              }
+            ]
+          }
+        ],
+        "indexes": []
+      }
+    },
+    "graphSchemaExtensionsRepresentation": {
+      "nodeKeyProperties": [],
+      "relationshipKeyProperties": []
+    },
+    "graphMappingRepresentation": {
+      "dataSourceSchema": {
+        "type": "local-unstructured",
+        "tableSchemas": [
+          {
+            "name": "SPARK L2C L4 register - L2C only.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "20251031_SPARK_L2C_SPARK_FS_Enhancement_L2C_21999_CMIR & Master Data Priority on Ship-to_docx.md",
+            "expanded": false,
+            "fields": []
+          },
+          {
+            "name": "20250209_SPARK_L2C_FS_Interface_Ecommerce and SAP updated_docx.md",
+            "expanded": false,
+            "fields": []
+          }
+        ]
+      },
+      "nodeMappings": [],
+      "relationshipMappings": []
+    },
+    "configurations": {
+      "idsToIgnore": [],
+      "arrayDelimiter": "|",
+      "vectorDelimiter": "|"
+    }
+  }
+}

@@ -156,11 +156,16 @@ RAG_HNSW_EF_SEARCH=200
 
 ### Categories
 
-Every document belongs to a category, and **each category is isolated in its
-own database** named after the one in `DATABASE_URL`: `PKG` lives in
-`docling_pkg`, `DR` in `docling_dr`. `DATABASE_URL` itself holds no documents —
-it is the base name the others are derived from, and where the tables that are
-not per-category (the Fit/Gap runs and reviews) live.
+Every document belongs to a category, and **a category is a column, not a
+database**: one `rag_documents` / `rag_chunks` pair in `DATABASE_URL`, one row
+per chunk, and scoping a search is a `WHERE` clause. The Fit/Gap and Rollout run
+stores sit beside them in the same database.
+
+Each category had a database of its own for one release. It was merged back
+because `rag_documents.source` is declared `UNIQUE` and could only be unique
+*per* database, so the same file could be indexed twice and one delete removed
+both. `migration_plan.md` has the reasoning, the measurements and the migration;
+`consolidate.py` is the migration itself.
 
 A document's category is decided in this order:
 
@@ -171,42 +176,237 @@ A document's category is decided in this order:
    so `solvay-spark/pkg/markdown` is `PKG`;
 4. `UNFILED`.
 
+**The UI does not offer the category.** Every page reads the whole corpus, and
+nothing uploaded through the browser is asked where to file it — the folder and
+the front matter decide, which means `UNFILED` for anything dropped on Convert,
+Batch Convert or Add to Knowledge Base. The category is still recorded, still
+shown on a retrieved chunk and on an agent's source chips, and still honoured by
+the API and the CLI; it is a label on the data rather than a control.
+
 **Adding a category takes no code change.** Put the Markdown in
 `solvay-spark/<code>/markdown` and index it: the folder names the category and
-its database is created on the first write. `rag.py categories` lists what each
-one holds and where.
+the row records it. `rag.py categories` lists what each one holds.
 
 ```bash
-.venv/bin/python rag.py index solvay-spark/dr/markdown   # creates docling_dr
-.venv/bin/python rag.py categories                       # what is where
+.venv/bin/python rag.py index solvay-spark/dr/markdown   # files everything as DR
+.venv/bin/python rag.py categories                       # what each one holds
 .venv/bin/python rag.py ask "..." --category DR          # search one category
 .venv/bin/python rag.py ask "..."                        # search all of them
+.venv/bin/python rag.py retag path/to/file.md PKG        # re-file, no re-embedding
 ```
 
 Edit `CATEGORIES` in `rag.py` only to give a category a label and description
-for the UI, or set `RAG_DATABASE_URL_<CODE>` to put one somewhere off the
-convention (another server, another name).
+for the UI. `rag_categories` is the registry of the ones that exist.
 
 The category is **metadata, never embedded text**. A code like `PKG` means
 nothing to BGE-M3, and adding it to every chunk would move a whole category by
 the same constant vector without making any chunk in it easier to tell apart —
-so re-filing a document is an `UPDATE`, not 50 embedding calls. It is passed to
-Claude on each excerpt, so an answer can say which kind of document it rests on.
+so re-filing a document is one `UPDATE`, not 50 embedding calls. The chunks
+follow the document through a foreign key on `(document_id, category)` with
+`ON UPDATE CASCADE`, so they cannot be left disagreeing with it. The category is
+passed to Claude on each excerpt, so an answer can say which kind of document it
+rests on.
 
-Searching with no category covers every database and merges the rankings.
-Both scores stay comparable across databases: cosine similarity is absolute,
-and the BM25 corpus statistics are gathered from every database in the search
-rather than each scoring against itself — without that, a category holding a
-handful of chunks would have near-zero keyword scores and never surface beside
-a large one.
+Searching with no category covers all of them, which is what every page now
+does; `--category` on the CLI and `categories` on the API still narrow it. The BM25 corpus statistics are
+computed over whatever is in scope, so a chunk scores the same wherever it is
+filed — without that, a category holding a handful of chunks would have
+near-zero keyword scores and never surface beside a large one.
 
-**Upgrading an index built before categories existed:**
+One index over every category is a bigger HNSW graph than one index per category
+was, so `RAG_HNSW_EF_SEARCH` defaults to **800** rather than 200. Measured
+against an exact scan over ten questions, searching every category: 0.85 recall
+at 200, 0.98 at 600 and above. It costs about 0.7 ms on a search that takes
+180.
+
+### Documents attached to an agent session
+
+The Fit-Gap Copilot and the Rollout Agent both take uploads of their own — a
+draft specification, a set of minutes, a country's As-Is SOP — and read them
+*beside* the corpus without them joining it. Drop a PDF, Word, Excel,
+PowerPoint, HTML, XML, `.csv` or plain `.txt` file into either page and it is
+converted, chunked, embedded and given a knowledge graph of its own.
+
+`.txt` takes a path of its own rather than going through Docling. Docling
+accepts a text file but parses it *as Markdown*, which rewrites the characters
+in it: `->` becomes `-&gt;`, `5_000` becomes `5\_000`, and a line of `=====`
+promotes the line above it to a heading. The agents quote their evidence
+verbatim and the verifier checks every quote character-for-character against
+the chunk it came from, so an escaped copy turns a correctly quoted threshold
+— "Above INR 5,00,000 -> credit committee" — into evidence that cannot be
+verified and is dropped. A `.txt` file is already text, so it is passed
+through with only a title added.
+
+`.csv` does go through Docling, whose CSV backend reads it as a table rather
+than as text — it sniffs the delimiter (comma, the semicolon a European Excel
+writes, or tab) and emits one Markdown table with the header intact, leaving
+the cells verbatim. Two things are done around it. Docling requires UTF-8 and
+refuses anything else outright, so a CSV exported from Excel on Windows —
+cp1252, the common case — would simply fail to convert; the file is decoded
+first (UTF-8, BOM, then cp1252) and handed to Docling as UTF-8. And the title
+is added as a heading, so the rows are chunked under one like every other
+source. The document's size is reported in rows.
+
+It is kept out of the corpus in the strongest way the storage allows:
+
+* a database of its own, `docling_session`, beside the corpus database;
+* one Postgres **schema** per session inside it, `u_<id>`, holding the same
+  `rag_documents` / `rag_chunks` tables the corpus uses;
+* `UPLOAD` is a reserved code, so nothing can be filed under the category the
+  chunks carry either.
+
+The isolation is the database boundary, not a filter: a corpus search runs
+against the corpus database and these rows are not in it, so there is no `WHERE`
+clause that could be got wrong. This is the one thing the consolidation did not
+touch, and deliberately so.
+
+A schema rather than a database per session because the isolation is the same
+and the cost is not: a session holds tens of chunks, and `CREATE DATABASE` plus
+an extension and an index for each buys nothing. `SET search_path` is what makes
+it work — the tables resolve inside the session's schema, so `rag.index_file`
+and `rag.search` run against it unchanged, with no second copy of the chunking,
+embedding or retrieval code to keep in step.
+
+An agent reaches an attachment through tools of its own, never through
+`search_corpus`: `search_uploads` (`read_sources` in the Rollout Agent, which
+filters by role) for its text, and `upload_entities` for the
+systems, BPML codes and tickets it mentions, each marked according to whether
+the corpus already knows it. That marking is the point — a shared entity tells
+the agent exactly what to search the corpus for, and one only the attachment
+has is worth reporting as new. The Copilot is told to report a disagreement
+between an attachment and the corpus rather than pick a winner.
+
+Everything expires. A session unused for `FITGAP_UPLOAD_TTL_HOURS` (12) is
+swept: the schema is dropped, the rows go with it, and the extracted Markdown
+is deleted. The sweep also drops any schema left behind by a crash between the
+two statements. The run record keeps the document names, because by the time a
+register is reopened the attachment itself is long gone.
 
 ```bash
-.venv/bin/python rag.py migrate   # tag by folder, then move each category out
+# Optional overrides (defaults shown):
+FITGAP_UPLOAD_TTL_HOURS=12     # how long an unused attachment is kept
+FITGAP_UPLOAD_MAX_FILES=12     # documents per session
+# The session store is docling_session, derived from DATABASE_URL; it is the
+# only database beside the corpus one.
 ```
 
-Nothing is re-embedded — the vectors are carried across as they are.
+### The Rollout Agent
+
+A second agent, on its own tab, does SAP Activate **Fit-to-Standard analysis
+for a country rollout**. An analyst attaches the country's As-Is process
+documentation — an SOP, a work instruction, a workshop transcript — and the
+agent compares it against the Global Template in the corpus and, where a source
+for it is attached, against SAP Best Practice.
+
+Attachments carry a **role**: `Country As-Is`, `Global Template`, `SAP Best
+Practice`, `Localization source` or `Reference`. That is what makes it a
+three-way comparison rather than a two-document diff — without the role the
+agent cannot tell a country SOP from a template extract. Roles are metadata, so
+re-tagging a document costs nothing.
+
+#### What the run analyses
+
+A run reads one document set as its **subject** and compares it against the
+Global Template. There are two:
+
+| Subject | Requires | Asks |
+|---|---|---|
+| `Country As-Is` (default) | a `Country As-Is` document | How far is the country's current process from the template? |
+| `SAP Best Practice` | a `SAP Best Practice` document | How far has the template drifted from SAP's delivered standard? |
+
+The second exists because "our template has diverged from SAP standard" is a
+real finding with an owner — §19 of the specification maps it to *template
+improvement / design review* — and it was previously only reachable by tagging
+a Best Practice document `Country As-Is`, which made the agent report SAP's
+process as a country's own.
+
+Two things follow from the subject rather than from anything the agent
+decides, so they are enforced rather than left to the prompt:
+
+* **Localization does not apply** to a Best Practice run. There is no country
+  in it, so a statutory-localization claim would be a legal assertion about
+  nobody. Any the model produces are reset to *Not localization-related* and
+  the localization register is dropped, with both reported as quality-gate
+  findings.
+* **Score B is not reported.** It rates the subject against SAP Best Practice,
+  and here the Best Practice content *is* the subject. Score C
+  (localization-adjusted) is `null` rather than equal to Score A — a number
+  that happens to match reads as a second measurement agreeing with the first.
+
+Each subject has its own prompt hash, because a run recorded against a hash
+that does not describe its instructions cannot be reproduced from the record.
+
+Naming the Global Template process is **optional**. Give it a BPML code and
+the comparison is anchored there; leave it empty and the agent works out which
+template process corresponds to the As-Is and records what it settled on. A
+code that is typed but does not resolve is still an error — a typo must not
+quietly become "no scope", or the run analyses against a different process
+than the one that was asked for. A run that names none and identifies none is
+reported as having no stated baseline, so the scores are never shown as if the
+question had not arisen.
+
+It runs in two passes, because §21 of the specification puts "understand the
+As-Is before comparing it" first: a model given the comparison tools while it
+is still reading starts diffing paragraphs.
+
+1. **Read** — only the attachments are visible. The agent produces a normalised
+   process model: atomic steps with trigger, actor, action, system, business
+   rule, decision, control, output, exception and integration, plus what it
+   normalised and what the documents never said.
+2. **Compare** — the As-Is model is handed back as text, now with the corpus,
+   the knowledge graph and the BPML hierarchy. Out comes a deviation register
+   on the 16-code taxonomy, a localization advisory, dimension ratings, a
+   workshop agenda and backlog candidates.
+
+**The scores are computed, not generated.** The agent rates seven dimensions
+0–4 and gives each deviation a harmonization potential; `rollout/scoring.py`
+does the arithmetic. A score a model writes can be argued into a better number;
+a score derived from a rated register cannot move without changing a finding a
+reviewer can see. The localization-adjusted score publishes its own formula,
+and only a *confirmed* statutory or SAP-delivered localization lifts it — a
+suspicion does not, because that is the assumption the guardrails forbid.
+
+**Quality gates** (`rollout/gates.py`) run before anything is shown, and they
+repair rather than merely report:
+
+| Gate | What it enforces |
+|---|---|
+| QG1 | Every As-Is step is mapped, or named as unmapped |
+| QG2 | Every quote is verbatim, in a chunk this run actually retrieved |
+| QG4 | "Confirmed statutory" without an explicit source is demoted to "suspected" |
+| QG5 | An extension proposed without recording the standard options considered becomes a decision; an SAP Best Practice rating with no SAP source is removed |
+| QG6 | A Must Discuss item without a decision question is flagged |
+| QG7 | A backlog candidate that names no gap is dropped; a run that named no template process must say which one it used |
+
+QG3 (semantic accuracy) is deliberately absent and says so: whether the agent
+compared meaning rather than wording is a human judgement, and a gate that
+always passes would only make the report look better than it is.
+
+One invariant is enforced at submission rather than afterwards: a dimension
+rated 2 or below ("moderate deviation" or worse) must name at least one
+deviation on that dimension. Without it a run can produce a measured-looking
+alignment score over a register saying the process matched — which is exactly
+what the first real run did before the check existed.
+
+```bash
+.venv/bin/python rollout/test_rollout.py   # the scoring and the gates
+```
+
+Runs are kept beside the corpus in `DATABASE_URL`, and the workshop pack
+exports as Markdown or JSON from the page.
+
+**Upgrading an index that still has a database per category:**
+
+```bash
+.venv/bin/python consolidate.py baseline    # record what the split system does
+.venv/bin/python consolidate.py run         # merge into one database
+.venv/bin/python consolidate.py verify      # hold the result to the baseline
+```
+
+Nothing is re-embedded — the vectors are carried across as they are, which takes
+about three seconds where re-embedding would take eighteen minutes. `run` is
+additive: it reads the old databases and never writes to them, so they stay
+exactly where they are as the rollback.
 
 **In the browser:** `./run.sh`, then open <http://localhost:8000/ask> (or the
 **Ask** tab in the header). Type a question and the page shows each step as it
@@ -225,8 +425,7 @@ similarity and keyword score; the buttons re-sort by any of them, highest first.
 **From the command line:**
 
 ```bash
-createdb docling                                           # once; per-category
-                                                           # databases are made for you
+createdb docling                                           # once
 .venv/bin/python rag.py index solvay-spark/pkg/markdown    # chunk + embed with bge-m3 + store
 .venv/bin/python rag.py search "Who owns 7.1.12.3 Production Declaration?"
 .venv/bin/python rag.py ask "Who owns 7.1.12.3 Production Declaration?"
@@ -235,6 +434,36 @@ createdb docling                                           # once; per-category
 .venv/bin/python rag.py chunks "solvay-spark/pkg/markdown/deck_pptx.md"  # preview chunking, no API calls
 ```
 
+### The Evidence Agent
+
+One question, both engines, and an answer that is a set of claims rather than a
+paragraph — each claim carrying the passages that support it and the arithmetic
+behind its score. Every quote is checked character-for-character against the
+chunk it names; one that is not found is discarded rather than shown.
+
+**Investigations are kept.** Each run is written to `evidence_runs` as it
+happens — the question and its settings, every tool call in order, and the
+verified answer — so the history strip on the page reopens a past investigation
+with its working intact. Nothing is re-run and nothing is re-billed when you
+open one.
+
+Written *as it happens* rather than at the end, which is what makes an
+interrupted run useful: close the tab mid-investigation and the row keeps the
+calls it had made. Such a run reads `abandoned` after 30 minutes rather than
+sitting at `running` for ever, and the row is not rewritten — it still records
+that it was interrupted rather than finished. A failed run is kept too; what
+the agent managed to read before it failed is usually the reason to look again.
+
+```
+GET    /api/evidence/runs          past investigations, newest first
+GET    /api/evidence/runs/{id}     one in full: question, calls, answer
+DELETE /api/evidence/runs/{id}     remove one
+```
+
+If the history cannot be written — no database, no table — the investigation
+still runs and still answers; the page says it is not being recorded rather
+than refusing the question.
+
 ### Removing or Resetting Data in pgvector
 
 If you want to clear old records or switch embedding models:
@@ -242,8 +471,7 @@ If you want to clear old records or switch embedding models:
 1. **Reset schema for BGE-M3 (1024d) — Recommended:**
    Drops existing tables and recreates clean tables matching `vector(1024)`:
    ```bash
-   .venv/bin/python rag.py reset               # every category
-   .venv/bin/python rag.py reset --category DR # just one
+   .venv/bin/python rag.py reset               # drops and recreates the tables
    ```
 
 2. **Clear all documents and chunks (keep schema):**
@@ -500,6 +728,58 @@ When a user submits a query via the Knowledge Graph query bar or clicks an entit
    - The matched nodes and edges are highlighted with glowing auras and visible relation labels on the D3 canvas.
    - All unrelated nodes and edges are dimmed (`opacity: 0.12`).
    - The camera automatically calculates the bounding box of the matched subgraph and executes a smooth pan/zoom transition to frame the answer.
+
+## Tracing the agents (Langfuse)
+
+Off unless configured. The four things that call a model -- the Rollout Agent,
+the Fit-Gap Copilot, the Evidence Agent and `/ask` -- each record one
+[Langfuse](https://langfuse.com) trace per run: the retrieval it did, every
+tool call with what it returned, every model turn with its prompt and token
+usage, and the run's result. Without `LANGFUSE_PUBLIC_KEY` and
+`LANGFUSE_SECRET_KEY` nothing is sent, nothing is imported beyond
+`tracing.py`, and the engines behave exactly as they do now.
+
+Add to `.env`:
+
+```bash
+LANGFUSE_PUBLIC_KEY=pk-lf-...
+LANGFUSE_SECRET_KEY=sk-lf-...
+LANGFUSE_BASE_URL=https://cloud.langfuse.com   # or eu/us/self-hosted
+# Optional:
+LANGFUSE_TRACING_ENVIRONMENT=development       # default; tags every trace
+LANGFUSE_RELEASE=                              # a version string, if you keep one
+```
+
+Keys come from the Langfuse project under Settings -> API Keys. `./run.sh`
+prints one line at start-up saying whether tracing is on, and says so plainly
+if the credentials are refused -- a wrong key is a line in the log rather than
+a run that quietly produces nothing.
+
+What a trace looks like, using a Rollout run as the example:
+
+```
+rollout-analysis                     agent      the whole run
+  read-as-is                         agent      pass one
+    anthropic.chat                   generation one model turn (prompt, tokens, cost)
+    read_sources                     retriever  what it read, and what came back
+    ...
+  compare-to-template                agent      pass two
+    search_corpus                    retriever
+    get_scope                        retriever
+    ...
+  quality-gates                      evaluator  what the gates rejected or repaired
+```
+
+Two things worth knowing:
+
+- **The session is the upload session.** Attaching documents and then running
+  the Rollout Agent and the Copilot over them gives three traces in one
+  Langfuse session, which is how they read as one piece of work. There is no
+  `user_id`: this application has no accounts.
+- **What is masked.** API keys, database passwords, JWTs and email addresses
+  are redacted on the way out. Document text is not -- it is the reason the
+  trace is worth keeping. Point this at a Langfuse project you would be
+  willing to show the corpus to.
 
 ## Notes
 

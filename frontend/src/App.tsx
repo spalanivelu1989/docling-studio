@@ -1,11 +1,12 @@
 import { AppBar, Box, CssBaseline, GlobalStyles, IconButton, Tab, Tabs, ThemeProvider, Toolbar, Tooltip, Typography } from "@mui/material";
 import { alpha, type Theme } from "@mui/material/styles";
 import { AnimatePresence, MotionConfig, motion } from "framer-motion";
-import { Columns2, DatabaseZap, FileText, FlaskConical, FolderArchive, MessageSquareText, Moon, Network, ScanEye, Scale, Sun } from "lucide-react";
+import { Columns2, DatabaseZap, FileText, FlaskConical, FolderArchive, Globe2, ListChecks, MessageSquareText, Moon, Network, ScanEye, Scale, Sun } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactElement } from "react";
 import AddToKnowledgeBasePage from "./pages/AddToKnowledgeBasePage";
 import AskPage from "./pages/AskPage";
 import BatchConvertPage from "./pages/BatchConvertPage";
+import CoveragePage from "./pages/CoveragePage";
 import DocMdViewerPage from "./pages/DocMdViewerPage";
 import EvidencePage from "./pages/EvidencePage";
 import ExtractPage from "./pages/ExtractPage";
@@ -13,9 +14,10 @@ import FitGapPage from "./pages/FitGapPage";
 import KnowledgeGraphPage from "./pages/KnowledgeGraphPage";
 import LandingPage from "./pages/LandingPage";
 import MdViewerPage from "./pages/MdViewerPage";
+import RolloutPage from "./pages/RolloutPage";
 import { makeTheme, searchColors, type Mode } from "./theme";
 
-type Page = "ask" | "graph" | "evidence" | "fitgap" | "extract" | "batch" | "add-kb" | "review" | "viewer" | "landing";
+type Page = "ask" | "graph" | "evidence" | "fitgap" | "rollout" | "extract" | "batch" | "add-kb" | "coverage" | "review" | "viewer" | "landing";
 /** The header reads left to right as the pipeline actually runs: ask the
  *  corpus, convert documents into it, index them, then check the conversion.
  *  Each stage carries its own accent so the bar can be scanned rather than
@@ -29,15 +31,26 @@ const TABS: { value: Page; label: string; icon: ReactElement; group: TabGroup }[
   { value: "graph", label: "Knowledge Graph", icon: <Network size={16} />, group: "engine" },
   { value: "evidence", label: "Agent", icon: <FlaskConical size={16} />, group: "engine" },
   { value: "fitgap", label: "Fit-Gap Copilot", icon: <Scale size={16} />, group: "engine" },
+  { value: "rollout", label: "Rollout Agent", icon: <Globe2 size={16} />, group: "engine" },
   { value: "extract", label: "Convert", icon: <FileText size={16} />, group: "convert" },
   { value: "batch", label: "Batch Convert", icon: <FolderArchive size={16} />, group: "convert" },
   { value: "add-kb", label: "Add to knowledge base", icon: <DatabaseZap size={16} />, group: "index" },
+  { value: "coverage", label: "Coverage", icon: <ListChecks size={16} />, group: "inspect" },
   { value: "review", label: "Doc vs MD", icon: <ScanEye size={16} />, group: "inspect" },
   { value: "viewer", label: "MD Viewer", icon: <Columns2 size={16} />, group: "inspect" },
 ];
 
 const groupOf = (p: Page): TabGroup | null =>
   TABS.find((t) => t.value === p)?.group ?? null;
+
+/** Every page that gets mounted, derived from TABS rather than listed again.
+ *
+ *  It used to be a second hand-written array, and adding a tab without adding
+ *  it here switched to a page that was never rendered -- the tab highlighted,
+ *  every other page hid, and the window went blank. Deriving it means the tab
+ *  bar and the pages behind it cannot disagree. `landing` is the one page with
+ *  no tab of its own, so it is appended by name. */
+const MOUNTED: Page[] = [...TABS.map((t) => t.value), "landing"];
 
 /** Every accent comes from the theme, so each one has a light and a dark
  *  variant and none is hardcoded. Amber, green and purple are far enough
@@ -77,9 +90,11 @@ const PATHS: Record<Page, string> = {
   graph: "/graph",
   evidence: "/evidence",
   fitgap: "/fit-gap",
+  rollout: "/rollout",
   extract: "/convert",
   batch: "/batch",
   "add-kb": "/add-kb",
+  coverage: "/coverage",
   review: "/review",
   viewer: "/md-viewer",
   landing: "/",
@@ -91,9 +106,11 @@ const pageFromPath = (): Page => {
   if (location.pathname.startsWith("/add-kb") || location.pathname.startsWith("/add-to-knowledge-base")) return "add-kb";
   if (location.pathname.startsWith("/graph") || location.pathname.startsWith("/knowledge-graph")) return "graph";
   if (location.pathname.startsWith("/fit-gap") || location.pathname.startsWith("/fitgap")) return "fitgap";
+  if (location.pathname.startsWith("/rollout") || location.pathname.startsWith("/fit-to-standard")) return "rollout";
   if (location.pathname.startsWith("/evidence") || location.pathname.startsWith("/investigate")) return "evidence";
   if (location.pathname.startsWith("/ask")) return "ask";
   if (location.pathname.startsWith("/md-viewer") || location.pathname.startsWith("/viewer")) return "viewer";
+  if (location.pathname.startsWith("/coverage")) return "coverage";
   if (location.pathname.startsWith("/review") || location.pathname.startsWith("/doc-md-viewer")) return "review";
   if (location.pathname.startsWith("/about") || location.pathname.startsWith("/landing")) return "landing";
   return "landing";
@@ -136,7 +153,7 @@ export default function App() {
   useEffect(() => {
     document.title =
       page === "landing"
-        ? "Docling Studio — Enterprise Document Intelligence"
+        ? "Spark AI Spine — Enterprise Document Intelligence"
         : page === "ask"
           ? "Docling Ask"
           : page === "viewer"
@@ -149,9 +166,13 @@ export default function App() {
                   ? "Docling Knowledge Graph"
                   : page === "fitgap"
                     ? "Docling Fit-Gap Copilot"
-                    : page === "evidence"
+                    : page === "rollout"
+                      ? "Docling Rollout Agent"
+                      : page === "evidence"
                       ? "Docling Agent"
-                      : page === "review"
+                      : page === "coverage"
+                        ? "Spark AI Spine — Coverage"
+                        : page === "review"
                         ? "Docling Doc vs MD Review"
                         : "Docling Convert Studio";
   }, [page]);
@@ -194,7 +215,7 @@ export default function App() {
           >
             <Toolbar variant="dense" disableGutters sx={{ minHeight: 52, px: 2, gap: 2 }}>
               {/* Brand Logo & Title — Clickable link to Landing Page */}
-              <Tooltip title="Home / About Docling Studio">
+              <Tooltip title="Home / About Spark AI Spine">
                 <Box
                   onClick={() => go("landing")}
                   sx={{
@@ -223,9 +244,9 @@ export default function App() {
                     <FileText size={16} />
                   </Box>
                   <Typography sx={{ fontWeight: 700, letterSpacing: "-.01em", whiteSpace: "nowrap" }}>
-                    Docling{" "}
+                    Spark AI{" "}
                     <Box component="span" sx={{ color: "text.secondary", fontWeight: 400 }}>
-                      Studio
+                      Spine
                     </Box>
                   </Typography>
                 </Box>
@@ -308,7 +329,7 @@ export default function App() {
           {/* All pages stay mounted so switching tabs keeps an upload, its
               Markdown or an answer in place. */}
           <Box sx={{ flex: 1, minHeight: 0, position: "relative" }}>
-            {(["ask", "graph", "evidence", "fitgap", "extract", "batch", "add-kb", "review", "viewer", "landing"] as Page[]).map((p) => (
+            {MOUNTED.map((p) => (
               <Box
                 key={p}
                 component={motion.div}
@@ -327,8 +348,12 @@ export default function App() {
                   <KnowledgeGraphPage active={page === "graph"} onNavigate={(next) => go(next as Page)} incomingQuery={graphQuery} />
                 ) : p === "fitgap" ? (
                   <FitGapPage active={page === "fitgap"} onShowInGraph={showInGraph} />
+                ) : p === "rollout" ? (
+                  <RolloutPage active={page === "rollout"} />
                 ) : p === "evidence" ? (
                   <EvidencePage active={page === "evidence"} />
+                ) : p === "coverage" ? (
+                  <CoveragePage active={page === "coverage"} />
                 ) : p === "review" ? (
                   <DocMdViewerPage />
                 ) : p === "viewer" ? (

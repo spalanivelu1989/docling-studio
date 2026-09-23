@@ -12,6 +12,7 @@ from __future__ import annotations
 import re
 import shutil
 import sys
+import tempfile
 import time
 import warnings
 import zipfile
@@ -35,6 +36,41 @@ warnings.filterwarnings("ignore", category=UserWarning)
 # Spreadsheets take a dedicated path: Docling splits a sheet on blank rows,
 # which orphans the header row from its data. See xlsx_tables.
 SPREADSHEET_FORMATS = {".xlsx", ".xlsm"}
+
+# Plain text is passed through rather than converted. Docling accepts a .txt
+# file but parses it *as Markdown*, which rewrites the characters in it: `->`
+# comes back as `-&gt;`, `5_000` as `5\_000`, and a line of `=====` turns the
+# line above it into a heading. That matters here more than it looks. The
+# agents quote their evidence verbatim and the verifier checks each quote
+# character-for-character against the chunk it came from, so a business rule
+# written "Above INR 5,00,000 -> credit committee" would be quoted from the
+# source and then fail to match the escaped copy -- the evidence would be
+# dropped as unverifiable and the reader would never learn why.
+TEXT_FORMATS = {".txt"}
+
+# A .csv goes through Docling's CSV backend, which reads it as a table rather
+# than as text: it sniffs the delimiter (comma, semicolon from a European
+# Excel export, or tab) and emits one Markdown table with the header row
+# intact. Cells come out verbatim -- `->`, `5_00_000` and `>` all survive,
+# unlike the Markdown parse that .txt has to avoid -- and the only character
+# it escapes is the pipe, which has to be escaped for the table to stay a
+# table, and which md_chunker unescapes again when it reads the row back.
+#
+# What Docling will not do is decode the file. It rejects anything that is not
+# UTF-8 outright ("Input document ... is not valid"), and the CSV an analyst
+# exports from Excel on Windows is cp1252 -- so the common case is exactly the
+# one that fails. csv_to_markdown decodes first and hands Docling UTF-8.
+CSV_FORMATS = {".csv"}
+
+# JSON is data, not prose. It is fenced rather than flattened into paragraphs:
+# the structure IS the content, and a chunker that sees a code fence keeps the
+# braces with their keys instead of splitting an object across two chunks.
+JSON_FORMATS = {".json"}
+
+# .msg and .eml are containers, not documents. mail_reader pulls the headers,
+# the body and the attachment names out; who sent a thing and when is the half
+# of an email that gets cited.
+MAIL_FORMATS = {".msg", ".eml"}
 
 PLACEHOLDER = "<!-- image -->"
 
@@ -387,6 +423,121 @@ def _convert_image(
     return result
 
 
+def json_to_markdown(src: Path, title: str | None = None) -> str:
+    """A .json file as Markdown: a heading, then the document re-indented
+    inside a fenced block.
+
+    Re-indented rather than passed through, because a minified file is one line
+    thousands of characters long -- unreadable on the page and a single
+    indivisible chunk in the index. Malformed JSON is kept exactly as it
+    arrived: the file not parsing is a fact about the file, and rewriting it
+    would hide that."""
+    import json as _json
+
+    doc_title = title or src.stem
+    raw = src.read_text(encoding="utf-8", errors="replace")
+    try:
+        body = _json.dumps(_json.loads(raw), indent=2, ensure_ascii=False)
+        note = ""
+    except Exception as exc:
+        body = raw
+        note = f"\n> This file is not valid JSON ({exc}); it is shown as it arrived.\n"
+    return f"# {doc_title}\n{note}\n```json\n{body}\n```\n"
+
+
+def mail_to_markdown(src: Path, title: str | None = None) -> str:
+    """An Outlook .msg or MIME .eml as Markdown. See mail_reader."""
+    import mail_reader
+
+    text = mail_reader.to_markdown(src)
+    if title:
+        # mail_reader titles the document with the subject, which is the right
+        # heading for a mail; only replace it when a caller insists on its own.
+        lines = text.split("\n")
+        if lines and lines[0].startswith("# "):
+            lines[0] = f"# {title}"
+            text = "\n".join(lines)
+    return text
+
+
+def text_to_markdown(src: Path, title: str | None = None) -> str:
+    """A .txt file as Markdown, with its contents left exactly as they are.
+
+    The only thing added is a title, so the document has a heading to be
+    chunked under like every other source. Nothing in the body is escaped or
+    reflowed: this is the one format where the input is already the text, and
+    anything done to it can only move it further from what the author wrote.
+
+    Windows and old Mac line endings are normalised to \n -- that is not a
+    change to the text, it is the same text without the carriage returns that
+    would otherwise end up inside every quoted line."""
+    doc_title = title or src.stem
+    try:
+        body = src.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        # Exported from a Windows tool, most likely. Decode rather than fail:
+        # a replacement character in one byte is better than no document.
+        body = src.read_text(encoding="cp1252", errors="replace")
+    body = body.replace("\r\n", "\n").replace("\r", "\n").strip("\n")
+    return f"# {doc_title}\n\n{body}\n"
+
+
+def csv_rows(src: Path) -> int:
+    """Data rows, not counting the header. Reported as the document's size the
+    way a deck reports slides."""
+    try:
+        text = _decode(src)
+    except OSError:
+        return 0
+    lines = [line for line in text.splitlines() if line.strip()]
+    return max(0, len(lines) - 1)
+
+
+def _decode(src: Path) -> str:
+    """The file's text, whatever it was encoded as."""
+    raw = src.read_bytes()
+    for encoding in ("utf-8-sig", "utf-8", "cp1252"):
+        try:
+            return raw.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return raw.decode("cp1252", errors="replace")
+
+
+def csv_to_markdown(src: Path, title: str | None = None) -> str:
+    """A .csv as one Markdown table, converted by Docling's CSV pipeline.
+
+    Docling does the reading -- delimiter sniffing and the table itself -- and
+    this does the two things around it that it does not do:
+
+      - Decodes the file. Docling requires UTF-8 and raises on anything else,
+        which means a CSV exported from Excel on Windows (cp1252) fails to
+        convert at all. Everything is handed to it as UTF-8.
+      - Adds the title as a heading, so the document is chunked under a
+        heading like every other source rather than arriving as a bare table.
+
+    An empty file is still a document: a heading and nothing under it, which
+    is what the .txt branch does and is more useful than an error."""
+    doc_title = title or src.stem
+    text = _decode(src)
+    if not text.strip():
+        return f"# {doc_title}\n\n"
+
+    with tempfile.TemporaryDirectory() as tmp:
+        # Docling reads the suffix to pick its backend, so the copy keeps it.
+        utf8 = Path(tmp) / f"{src.stem}.csv"
+        utf8.write_text(text, encoding="utf-8")
+        try:
+            body = _docling().convert(utf8).document.export_to_markdown()
+        except Exception as exc:
+            # A file Docling will not read is still worth having: the rows are
+            # the document, and refusing to convert loses them entirely.
+            print(f"  ! Docling could not read {src.name} ({exc}); "
+                  "keeping the rows as text", file=sys.stderr)
+            return text_to_markdown(src, title=doc_title)
+    return f"# {doc_title}\n\n{body.strip()}\n"
+
+
 def convert(
     src: Path,
     media_dir: Path | None = None,
@@ -430,6 +581,44 @@ def convert(
             src, media_dir, started,
             ocr=ocr, use_vlm=use_vlm, vlm_provider=vlm_provider, title=title,
             lang=lang, tessdata=tessdata, scale=scale,
+        )
+
+    if src.suffix.lower() in TEXT_FORMATS:
+        return Result(
+            markdown=text_to_markdown(src, title=title),
+            pages=1,
+            pictures=0,
+            unit="files",
+            elapsed=time.perf_counter() - started,
+        )
+
+    if src.suffix.lower() in JSON_FORMATS:
+        return Result(
+            markdown=json_to_markdown(src, title=title),
+            pages=1,
+            pictures=0,
+            unit="files",
+            elapsed=time.perf_counter() - started,
+        )
+
+    if src.suffix.lower() in MAIL_FORMATS:
+        import mail_reader
+
+        return Result(
+            markdown=mail_to_markdown(src, title=title),
+            pages=1,
+            pictures=0,
+            unit="messages",
+            elapsed=time.perf_counter() - started,
+        )
+
+    if src.suffix.lower() in CSV_FORMATS:
+        return Result(
+            markdown=csv_to_markdown(src, title=title),
+            pages=csv_rows(src),
+            pictures=0,
+            unit="rows",
+            elapsed=time.perf_counter() - started,
         )
 
     if src.suffix.lower() == ".xml":

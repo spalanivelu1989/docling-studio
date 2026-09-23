@@ -9,10 +9,7 @@ import {
   Drawer,
   IconButton,
   InputAdornment,
-  ListItemText,
-  MenuItem,
   Paper,
-  Select,
   Stack,
   TextField,
   Tooltip,
@@ -20,6 +17,7 @@ import {
 } from "@mui/material";
 import { alpha, useTheme } from "@mui/material/styles";
 import ModelView from "../components/ModelView";
+import { clearAdornment, clearOnEscape } from "../components/ClearAdornment";
 import ProcessFlowView from "../components/ProcessFlowView";
 import * as d3 from "d3";
 import {
@@ -156,9 +154,6 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
   // built / partial / absent. The model is fetched the first time it is asked
   // for -- most visits never open it.
   const [viewMode, setViewMode] = useState<"graph" | "model" | "process">("graph");
-  // Which document categories the graph covers. Empty is every one of them,
-  // which is what the server does with an empty list.
-  const [categories, setCategories] = useState<string[]>([]);
   const [model, setModel] = useState<GraphModel | null>(null);
   const [modelError, setModelError] = useState<string | null>(null);
   const [selectedModelNode, setSelectedModelNode] = useState<ModelNode | null>(null);
@@ -171,10 +166,10 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
   useEffect(() => {
     if (viewMode !== "model" || model || modelError) return;
     api
-      .graphModel(categories)
+      .graphModel()
       .then(setModel)
       .catch((e: unknown) => setModelError(e instanceof Error ? e.message : String(e)));
-  }, [viewMode, model, modelError, categories]);
+  }, [viewMode, model, modelError]);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [isFocusNeighborhoodMode, setIsFocusNeighborhoodMode] = useState(false);
   const [currentZoomLevel, setCurrentZoomLevel] = useState(0.85);
@@ -231,11 +226,14 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
   const renderRef = useRef<() => void>(() => {});
   const hasCenteredRef = useRef<boolean>(false);
 
-  // Fetch graph data
-  const loadGraph = useCallback((force = false, scope: string[] = categories) => {
+  // Fetch graph data. The whole graph, always: a document's category is still
+  // recorded on its node and still shown when one is selected, but the graph is
+  // no longer cut down to a subset of them. Cutting it was what made a DR
+  // record's link to a PKG spec disappear, which is the edge a graph is for.
+  const loadGraph = useCallback((force = false) => {
     setLoading(true);
     setError(null);
-    const fetcher = force ? api.rebuildGraph(scope) : api.graphData(scope);
+    const fetcher = force ? api.rebuildGraph() : api.graphData();
     fetcher
       .then((data) => {
         setGraphData(data);
@@ -253,42 +251,13 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
         setError(err.message || "Failed to load knowledge graph");
       })
       .finally(() => setLoading(false));
-  }, [categories]);
+  }, []);
 
   useEffect(() => {
     if (active && !graphData) {
       loadGraph();
     }
   }, [active, graphData, loadGraph]);
-
-  // Changing the scope refetches: the server decides which nodes survive, and
-  // it also recomputes each node's degree for the graph actually shown.
-  const changeCategories = useCallback(
-    (next: string[]) => {
-      setCategories(next);
-      setSelectedNode(null);
-      // The model's label counts and sample instances are taken from the graph
-      // in view, so they are stale the moment the scope changes. Dropping it
-      // lets the lazy fetch pick up the new numbers.
-      setModel(null);
-      setModelError(null);
-      setSelectedModelNode(null);
-      loadGraph(false, next);
-    },
-    [loadGraph],
-  );
-
-  // Every category the graph knows about, whatever is being shown right now.
-  const [knownCategories, setKnownCategories] = useState<Record<string, number>>({});
-  useEffect(() => {
-    const seen = graphData?.stats.categories;
-    if (!seen) return;
-    // A narrowed response only reports the categories it kept, so the full set
-    // is remembered from the unfiltered load rather than shrinking with it.
-    setKnownCategories((known) =>
-      categories.length === 0 ? seen : { ...seen, ...known },
-    );
-  }, [graphData, categories]);
 
   // Filter nodes & links based on visibleTypes
   const { filteredNodes, filteredLinks, nodeMap } = useMemo(() => {
@@ -1215,22 +1184,38 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
           py: 1,
           borderBottom: 1,
           borderColor: "divider",
-          bgcolor: (t) => alpha(t.palette.background.paper, 0.9),
-          backdropFilter: "blur(8px)",
+          bgcolor: (t) => alpha(t.palette.background.paper, 0.85),
+          backdropFilter: "blur(16px)",
           zIndex: 10,
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          minHeight: 48,
+          minHeight: 52,
+          boxShadow: (t) =>
+            t.palette.mode === "dark"
+              ? "0 4px 20px -2px rgba(0, 0, 0, 0.4)"
+              : "0 2px 10px -2px rgba(0, 0, 0, 0.05)",
+          "@keyframes pulseDot": {
+            "0%": { transform: "scale(0.95)", boxShadow: "0 0 0 0 rgba(16, 185, 129, 0.7)" },
+            "70%": { transform: "scale(1)", boxShadow: "0 0 0 6px rgba(16, 185, 129, 0)" },
+            "100%": { transform: "scale(0.95)", boxShadow: "0 0 0 0 rgba(16, 185, 129, 0)" },
+          },
         }}
       >
-        {/* Left: Sidebar Toggle, Title, Stats */}
-        <Stack direction="row" spacing={1.25} sx={{ alignItems: "center" }}>
+        {/* Left: Sidebar Toggle, Title, Live Status, Stats */}
+        <Stack direction="row" spacing={1.5} sx={{ alignItems: "center" }}>
           <Tooltip title={isSidebarOpen ? "Collapse Sidebar" : "Expand Sidebar"}>
             <IconButton
               size="small"
               onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-              sx={{ border: 1, borderColor: "divider" }}
+              sx={{
+                border: 1,
+                borderColor: "divider",
+                borderRadius: 2,
+                bgcolor: (t) => alpha(t.palette.background.paper, 0.6),
+                "&:hover": { bgcolor: "action.hover" },
+                transition: "all 0.15s ease",
+              }}
             >
               {isSidebarOpen ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />}
             </IconButton>
@@ -1238,37 +1223,89 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
 
           <Box
             sx={{
-              width: 28,
-              height: 28,
-              borderRadius: 1.5,
-              bgcolor: alpha(theme.palette.primary.main, 0.12),
+              width: 32,
+              height: 32,
+              borderRadius: 2,
+              bgcolor: (t) => alpha(t.palette.primary.main, 0.12),
               color: "primary.main",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
+              border: 1,
+              borderColor: (t) => alpha(t.palette.primary.main, 0.25),
+              boxShadow: (t) => `0 0 12px ${alpha(t.palette.primary.main, 0.2)}`,
             }}
           >
-            <Network size={16} />
+            <Network size={18} />
           </Box>
 
-          <Typography variant="subtitle1" sx={{ fontWeight: 750, letterSpacing: "-0.01em", fontSize: 15, display: { xs: "none", sm: "block" } }}>
-            Solvay SPARK Knowledge Graph
-          </Typography>
+          <Stack spacing={0}>
+            <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
+              <Typography variant="subtitle1" sx={{ fontWeight: 800, letterSpacing: "-0.015em", fontSize: 15, display: { xs: "none", sm: "block" } }}>
+                Solvay SPARK Knowledge Graph
+              </Typography>
+
+              {/* Active Engine Live Badge */}
+              <Box
+                sx={{
+                  display: { xs: "none", md: "inline-flex" },
+                  alignItems: "center",
+                  gap: 0.75,
+                  px: 1,
+                  py: 0.35,
+                  borderRadius: 999,
+                  bgcolor: (t) => (t.palette.mode === "dark" ? "rgba(16, 185, 129, 0.12)" : "rgba(16, 185, 129, 0.08)"),
+                  border: 1,
+                  borderColor: alpha("#10b981", 0.3),
+                }}
+              >
+                <Box
+                  sx={{
+                    width: 6,
+                    height: 6,
+                    borderRadius: "50%",
+                    bgcolor: "#10b981",
+                    animation: "pulseDot 2s infinite",
+                  }}
+                />
+                <Typography sx={{ fontSize: 10.5, fontWeight: 700, color: "#10b981", letterSpacing: "0.02em" }}>
+                  Graph RAG Active
+                </Typography>
+              </Box>
+            </Stack>
+          </Stack>
 
           {graphData && (
             <Stack direction="row" spacing={0.75} sx={{ alignItems: "center" }}>
               <Chip
                 size="small"
+                icon={<Network size={12} />}
                 label={`${filteredNodes.length} Nodes`}
                 color="primary"
                 variant="outlined"
-                sx={{ fontWeight: 700, fontSize: 11, height: 22 }}
+                sx={{
+                  fontWeight: 700,
+                  fontSize: 11,
+                  height: 24,
+                  borderRadius: 1.5,
+                  bgcolor: (t) => alpha(t.palette.primary.main, 0.08),
+                  borderColor: (t) => alpha(t.palette.primary.main, 0.3),
+                }}
               />
               <Chip
                 size="small"
+                icon={<Route size={12} />}
                 label={`${filteredLinks.length} Relations`}
                 variant="outlined"
-                sx={{ fontWeight: 600, fontSize: 11, color: "text.secondary", height: 22 }}
+                sx={{
+                  fontWeight: 650,
+                  fontSize: 11,
+                  color: "text.secondary",
+                  height: 24,
+                  borderRadius: 1.5,
+                  bgcolor: (t) => alpha(t.palette.action.hover, 0.5),
+                  borderColor: "divider",
+                }}
               />
             </Stack>
           )}
@@ -1276,85 +1313,57 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
 
         {/* Right: Actions */}
         <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
-          <Stack
-            direction="row"
+          {/* Segmented View Switcher */}
+          <Box
             sx={{
+              display: "flex",
+              p: 0.35,
+              borderRadius: 2,
+              bgcolor: (t) => (t.palette.mode === "dark" ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.04)"),
               border: 1,
               borderColor: "divider",
-              borderRadius: 1,
-              overflow: "hidden",
-              height: 30,
             }}
           >
-            {(["graph", "process", "model"] as const).map((mode) => (
-              <Button
-                key={mode}
-                size="small"
-                disableElevation
-                variant={viewMode === mode ? "contained" : "text"}
-                color={viewMode === mode ? "primary" : "inherit"}
-                onClick={() => setViewMode(mode)}
-                startIcon={
-                  mode === "graph" ? (
-                    <Network size={13} />
-                  ) : mode === "process" ? (
-                    <GitBranch size={13} />
-                  ) : (
-                    <Layers size={13} />
-                  )
-                }
-                sx={{
-                  textTransform: "none",
-                  fontWeight: 700,
-                  fontSize: 12,
-                  borderRadius: 0,
-                  px: 1.25,
-                  minWidth: 0,
-                }}
-              >
-                {mode === "graph" ? "Graph" : mode === "process" ? "Process" : "Model"}
-              </Button>
-            ))}
-          </Stack>
-
-          {/* Which categories of document are in view. The model view keeps it
-              too: its schema does not change, but its label counts and sample
-              instances are read off the graph being shown. */}
-          {Object.keys(knownCategories).length > 0 && (
-            // A MUI Tooltip here would sit above the open menu -- tooltips are
-            // z-index 1500, menus 1300 -- and cover the options being clicked.
-            // A plain title attribute is a native tooltip: it follows the
-            // cursor and goes away on click.
-            <Select
-              multiple
-              size="small"
-              displayEmpty
-              value={categories}
-              onChange={(e) =>
-                changeCategories(typeof e.target.value === "string" ? e.target.value.split(",") : e.target.value)
-              }
-              disabled={loading}
-              title="Which document categories the graph covers. None selected covers all of them."
-              renderValue={(picked) => (
-                <Stack direction="row" spacing={0.6} sx={{ alignItems: "center" }}>
-                  <Layers size={13} />
-                  <span>{picked.length === 0 ? "All categories" : picked.join(", ")}</span>
-                </Stack>
-              )}
-              sx={{ height: 30, fontSize: 12, fontWeight: 600, minWidth: 150 }}
-            >
-              {Object.entries(knownCategories).map(([code, count]) => (
-                <MenuItem key={code} value={code} sx={{ py: 0.5 }}>
-                  <Checkbox size="small" checked={categories.includes(code)} sx={{ mr: 0.5 }} />
-                  <ListItemText
-                    primary={code}
-                    secondary={`${count} document${count === 1 ? "" : "s"}`}
-                    slotProps={{ primary: { sx: { fontSize: 13 } }, secondary: { sx: { fontSize: 11 } } }}
-                  />
-                </MenuItem>
-              ))}
-            </Select>
-          )}
+            {(["graph", "process", "model"] as const).map((mode) => {
+              const active = viewMode === mode;
+              return (
+                <Button
+                  key={mode}
+                  size="small"
+                  disableElevation
+                  onClick={() => setViewMode(mode)}
+                  startIcon={
+                    mode === "graph" ? (
+                      <Network size={13} />
+                    ) : mode === "process" ? (
+                      <GitBranch size={13} />
+                    ) : (
+                      <Layers size={13} />
+                    )
+                  }
+                  sx={{
+                    textTransform: "none",
+                    fontWeight: active ? 750 : 600,
+                    fontSize: 12,
+                    borderRadius: 1.5,
+                    px: 1.35,
+                    minWidth: 0,
+                    height: 26,
+                    color: active ? "primary.contrastText" : "text.secondary",
+                    bgcolor: active ? "primary.main" : "transparent",
+                    boxShadow: active ? (t) => `0 2px 8px ${alpha(t.palette.primary.main, 0.35)}` : "none",
+                    "&:hover": {
+                      bgcolor: active ? "primary.dark" : "action.hover",
+                      color: active ? "primary.contrastText" : "text.primary",
+                    },
+                    transition: "all 0.15s ease",
+                  }}
+                >
+                  {mode === "graph" ? "Graph" : mode === "process" ? "Process" : "Model"}
+                </Button>
+              );
+            })}
+          </Box>
 
           {activeQueryResult?.answer && (
             <Button
@@ -1363,7 +1372,14 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
               size="small"
               onClick={() => setIsAnswerDrawerOpen(true)}
               startIcon={<BookOpen size={13} />}
-              sx={{ textTransform: "none", fontWeight: 700, height: 30, fontSize: 12 }}
+              sx={{
+                textTransform: "none",
+                fontWeight: 700,
+                height: 30,
+                fontSize: 12,
+                borderRadius: 2,
+                boxShadow: (t) => `0 2px 10px ${alpha(t.palette.secondary.main, 0.4)}`,
+              }}
             >
               View Answer
             </Button>
@@ -1375,14 +1391,34 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
               size="small"
               startIcon={<Compass size={13} />}
               onClick={handleResetView}
-              sx={{ textTransform: "none", fontWeight: 600, height: 30, fontSize: 12 }}
+              sx={{
+                textTransform: "none",
+                fontWeight: 650,
+                height: 30,
+                fontSize: 12,
+                borderRadius: 2,
+                borderColor: "divider",
+                color: "text.primary",
+                "&:hover": { borderColor: "primary.main", bgcolor: "action.hover" },
+              }}
             >
               Fit View
             </Button>
           </Tooltip>
 
           <Tooltip title="Reheat Physics Simulation">
-            <IconButton size="small" onClick={handleReheat} sx={{ border: 1, borderColor: "divider", width: 30, height: 30 }}>
+            <IconButton
+              size="small"
+              onClick={handleReheat}
+              sx={{
+                border: 1,
+                borderColor: "divider",
+                borderRadius: 2,
+                width: 30,
+                height: 30,
+                "&:hover": { borderColor: "primary.main", color: "primary.main" },
+              }}
+            >
               <Play size={13} />
             </IconButton>
           </Tooltip>
@@ -1395,7 +1431,15 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
               startIcon={<RefreshCw size={13} className={loading ? "animate-spin" : ""} />}
               onClick={() => loadGraph(true)}
               disabled={loading}
-              sx={{ textTransform: "none", fontWeight: 600, height: 30, fontSize: 12 }}
+              sx={{
+                textTransform: "none",
+                fontWeight: 650,
+                height: 30,
+                fontSize: 12,
+                borderRadius: 2,
+                borderColor: "divider",
+                "&:hover": { borderColor: "primary.main", bgcolor: "action.hover" },
+              }}
             >
               Rescan
             </Button>
@@ -1408,7 +1452,15 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
               size="small"
               startIcon={isFullscreen ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
               onClick={toggleFullscreen}
-              sx={{ textTransform: "none", fontWeight: 600, height: 30, fontSize: 12 }}
+              sx={{
+                textTransform: "none",
+                fontWeight: 650,
+                height: 30,
+                fontSize: 12,
+                borderRadius: 2,
+                borderColor: isFullscreen ? "primary.main" : "divider",
+                "&:hover": { borderColor: "primary.main" },
+              }}
             >
               {isFullscreen ? "Exit Full Screen" : "Full Screen"}
             </Button>
@@ -1428,20 +1480,20 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
             overflow: "hidden",
             borderRight: isSidebarOpen ? 1 : 0,
             borderColor: "divider",
-            bgcolor: (t) => alpha(t.palette.background.paper, 0.95),
-            backdropFilter: "blur(10px)",
+            bgcolor: (t) => alpha(t.palette.background.paper, 0.94),
+            backdropFilter: "blur(16px)",
             display: "flex",
             flexDirection: "column",
             zIndex: 10,
           }}
         >
-          <Box sx={{ width: 320, height: "100%", display: "flex", flexDirection: "column", overflowY: "auto", p: 2, gap: 2.5 }}>
+          <Box sx={{ width: 320, height: "100%", display: "flex", flexDirection: "column", overflowY: "auto", p: 2, gap: 2.25 }}>
             {/* Section 1: Entity Search */}
             <Box>
               <Typography
                 variant="caption"
                 sx={{
-                  fontWeight: 700,
+                  fontWeight: 750,
                   color: "text.secondary",
                   textTransform: "uppercase",
                   letterSpacing: "0.05em",
@@ -1462,21 +1514,48 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
                   placeholder="Search entities, systems, tickets..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
+                  onKeyDown={clearOnEscape(() => setSearchQuery(""))}
                   slotProps={{
                     input: {
                       startAdornment: (
                         <InputAdornment position="start">
-                          <Search size={14} />
+                          <Search size={14} color={theme.palette.text.secondary} />
                         </InputAdornment>
                       ),
                       endAdornment: searchQuery ? (
+                        clearAdornment(searchQuery, () => setSearchQuery(""), { size: 13 })
+                      ) : (
                         <InputAdornment position="end">
-                          <IconButton size="small" onClick={() => setSearchQuery("")}>
-                            <X size={12} />
-                          </IconButton>
+                          <Box
+                            sx={{
+                              px: 0.75,
+                              py: 0.1,
+                              borderRadius: 1,
+                              bgcolor: (t) => alpha(t.palette.action.hover, 0.8),
+                              border: 1,
+                              borderColor: "divider",
+                              fontSize: 10,
+                              fontWeight: 700,
+                              color: "text.secondary",
+                              fontFamily: "monospace",
+                              letterSpacing: "0.02em",
+                            }}
+                          >
+                            /
+                          </Box>
                         </InputAdornment>
-                      ) : null,
-                      sx: { fontSize: 12.5, height: 36, borderRadius: 2, bgcolor: "background.paper" },
+                      ),
+                      sx: {
+                        fontSize: 12.5,
+                        height: 36,
+                        borderRadius: 2,
+                        bgcolor: "background.paper",
+                        transition: "all 0.15s ease",
+                        "&:hover": { borderColor: "primary.main" },
+                        "&.Mui-focused": {
+                          boxShadow: (t) => `0 0 0 3px ${alpha(t.palette.primary.main, 0.18)}`,
+                        },
+                      },
                     },
                   }}
                 />
@@ -1484,18 +1563,24 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
                 {/* Suggestions Dropdown */}
                 {searchResults.length > 0 && (
                   <Paper
+                    elevation={8}
                     sx={{
                       position: "absolute",
                       top: 42,
                       left: 0,
                       right: 0,
                       zIndex: 50,
-                      maxHeight: 250,
+                      maxHeight: 280,
                       overflowY: "auto",
-                      boxShadow: 4,
-                      borderRadius: 2,
+                      borderRadius: 2.5,
                       border: 1,
                       borderColor: "divider",
+                      bgcolor: (t) => alpha(t.palette.background.paper, 0.98),
+                      backdropFilter: "blur(16px)",
+                      boxShadow: (t) =>
+                        t.palette.mode === "dark"
+                          ? "0 12px 30px -4px rgba(0,0,0,0.7)"
+                          : "0 12px 24px -4px rgba(0,0,0,0.12)",
                     }}
                   >
                     {searchResults.map((n) => {
@@ -1513,21 +1598,32 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
                             alignItems: "center",
                             gap: 1.25,
                             cursor: "pointer",
-                            "&:hover": { bgcolor: "action.hover" },
+                            "&:hover": {
+                              bgcolor: (t) => alpha(t.palette.primary.main, 0.08),
+                            },
                             borderBottom: "1px solid",
                             borderColor: "divider",
+                            transition: "background-color 0.12s ease",
                           }}
                         >
-                          <Box sx={{ width: 8, height: 8, borderRadius: "50%", bgcolor: cfg?.color || "#64748b" }} />
+                          <Box
+                            sx={{
+                              width: 9,
+                              height: 9,
+                              borderRadius: "50%",
+                              bgcolor: cfg?.color || "#64748b",
+                              boxShadow: `0 0 6px ${cfg?.color || "#64748b"}88`,
+                            }}
+                          />
                           <Box sx={{ flex: 1, minWidth: 0 }}>
-                            <Typography variant="body2" noWrap sx={{ fontWeight: 600, fontSize: 12.5 }}>
+                            <Typography variant="body2" noWrap sx={{ fontWeight: 650, fontSize: 12.5 }}>
                               {n.label}
                             </Typography>
                             <Typography variant="caption" sx={{ color: "text.secondary", fontSize: 10.5 }}>
                               {cfg?.label} • {n.degree ?? 0} connections
                             </Typography>
                           </Box>
-                          <ArrowRight size={14} color={theme.palette.text.secondary} />
+                          <ArrowRight size={13} color={theme.palette.text.secondary} />
                         </Box>
                       );
                     })}
@@ -1544,7 +1640,7 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
                 <Typography
                   variant="caption"
                   sx={{
-                    fontWeight: 700,
+                    fontWeight: 750,
                     color: "text.secondary",
                     textTransform: "uppercase",
                     letterSpacing: "0.05em",
@@ -1565,7 +1661,7 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
                       Object.keys(TYPE_CONFIG).forEach((k) => { allOn[k] = true; });
                       setVisibleTypes(allOn);
                     }}
-                    sx={{ minWidth: "auto", p: 0, fontSize: 11, textTransform: "none", color: "primary.main", fontWeight: 600 }}
+                    sx={{ minWidth: "auto", p: 0.3, px: 0.8, fontSize: 11, textTransform: "none", color: "primary.main", fontWeight: 700, borderRadius: 1 }}
                   >
                     All
                   </Button>
@@ -1578,7 +1674,7 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
                       Object.keys(TYPE_CONFIG).forEach((k) => { allOff[k] = false; });
                       setVisibleTypes(allOff);
                     }}
-                    sx={{ minWidth: "auto", p: 0, fontSize: 11, textTransform: "none", color: "text.secondary", fontWeight: 600 }}
+                    sx={{ minWidth: "auto", p: 0.3, px: 0.8, fontSize: 11, textTransform: "none", color: "text.secondary", fontWeight: 650, borderRadius: 1 }}
                   >
                     Clear
                   </Button>
@@ -1600,14 +1696,16 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
                         alignItems: "center",
                         justifyContent: "space-between",
                         px: 1.25,
-                        py: 0.75,
-                        borderRadius: 1.75,
+                        py: 0.85,
+                        borderRadius: 2,
                         cursor: "pointer",
                         border: 1,
-                        borderColor: isVisible ? alpha(cfg.color, 0.35) : "divider",
+                        borderColor: isVisible ? alpha(cfg.color, 0.4) : "divider",
                         bgcolor: isVisible ? alpha(cfg.color, 0.08) : "transparent",
+                        boxShadow: isVisible ? `0 2px 8px ${alpha(cfg.color, 0.1)}` : "none",
                         "&:hover": {
-                          bgcolor: isVisible ? alpha(cfg.color, 0.15) : "action.hover",
+                          bgcolor: isVisible ? alpha(cfg.color, 0.14) : "action.hover",
+                          borderColor: isVisible ? cfg.color : "text.secondary",
                         },
                         transition: "all 0.15s ease",
                       }}
@@ -1624,9 +1722,9 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
                         />
                         <Box
                           sx={{
-                            width: 22,
-                            height: 22,
-                            borderRadius: 1,
+                            width: 24,
+                            height: 24,
+                            borderRadius: 1.2,
                             bgcolor: alpha(cfg.color, 0.15),
                             color: cfg.color,
                             display: "flex",
@@ -1634,9 +1732,9 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
                             justifyContent: "center",
                           }}
                         >
-                          <IconComp size={12} />
+                          <IconComp size={13} />
                         </Box>
-                        <Typography variant="body2" sx={{ fontSize: 12.5, fontWeight: isVisible ? 600 : 500 }}>
+                        <Typography variant="body2" sx={{ fontSize: 12.5, fontWeight: isVisible ? 650 : 500 }}>
                           {cfg.label}
                         </Typography>
                       </Stack>
@@ -1646,9 +1744,10 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
                         sx={{
                           height: 20,
                           fontSize: 10.5,
-                          fontWeight: 650,
-                          bgcolor: isVisible ? alpha(cfg.color, 0.15) : "action.selected",
+                          fontWeight: 700,
+                          bgcolor: isVisible ? alpha(cfg.color, 0.18) : "action.selected",
                           color: isVisible ? cfg.color : "text.secondary",
+                          borderRadius: 1.5,
                         }}
                       />
                     </Box>
@@ -1660,23 +1759,44 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
             <Divider />
 
             {/* Section 3: Graph AI Natural Language Query */}
-            <Box>
-              <Typography
-                variant="caption"
-                sx={{
-                  fontWeight: 700,
-                  color: "text.secondary",
-                  textTransform: "uppercase",
-                  letterSpacing: "0.05em",
-                  fontSize: 11,
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 0.75,
-                  mb: 1,
-                }}
-              >
-                <Sparkles size={13} color={theme.palette.primary.main} /> Ask Knowledge Graph
-              </Typography>
+            <Box
+              sx={{
+                p: 1.5,
+                borderRadius: 2.5,
+                bgcolor: (t) => (t.palette.mode === "dark" ? "rgba(255,255,255,0.03)" : "rgba(0,0,0,0.02)"),
+                border: 1,
+                borderColor: "divider",
+              }}
+            >
+              <Stack direction="row" sx={{ alignItems: "center", justifyContent: "space-between", mb: 1 }}>
+                <Typography
+                  variant="caption"
+                  sx={{
+                    fontWeight: 750,
+                    color: "text.primary",
+                    textTransform: "uppercase",
+                    letterSpacing: "0.05em",
+                    fontSize: 11,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 0.75,
+                  }}
+                >
+                  <Sparkles size={14} color={theme.palette.primary.main} /> Ask Knowledge Graph
+                </Typography>
+                <Chip
+                  size="small"
+                  label="Graph RAG"
+                  sx={{
+                    height: 18,
+                    fontSize: 9.5,
+                    fontWeight: 800,
+                    bgcolor: (t) => alpha(t.palette.primary.main, 0.12),
+                    color: "primary.main",
+                    borderRadius: 1,
+                  }}
+                />
+              </Stack>
 
               <TextField
                 fullWidth
@@ -1695,19 +1815,40 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
                 placeholder="Ask anything (e.g. 'What specs are linked to Salesforce?', 'How does eCommerce connect to S/4HANA?')..."
                 slotProps={{
                   input: {
-                    sx: { fontSize: 12.5, borderRadius: 2, bgcolor: "background.paper" },
+                    sx: {
+                      fontSize: 12.5,
+                      borderRadius: 2,
+                      bgcolor: "background.paper",
+                      transition: "all 0.15s ease",
+                      "&.Mui-focused": {
+                        boxShadow: (t) => `0 0 0 3px ${alpha(t.palette.primary.main, 0.18)}`,
+                      },
+                    },
+                    endAdornment: clearAdornment(queryInput, () => setQueryInput(""),
+                                                 { label: "Clear question", top: true }),
                   },
                 }}
               />
 
-              <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
+              <Typography variant="caption" sx={{ color: "text.secondary", fontSize: 10, display: "block", mt: 0.5 }}>
+                Press ↵ Enter to submit · Shift + ↵ for newline
+              </Typography>
+
+              <Stack direction="row" spacing={1} sx={{ mt: 1.25 }}>
                 <Button
                   fullWidth
                   variant="contained"
                   disabled={isQuerying || !queryInput.trim()}
                   onClick={() => handleRunQuery(queryInput)}
                   startIcon={isQuerying ? <CircularProgress size={13} color="inherit" /> : <Sparkles size={14} />}
-                  sx={{ textTransform: "none", fontWeight: 700, borderRadius: 1.75, fontSize: 12.5, py: 0.75 }}
+                  sx={{
+                    textTransform: "none",
+                    fontWeight: 750,
+                    borderRadius: 2,
+                    fontSize: 12.5,
+                    py: 0.75,
+                    boxShadow: (t) => `0 3px 12px ${alpha(t.palette.primary.main, 0.35)}`,
+                  }}
                 >
                   Ask Graph
                 </Button>
@@ -1716,7 +1857,7 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
                     variant="outlined"
                     color="inherit"
                     onClick={handleClearQuery}
-                    sx={{ textTransform: "none", fontWeight: 600, borderRadius: 1.75, fontSize: 12, px: 1.5 }}
+                    sx={{ textTransform: "none", fontWeight: 650, borderRadius: 2, fontSize: 12, px: 1.5, borderColor: "divider" }}
                   >
                     Clear
                   </Button>
@@ -1724,11 +1865,11 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
               </Stack>
 
               {/* Quick Presets */}
-              <Box sx={{ mt: 1.5 }}>
+              <Box sx={{ mt: 1.75 }}>
                 <Typography
                   variant="caption"
                   sx={{
-                    fontWeight: 700,
+                    fontWeight: 750,
                     color: "text.secondary",
                     fontSize: 10.5,
                     mb: 0.75,
@@ -1749,19 +1890,24 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
                         handleRunQuery(preset.query);
                       }}
                       sx={{
-                        p: 1,
+                        p: 1.1,
                         cursor: "pointer",
-                        borderRadius: 1.5,
+                        borderRadius: 2,
                         bgcolor: "background.paper",
                         borderColor: "divider",
                         "&:hover": {
                           borderColor: "primary.main",
-                          bgcolor: alpha(theme.palette.primary.main, 0.04),
+                          bgcolor: (t) => alpha(t.palette.primary.main, 0.05),
+                          transform: "translateY(-1.5px)",
+                          boxShadow: (t) =>
+                            t.palette.mode === "dark"
+                              ? "0 4px 12px rgba(0,0,0,0.4)"
+                              : "0 4px 12px rgba(0,0,0,0.06)",
                         },
                         transition: "all 0.15s ease",
                       }}
                     >
-                      <Typography variant="caption" sx={{ fontWeight: 650, display: "block", color: "text.primary" }}>
+                      <Typography variant="caption" sx={{ fontWeight: 700, display: "block", color: "text.primary" }}>
                         {preset.label}
                       </Typography>
                       <Typography variant="caption" sx={{ color: "text.secondary", fontSize: 10.5, display: "block", mt: 0.25 }} noWrap>
@@ -2248,16 +2394,16 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
             display: viewMode === "graph" ? "flex" : "none",
             alignItems: "center",
             gap: 0.5,
-            p: 0.75,
-            borderRadius: 2.5,
-            bgcolor: (t) => alpha(t.palette.background.paper, 0.94),
-            backdropFilter: "blur(12px)",
+            p: 0.6,
+            borderRadius: 999,
+            bgcolor: (t) => alpha(t.palette.background.paper, 0.88),
+            backdropFilter: "blur(20px)",
             border: 1,
             borderColor: "divider",
             boxShadow: (t) =>
               t.palette.mode === "dark"
-                ? "0 10px 25px -5px rgba(0,0,0,0.6)"
-                : "0 10px 25px -5px rgba(0,0,0,0.12)",
+                ? "0 14px 34px -4px rgba(0,0,0,0.65)"
+                : "0 10px 25px -4px rgba(0,0,0,0.12)",
           }}
         >
           {/* Zoom Level Indicator */}
@@ -2269,28 +2415,30 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
               fontSize: 11,
               height: 26,
               mr: 0.5,
-              bgcolor: "action.hover",
-              color: "text.secondary",
+              bgcolor: (t) => alpha(t.palette.action.hover, 0.7),
+              color: "text.primary",
+              fontFamily: "monospace",
+              borderRadius: 999,
             }}
           />
 
           <Tooltip title="Zoom In (+)">
-            <IconButton size="small" onClick={handleZoomIn} sx={{ width: 30, height: 30 }}>
-              <ZoomIn size={16} />
+            <IconButton size="small" onClick={handleZoomIn} sx={{ width: 28, height: 28, borderRadius: 999 }}>
+              <ZoomIn size={15} />
             </IconButton>
           </Tooltip>
 
           <Tooltip title="Zoom Out (-)">
-            <IconButton size="small" onClick={handleZoomOut} sx={{ width: 30, height: 30 }}>
-              <ZoomOut size={16} />
+            <IconButton size="small" onClick={handleZoomOut} sx={{ width: 28, height: 28, borderRadius: 999 }}>
+              <ZoomOut size={15} />
             </IconButton>
           </Tooltip>
 
-          <Divider orientation="vertical" flexItem sx={{ mx: 0.25, height: 18, alignSelf: "center" }} />
+          <Divider orientation="vertical" flexItem sx={{ mx: 0.25, height: 16, alignSelf: "center" }} />
 
           <Tooltip title="Fit Entire Graph to Screen">
-            <IconButton size="small" onClick={handleZoomToFit} sx={{ width: 30, height: 30 }}>
-              <Compass size={16} />
+            <IconButton size="small" onClick={handleZoomToFit} sx={{ width: 28, height: 28, borderRadius: 999 }}>
+              <Compass size={15} />
             </IconButton>
           </Tooltip>
 
@@ -2299,12 +2447,13 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
               size="small"
               onClick={toggleFullscreen}
               sx={{
-                width: 30,
-                height: 30,
+                width: 28,
+                height: 28,
+                borderRadius: 999,
                 color: isFullscreen ? "primary.main" : "inherit",
               }}
             >
-              {isFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+              {isFullscreen ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
             </IconButton>
           </Tooltip>
 
@@ -2314,14 +2463,14 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
                 size="small"
                 onClick={handleFocusSelected}
                 disabled={!selectedNode}
-                sx={{ width: 30, height: 30, color: selectedNode ? "primary.main" : "inherit" }}
+                sx={{ width: 28, height: 28, borderRadius: 999, color: selectedNode ? "primary.main" : "inherit" }}
               >
-                <Crosshair size={16} />
+                <Crosshair size={15} />
               </IconButton>
             </span>
           </Tooltip>
 
-          <Divider orientation="vertical" flexItem sx={{ mx: 0.25, height: 18, alignSelf: "center" }} />
+          <Divider orientation="vertical" flexItem sx={{ mx: 0.25, height: 16, alignSelf: "center" }} />
 
           <Tooltip title={isFocusNeighborhoodMode ? "Show Full Graph (Exit Isolation)" : "Isolate 1-Hop Neighborhood (Hide unrelated nodes)"}>
             <span>
@@ -2331,14 +2480,15 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
                 size="small"
                 disabled={!selectedNode}
                 onClick={() => setIsFocusNeighborhoodMode((prev) => !prev)}
-                startIcon={isFocusNeighborhoodMode ? <EyeOff size={14} /> : <Eye size={14} />}
+                startIcon={isFocusNeighborhoodMode ? <EyeOff size={13} /> : <Eye size={13} />}
                 sx={{
                   textTransform: "none",
                   fontWeight: 700,
                   fontSize: 11.5,
-                  height: 28,
+                  height: 26,
                   px: 1.25,
-                  borderRadius: 2,
+                  borderRadius: 999,
+                  boxShadow: isFocusNeighborhoodMode ? (t) => `0 2px 8px ${alpha(t.palette.primary.main, 0.4)}` : "none",
                 }}
               >
                 {isFocusNeighborhoodMode ? "Isolated (1-Hop)" : "Isolate"}
@@ -2349,23 +2499,24 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
 
         {/* Floating Quick Legend / Controls */}
         <Paper
-          elevation={1}
+          elevation={2}
           sx={{
             position: "absolute",
             bottom: 20,
             left: 20,
-            p: isLegendMinimized ? 1 : 1.5,
-            borderRadius: 2.5,
+            p: isLegendMinimized ? 1 : 1.75,
+            borderRadius: 3,
             bgcolor: (t) => alpha(t.palette.background.paper, 0.9),
-            backdropFilter: "blur(8px)",
+            backdropFilter: "blur(16px)",
             border: 1,
             borderColor: "divider",
-            boxShadow: 2,
-            maxWidth: isLegendMinimized ? "auto" : 260,
-            // Keeps the existing narrow-screen rule; "none" outright in model
-            // mode, where this legend describes the wrong thing.
+            boxShadow: (t) =>
+              t.palette.mode === "dark"
+                ? "0 10px 28px -4px rgba(0,0,0,0.6)"
+                : "0 8px 20px -4px rgba(0,0,0,0.1)",
+            maxWidth: isLegendMinimized ? "auto" : 270,
             display: viewMode === "graph" ? { xs: "none", sm: "block" } : "none",
-            transition: "all 0.2s ease",
+            transition: "all 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
             zIndex: 10,
           }}
         >
@@ -2381,13 +2532,13 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
             onClick={() => setIsLegendMinimized((prev) => !prev)}
           >
             <Stack direction="row" spacing={0.75} sx={{ alignItems: "center" }}>
-              <Info size={13} color={theme.palette.text.secondary} />
+              <Info size={14} color={theme.palette.text.secondary} />
               <Typography
                 variant="caption"
                 sx={{
                   fontWeight: 750,
                   textTransform: "uppercase",
-                  letterSpacing: "0.05em",
+                  letterSpacing: "0.06em",
                   color: "text.secondary",
                   fontSize: 10.5,
                   whiteSpace: "nowrap",
@@ -2397,26 +2548,34 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
               </Typography>
             </Stack>
             <Tooltip title={isLegendMinimized ? "Expand Legend & Hints" : "Minimize Legend & Hints"}>
-              <IconButton size="small" sx={{ p: 0.25, ml: 0.5 }}>
+              <IconButton size="small" sx={{ p: 0.25, ml: 0.5, borderRadius: 1.5 }}>
                 {isLegendMinimized ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
               </IconButton>
             </Tooltip>
           </Stack>
 
           {!isLegendMinimized && (
-            <Box sx={{ mt: 1 }}>
-              <Stack spacing={0.75}>
+            <Box sx={{ mt: 1.25 }}>
+              <Stack spacing={0.85}>
                 {Object.entries(TYPE_CONFIG).map(([typeKey, cfg]) => (
                   <Stack key={typeKey} direction="row" spacing={1} sx={{ alignItems: "center" }}>
-                    <Box sx={{ width: 10, height: 10, borderRadius: "50%", bgcolor: cfg.color }} />
-                    <Typography variant="caption" sx={{ fontSize: 11.5 }}>
+                    <Box
+                      sx={{
+                        width: 9,
+                        height: 9,
+                        borderRadius: "50%",
+                        bgcolor: cfg.color,
+                        boxShadow: `0 0 6px ${cfg.color}88`,
+                      }}
+                    />
+                    <Typography variant="caption" sx={{ fontSize: 11.5, fontWeight: 550 }}>
                       {cfg.label}
                     </Typography>
                   </Stack>
                 ))}
               </Stack>
-              <Divider sx={{ my: 1 }} />
-              <Typography variant="caption" sx={{ color: "text.secondary", fontSize: 10.5, display: "block", lineHeight: 1.5 }}>
+              <Divider sx={{ my: 1.25 }} />
+              <Typography variant="caption" sx={{ color: "text.secondary", fontSize: 10.5, display: "block", lineHeight: 1.55 }}>
                 • <b>Hover any node</b> to highlight connected links & arrows.
                 <br />• <b>Click any node</b> to inspect relationships & specifications.
                 <br />• <b>"Isolate" button</b> hides unrelated nodes for crystal clarity.
@@ -2437,10 +2596,13 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
         slotProps={{
           paper: {
             sx: {
-              width: { xs: "100%", sm: 380 },
+              width: { xs: "100%", sm: 390 },
               p: 3,
-              bgcolor: "background.paper",
-              boxShadow: 8,
+              bgcolor: (t) => alpha(t.palette.background.paper, 0.96),
+              backdropFilter: "blur(20px)",
+              boxShadow: 12,
+              borderLeft: 1,
+              borderColor: "divider",
               zIndex: (t) => (isFullscreen ? 1500 : t.zIndex.drawer),
             },
           },
@@ -2456,14 +2618,17 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
               <Stack direction="row" spacing={1.25} sx={{ alignItems: "center" }}>
                 <Box
                   sx={{
-                    width: 38,
-                    height: 38,
+                    width: 40,
+                    height: 40,
                     borderRadius: 2,
                     bgcolor: alpha(nodeColor(selectedNode), 0.15),
                     color: nodeColor(selectedNode),
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
+                    border: 1,
+                    borderColor: alpha(nodeColor(selectedNode), 0.3),
+                    boxShadow: `0 0 16px ${alpha(nodeColor(selectedNode), 0.25)}`,
                   }}
                 >
                   <Network size={20} />
@@ -2474,24 +2639,25 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
                     label={TYPE_CONFIG[selectedNode.type]?.label || selectedNode.type}
                     sx={{
                       fontSize: 10.5,
-                      fontWeight: 700,
-                      height: 20,
+                      fontWeight: 750,
+                      height: 22,
                       bgcolor: alpha(nodeColor(selectedNode), 0.15),
                       color: nodeColor(selectedNode),
+                      borderRadius: 1.5,
                     }}
                   />
-                  <Typography variant="caption" sx={{ display: "block", color: "text.secondary", mt: 0.25 }}>
+                  <Typography variant="caption" sx={{ display: "block", color: "text.secondary", mt: 0.25, fontWeight: 500 }}>
                     {selectedNode.degree ?? 0} direct relationships
                   </Typography>
                 </Box>
               </Stack>
-              <IconButton size="small" onClick={() => setIsDrawerOpen(false)}>
-                <X size={16} />
+              <IconButton size="small" onClick={() => setIsDrawerOpen(false)} sx={{ borderRadius: 1.5, border: 1, borderColor: "divider" }}>
+                <X size={15} />
               </IconButton>
             </Stack>
 
             {/* Entity Title */}
-            <Typography variant="h6" sx={{ fontWeight: 750, mb: 1, wordBreak: "break-word", lineHeight: 1.3 }}>
+            <Typography variant="h6" sx={{ fontWeight: 800, mb: 1, wordBreak: "break-word", lineHeight: 1.3, letterSpacing: "-0.01em" }}>
               {selectedNode.label}
             </Typography>
 
@@ -2502,37 +2668,46 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
             )}
 
             {selectedNode.filename && (
-              <Box sx={{ p: 1.5, borderRadius: 2, bgcolor: "action.hover", mb: 2 }}>
+              <Box
+                sx={{
+                  p: 1.5,
+                  borderRadius: 2,
+                  bgcolor: (t) => alpha(t.palette.action.hover, 0.6),
+                  border: 1,
+                  borderColor: "divider",
+                  mb: 2,
+                }}
+              >
                 <Stack direction="row" spacing={1} sx={{ alignItems: "center", mb: 0.5 }}>
-                  <Typography variant="caption" sx={{ color: "text.secondary" }}>
-                    Source Markdown Document
+                  <Typography variant="caption" sx={{ color: "text.secondary", fontWeight: 650 }}>
+                    Source Document
                   </Typography>
                   {selectedNode.category && (
                     <Chip
                       size="small"
                       variant="outlined"
                       label={selectedNode.category}
-                      sx={{ height: 17, fontSize: 10, fontWeight: 700 }}
+                      sx={{ height: 18, fontSize: 10, fontWeight: 700, borderRadius: 1 }}
                     />
                   )}
                 </Stack>
-                <Typography variant="body2" sx={{ fontFamily: "monospace", fontSize: 12, wordBreak: "break-all", fontWeight: 600 }}>
+                <Typography variant="body2" sx={{ fontFamily: "monospace", fontSize: 11.5, wordBreak: "break-all", fontWeight: 600 }}>
                   {selectedNode.filename}
                 </Typography>
               </Box>
             )}
 
             {/* Quick Actions */}
-            <Stack direction="row" spacing={1} sx={{ mb: 3 }}>
+            <Stack direction="row" spacing={1} sx={{ mb: 2.5 }}>
               {selectedNode.filename && onNavigate && (
                 <Button
                   variant="outlined"
                   size="small"
                   startIcon={<FileText size={14} />}
                   onClick={() => onNavigate("viewer", selectedNode.filename)}
-                  sx={{ textTransform: "none", fontWeight: 600, flex: 1 }}
+                  sx={{ textTransform: "none", fontWeight: 650, flex: 1, borderRadius: 2, borderColor: "divider" }}
                 >
-                  View Document
+                  View Doc
                 </Button>
               )}
               <Button
@@ -2540,17 +2715,23 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
                 size="small"
                 startIcon={<Sparkles size={14} />}
                 onClick={() => handleRunQuery(`Tell me about ${selectedNode.label} and its connected specifications and systems`)}
-                sx={{ textTransform: "none", fontWeight: 600, flex: 1 }}
+                sx={{
+                  textTransform: "none",
+                  fontWeight: 700,
+                  flex: 1,
+                  borderRadius: 2,
+                  boxShadow: (t) => `0 2px 10px ${alpha(t.palette.primary.main, 0.35)}`,
+                }}
               >
                 Query Graph
               </Button>
             </Stack>
 
-            <Divider sx={{ mb: 2.5 }} />
+            <Divider sx={{ mb: 2 }} />
 
             {/* Connected Entities Sections */}
-            <Box sx={{ flex: 1, overflowY: "auto" }}>
-              <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1.5, textTransform: "uppercase", fontSize: 11, letterSpacing: "0.05em", color: "text.secondary" }}>
+            <Box sx={{ flex: 1, overflowY: "auto", pr: 0.5 }}>
+              <Typography variant="subtitle2" sx={{ fontWeight: 750, mb: 1.5, textTransform: "uppercase", fontSize: 11, letterSpacing: "0.05em", color: "text.secondary" }}>
                 Connected Entities ({neighborIds.size - 1})
               </Typography>
 
@@ -2568,7 +2749,16 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
                         label={item.label}
                         clickable
                         onClick={() => zoomToNode(item)}
-                        sx={{ justifyContent: "flex-start", fontWeight: 600, fontSize: 12 }}
+                        sx={{
+                          justifyContent: "flex-start",
+                          fontWeight: 650,
+                          fontSize: 12,
+                          borderRadius: 1.75,
+                          border: 1,
+                          borderColor: alpha(nodeColor(item), 0.3),
+                          bgcolor: alpha(nodeColor(item), 0.08),
+                          "&:hover": { bgcolor: alpha(nodeColor(item), 0.16) },
+                        }}
                       />
                     ))}
                   </Stack>
@@ -2589,7 +2779,17 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
                         label={item.label}
                         clickable
                         onClick={() => zoomToNode(item)}
-                        sx={{ justifyContent: "flex-start", fontWeight: 600, fontSize: 12, bgcolor: alpha(nodeColor(item), 0.1), color: nodeColor(item) }}
+                        sx={{
+                          justifyContent: "flex-start",
+                          fontWeight: 650,
+                          fontSize: 12,
+                          borderRadius: 1.75,
+                          bgcolor: alpha(nodeColor(item), 0.1),
+                          color: nodeColor(item),
+                          border: 1,
+                          borderColor: alpha(nodeColor(item), 0.25),
+                          "&:hover": { bgcolor: alpha(nodeColor(item), 0.2) },
+                        }}
                       />
                     ))}
                   </Stack>
@@ -2610,7 +2810,7 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
                         label={item.label}
                         clickable
                         onClick={() => zoomToNode(item)}
-                        sx={{ fontWeight: 600, fontSize: 11, fontFamily: "monospace" }}
+                        sx={{ fontWeight: 650, fontSize: 11, fontFamily: "monospace", borderRadius: 1.5 }}
                       />
                     ))}
                   </Box>
@@ -2631,7 +2831,16 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
                         label={item.label}
                         clickable
                         onClick={() => zoomToNode(item)}
-                        sx={{ fontWeight: 700, fontSize: 11, fontFamily: "monospace", color: "#ea580c" }}
+                        sx={{
+                          fontWeight: 750,
+                          fontSize: 11,
+                          fontFamily: "monospace",
+                          color: "#ea580c",
+                          bgcolor: alpha("#ea580c", 0.1),
+                          border: 1,
+                          borderColor: alpha("#ea580c", 0.25),
+                          borderRadius: 1.5,
+                        }}
                       />
                     ))}
                   </Box>
@@ -2652,12 +2861,14 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
                         sx={{
                           p: 1.25,
                           cursor: "pointer",
+                          borderRadius: 2,
                           border: 1,
                           borderColor: "divider",
                           "&:hover": { bgcolor: "action.hover", borderColor: "primary.main" },
+                          transition: "all 0.15s ease",
                         }}
                       >
-                        <Typography variant="body2" sx={{ fontWeight: 600, fontSize: 12 }}>
+                        <Typography variant="body2" sx={{ fontWeight: 650, fontSize: 12 }}>
                           {item.label}
                         </Typography>
                         <Typography variant="caption" sx={{ color: "text.secondary", fontSize: 10.5 }}>
@@ -2684,7 +2895,8 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
             sx: {
               width: { xs: "100%", sm: 540, md: 580 },
               p: 3,
-              bgcolor: "background.paper",
+              bgcolor: (t) => alpha(t.palette.background.paper, 0.96),
+              backdropFilter: "blur(20px)",
               boxShadow: 12,
               display: "flex",
               flexDirection: "column",
@@ -2703,20 +2915,23 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
               <Stack direction="row" spacing={1.25} sx={{ alignItems: "center" }}>
                 <Box
                   sx={{
-                    width: 36,
-                    height: 36,
+                    width: 38,
+                    height: 38,
                     borderRadius: 2,
-                    bgcolor: (t) => alpha(t.palette.primary.main, 0.12),
+                    bgcolor: (t) => alpha(t.palette.primary.main, 0.14),
                     color: "primary.main",
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
+                    border: 1,
+                    borderColor: (t) => alpha(t.palette.primary.main, 0.3),
+                    boxShadow: (t) => `0 0 16px ${alpha(t.palette.primary.main, 0.25)}`,
                   }}
                 >
                   <Sparkles size={20} />
                 </Box>
                 <Box>
-                  <Typography variant="subtitle1" sx={{ fontWeight: 750, lineHeight: 1.2 }}>
+                  <Typography variant="subtitle1" sx={{ fontWeight: 800, lineHeight: 1.2, letterSpacing: "-0.01em" }}>
                     Knowledge Graph Answer
                   </Typography>
                   <Chip
@@ -2724,19 +2939,19 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
                     label="Grounded in Knowledge Graph"
                     color="primary"
                     variant="outlined"
-                    sx={{ height: 18, fontSize: 10, fontWeight: 700, mt: 0.25 }}
+                    sx={{ height: 20, fontSize: 10, fontWeight: 750, mt: 0.35, borderRadius: 1.5 }}
                   />
                 </Box>
               </Stack>
 
               <Stack direction="row" spacing={0.75} sx={{ alignItems: "center" }}>
                 <Tooltip title={copiedAnswer ? "Copied!" : "Copy Answer"}>
-                  <IconButton size="small" onClick={handleCopyAnswer} sx={{ border: 1, borderColor: "divider" }}>
+                  <IconButton size="small" onClick={handleCopyAnswer} sx={{ border: 1, borderColor: "divider", borderRadius: 1.5 }}>
                     {copiedAnswer ? <Check size={14} color="#10b981" /> : <Copy size={14} />}
                   </IconButton>
                 </Tooltip>
-                <IconButton size="small" onClick={() => setIsAnswerDrawerOpen(false)}>
-                  <X size={16} />
+                <IconButton size="small" onClick={() => setIsAnswerDrawerOpen(false)} sx={{ borderRadius: 1.5, border: 1, borderColor: "divider" }}>
+                  <X size={15} />
                 </IconButton>
               </Stack>
             </Stack>
@@ -2759,7 +2974,7 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
                 onClick={() => {
                   zoomToNodes(activeQueryResult.node_ids);
                 }}
-                sx={{ textTransform: "none", fontWeight: 600 }}
+                sx={{ textTransform: "none", fontWeight: 650, borderRadius: 2, borderColor: "divider" }}
               >
                 Highlight on Canvas ({activeQueryResult.node_ids.length} Nodes)
               </Button>
@@ -2767,7 +2982,7 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
                 variant="text"
                 size="small"
                 onClick={() => setIsAnswerDrawerOpen(false)}
-                sx={{ textTransform: "none", fontWeight: 600 }}
+                sx={{ textTransform: "none", fontWeight: 650, borderRadius: 2 }}
               >
                 Close Answer
               </Button>

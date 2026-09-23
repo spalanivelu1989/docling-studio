@@ -19,21 +19,20 @@ The two rankings are merged with reciprocal rank fusion, and Claude writes an
 answer from the top chunks only, citing them.
 
 Every document carries a category -- PKG for the package documents, DR for
-design reviews -- and a category can have a database of its own. Searching
-covers every database the requested categories span; see the "categories"
-section below for how a file gets its category and where that category lives.
+design reviews -- and a search can be restricted to some of them. The category
+is a column, not a database: one corpus, one index, one row per chunk, and
+scoping a search is a WHERE clause. See the "categories" section below for how
+a file gets its category.
 
 Settings come from the environment or the project's .env:
 
     DATABASE_URL        e.g. postgresql://user:password@localhost:5432/docling
-    RAG_DATABASE_URL_*  a category with a database of its own, by code:
-                        RAG_DATABASE_URL_PKG=postgresql://.../docling_pkg
     ANTHROPIC_API_KEY   for `ask`
     OLLAMA_HOST         default http://127.0.0.1:11434
     RAG_EMBED_MODEL     default bge-m3
     RAG_EMBED_DIMENSION default 1024
     RAG_ANSWER_MODEL    default claude-opus-5
-    RAG_HNSW_EF_SEARCH  default 200 (see _tune)
+    RAG_HNSW_EF_SEARCH  default 800 (see _tune)
 
 The chunk text goes to Ollama when indexing, and the question plus the
 retrieved chunks go to Anthropic when asking.
@@ -56,6 +55,7 @@ import numpy as np
 from dotenv import load_dotenv
 
 import md_chunker
+import tracing
 from md_chunker import Chunk, chunk_file, with_context
 
 load_dotenv(Path(__file__).with_name(".env"), override=False)
@@ -79,7 +79,17 @@ MODES = ("hybrid", "vector", "keyword")
 # returns whatever survives the walk -- at the default ef_search of 40, asking
 # for 40 chunks from one category of several comes back with a handful. See
 # _tune below.
-EF_SEARCH = int(os.environ.get("RAG_HNSW_EF_SEARCH", "200"))
+#
+# 800 rather than 200 because one index over every category is a bigger graph
+# than one index per category was, and a walk that collects 200 candidates from
+# it finds fewer of the true nearest neighbours. Measured over ten questions
+# against an exact scan, searching every category: 0.85 at 200, 0.88 at 400,
+# 0.98 at 600 and above. 0.98 is what the per-category indexes gave, because a
+# search across two of them collected 40 candidates from each and kept the best
+# 40 -- two small walks beat one large one, and ef_search is how the single
+# index buys that back. It costs about 0.7 ms a query against a search that
+# takes 180.
+EF_SEARCH = int(os.environ.get("RAG_HNSW_EF_SEARCH", "800"))
 
 BASE = Path(__file__).resolve().parent
 
@@ -92,18 +102,17 @@ BASE = Path(__file__).resolve().parent
 # easier to tell apart. Keeping the category out of the vector also means
 # re-tagging a document is an UPDATE rather than 50 embedding calls.
 #
-# Every category is isolated in a database of its own, named after the one in
-# DATABASE_URL: with DATABASE_URL=.../docling, PKG lives in docling_pkg and DR
-# in docling_dr. DATABASE_URL itself holds no documents -- it is the base name
-# the rest are derived from, and where the tables that are not per-category
-# (fitgap's runs and reviews) live.
+# Every category lives in the same tables, told apart by a column. The corpus
+# was split across a database per category for one release; it was merged back
+# because `rag_documents.source` is declared UNIQUE and could only be unique
+# per database, so the same file could be indexed twice and one DELETE removed
+# both. In one table that state cannot be written down. See migration_plan.md.
 #
-# Adding a category therefore takes no code change. Drop the Markdown in
-# solvay-spark/<code>/markdown and index it: the folder names the category, and
-# its database is created on the first write. CATEGORIES below only carries the
-# labels and descriptions worth showing in the UI, and
-# RAG_DATABASE_URL_<CODE> overrides where one category lives -- another server,
-# or a name that does not follow the convention.
+# Adding a category still takes no code change. Drop the Markdown in
+# solvay-spark/<code>/markdown and index it: the folder names the category and
+# the row records it. CATEGORIES below only carries the labels and descriptions
+# worth showing in the UI; a category that is not in it is still a category, and
+# rag_categories is the registry of the ones that exist.
 
 UNFILED = "UNFILED"
 
@@ -129,10 +138,15 @@ CATEGORIES: dict[str, dict[str, str]] = {
 # entry above: solvay-spark/dr/markdown is DR whether or not anyone said so.
 MARKDOWN_FOLDER = "markdown"
 
-# Databases that follow the <base>_<code> naming convention but hold no
-# documents. They are not categories: they must never appear in a category
-# listing, a filter or a search, even though database_url() still names them.
-RESERVED_CODES = {"FITGAP"}
+# Codes that name a store rather than a corpus, and must never be accepted as a
+# document category.
+#
+# SESSION is the database holding the Fit-Gap Copilot's and the Rollout Agent's
+# uploaded documents, one Postgres schema per session, and UPLOAD is the
+# category their chunks carry inside it. Keeping an attachment out of the corpus
+# is structural -- it is in another database entirely, and this list only stops
+# someone filing a document under the same name.
+RESERVED_CODES = {"FITGAP", "ROLLOUT", "SESSION", "UPLOAD"}
 
 # A category code reaches SQL as text in exactly one place -- ts_stat takes its
 # query as a string literal, so it cannot be a bind parameter -- and every code
@@ -196,29 +210,68 @@ def category_for(path: Path, explicit: str | None = None, text: str | None = Non
     return UNFILED
 
 
+def declare_category(text: str, code: str) -> str:
+    """`text` with `category: <code>` recorded in its front matter.
+
+    Keeps any other keys that are already there, and rewrites the category key
+    rather than adding a second one."""
+    code = check_category(code)
+    m = _FRONT_MATTER.match(text)
+    if not m:
+        return f"---\ncategory: {code}\n---\n\n{text.lstrip()}"
+    kept = [
+        line for line in m.group(1).splitlines()
+        if line.partition(":")[0].strip().lower() != "category"
+    ]
+    block = "\n".join(["category: " + code, *kept])
+    return f"---\n{block}\n---\n" + text[m.end():]
+
+
+def record_category(path: Path, code: str) -> bool:
+    """Write the category into the file, so the decision lives on disk.
+
+    A category chosen in the UI used to be stored on the database row and
+    nowhere else. The graph builds from Markdown and never reads the database,
+    so it filed the document by the folder instead and the two disagreed -- and
+    worse, re-indexing the folder reset the document to whatever the folder
+    implied, silently discarding the choice. Recording it in the file fixes
+    both: `category_for` reads front matter ahead of the folder, and the file
+    now answers the question by itself.
+
+    Returns True when the file was changed. Costs no re-embedding: front
+    matter is outside the fingerprint."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    if front_matter(text).get("category", "").strip().upper() == check_category(code):
+        return False
+    path.write_text(declare_category(text, code), encoding="utf-8")
+    return True
+
+
 def base_url() -> str:
-    """DATABASE_URL: the database the per-category names are derived from, and
-    where the tables that are not per-category live. It holds no documents."""
+    """DATABASE_URL: the database holding the corpus, the run stores and the
+    category registry. Everything but an analyst's attachments is in it."""
     url = os.environ.get("DATABASE_URL")
     if not url:
         sys.exit("DATABASE_URL is not set (add it to .env)")
     return url
 
 
-def database_url(category: str | None = None) -> str:
-    """The database a category is isolated in -- docling_pkg for PKG, unless
-    RAG_DATABASE_URL_PKG says otherwise. Without a category, the base."""
+def sibling_database(name: str) -> str:
+    """A database beside the main one, named after it: with
+    DATABASE_URL=.../docling, sibling_database("session") is .../docling_session.
+
+    There is exactly one of these, and uploads.py owns it. An analyst's
+    attachment lives in a schema of its own in a database of its own, and that
+    separation is a guarantee the Copilot and the Rollout Agent make: a search
+    of the corpus cannot reach it, because it is not in the corpus database."""
     from urllib.parse import urlsplit, urlunsplit
 
-    if not category:
-        return base_url()
-    code = check_category(category)
-    override = os.environ.get(f"RAG_DATABASE_URL_{code}")
-    if override:
-        return override
     parts = urlsplit(base_url())
-    name = parts.path.lstrip("/") or "docling"
-    return urlunsplit((parts.scheme, parts.netloc, f"/{name}_{code.lower()}", parts.query, parts.fragment))
+    base = parts.path.lstrip("/") or "docling"
+    return urlunsplit((parts.scheme, parts.netloc, f"/{base}_{name.lower()}", parts.query, parts.fragment))
 
 
 def database_name(url: str) -> str:
@@ -228,9 +281,9 @@ def database_name(url: str) -> str:
 
 
 def database_exists(url: str) -> bool:
-    """Whether a category's database has been created yet. A category that has
-    never been indexed has none, and searching has to step over it rather than
-    fail."""
+    """Whether a database has been created yet. The session database is created
+    by its first write, so anything that only wants to tidy up or report has to
+    be able to ask without creating one."""
     import psycopg
     from urllib.parse import urlsplit, urlunsplit
 
@@ -248,7 +301,6 @@ def database_exists(url: str) -> bool:
 
 
 _DISCOVERY_TTL = 60.0  # seconds; a database another process created or dropped shows up within this
-_discovered: tuple[float, dict[str, str]] | None = None
 
 # (checked at, exists). Time-limited in both directions: a database created or
 # dropped by another process -- or by hand -- must not stay wrong until this
@@ -256,7 +308,10 @@ _discovered: tuple[float, dict[str, str]] | None = None
 _exists_cache: dict[str, tuple[float, bool]] = {}
 
 
-def _live(url: str) -> bool:
+def database_live(url: str) -> bool:
+    """database_exists, cached for _DISCOVERY_TTL. Anything on the path of a
+    request should ask this rather than database_exists, which opens a
+    connection to the maintenance database every time."""
     import time as _time
 
     hit = _exists_cache.get(url)
@@ -267,139 +322,50 @@ def _live(url: str) -> bool:
     return alive
 
 
-def known_categories() -> list[str]:
-    """Every category this installation knows about: the ones described above,
-    the ones with an environment variable of their own, and the ones whose
-    database already exists."""
-    found = set(CATEGORIES)
-    found |= {
-        key[len("RAG_DATABASE_URL_"):]
-        for key in os.environ
-        if key.startswith("RAG_DATABASE_URL_") and _CATEGORY_CODE.fullmatch(key[len("RAG_DATABASE_URL_"):])
-    }
-    found |= set(_databases_by_convention())
-    return sorted(found - RESERVED_CODES)
-
-
-def _databases_by_convention() -> dict[str, str]:
-    """Cached: this opens a connection to the maintenance database, and it is
-    on the path of every search."""
-    global _discovered
-    import time as _time
-
-    if _discovered and _time.monotonic() - _discovered[0] < _DISCOVERY_TTL:
-        return _discovered[1]
-    found = _scan_databases()
-    _discovered = (_time.monotonic(), found)
-    return found
-
-
-def _scan_databases() -> dict[str, str]:
-    """{category: database} for every `<base>_<code>` database on the server."""
-    import psycopg
-    from urllib.parse import urlsplit, urlunsplit
-
-    parts = urlsplit(base_url())
-    prefix = (parts.path.lstrip("/") or "docling") + "_"
-    maintenance = urlunsplit((parts.scheme, parts.netloc, "/postgres", parts.query, parts.fragment))
-    out: dict[str, str] = {}
-    try:
-        with psycopg.connect(maintenance, autocommit=True, connect_timeout=5) as conn:
-            for (name,) in conn.execute(
-                "SELECT datname FROM pg_database WHERE datname LIKE %s AND NOT datistemplate",
-                (prefix.replace("_", "\\_") + "%",),
-            ).fetchall():
-                code = name[len(prefix):].upper()
-                if _CATEGORY_CODE.fullmatch(code) and code not in RESERVED_CODES:
-                    out[code] = urlunsplit(
-                        (parts.scheme, parts.netloc, f"/{name}", parts.query, parts.fragment)
-                    )
-    except Exception:
-        pass
-    return out
-
-
-def shards(categories: Sequence[str] | None = None) -> list[tuple[str, list[str]]]:
-    """[(database url, the categories to look for in it), ...], skipping the
-    databases that do not exist yet.
-
-    One category per database is the rule, so the category list is normally a
-    single code; it stays a list because RAG_DATABASE_URL_* can point two
-    categories at the same database, and the filter has to be right when it
-    does."""
-    wanted = [check_category(c) for c in categories] if categories else known_categories()
-    grouped: dict[str, list[str]] = {}
-    for code in wanted:
-        url = database_url(code)
-        if not _live(url):
-            continue
-        if code not in grouped.setdefault(url, []):
-            grouped[url].append(code)
-    # An index built before categories existed still has its rows in the base
-    # database. They stay searchable until `rag.py migrate` moves them out.
-    if _base_holds_documents():
-        base = base_url()
-        for code in wanted:
-            if code not in grouped.setdefault(base, []):
-                grouped[base].append(code)
-    return sorted(grouped.items())
-
-
-_base_documents: bool | None = None
-
-
-def _base_holds_documents() -> bool:
-    global _base_documents
-    if _base_documents is None:
-        try:
-            conn = shard_connection(base_url(), schema=False)
-            table = conn.execute("SELECT to_regclass('rag_documents')").fetchone()[0]
-            _base_documents = bool(
-                table and conn.execute("SELECT 1 FROM rag_documents LIMIT 1").fetchone()
-            )
-        except Exception:
-            _base_documents = False
-    return _base_documents
-
-
-def ensure_database(category: str) -> str:
-    """The url of a category's database, created if it is not there yet.
-
-    Writing is where a category earns its database, so this runs on indexing
-    and never on searching -- a question about a category nobody has indexed
-    finds nothing rather than quietly creating an empty database for it."""
-    code = check_category(category)
-    url = database_url(code)
-    if _live(url):
+def ensure_sibling(name: str) -> str:
+    """The url of a sibling database, created if it is not there yet."""
+    url = sibling_database(name)
+    if database_live(url):
         return url
     import psycopg
+    import time as _time
     from urllib.parse import urlsplit, urlunsplit
 
     parts = urlsplit(url)
     maintenance = urlunsplit((parts.scheme, parts.netloc, "/postgres", parts.query, parts.fragment))
-    name = database_name(url)
+    dbname = database_name(url)
     with psycopg.connect(maintenance, autocommit=True) as conn:
-        if not conn.execute("SELECT 1 FROM pg_database WHERE datname = %s", (name,)).fetchone():
-            conn.execute(f'CREATE DATABASE "{name}"')
-    import time as _time
-
+        if not conn.execute("SELECT 1 FROM pg_database WHERE datname = %s", (dbname,)).fetchone():
+            conn.execute(f'CREATE DATABASE "{dbname}"')
     _exists_cache[url] = (_time.monotonic(), True)
-    global _discovered
-    _discovered = None  # the new database has to be visible to the next search
     return url
+
+
+def known_categories() -> list[str]:
+    """Every category this installation knows about: the registry in the
+    database, and the ones described above in case the registry is unreachable.
+
+    A category exists because a row says so, not because a database is named
+    after it. That is the difference the merge made, and it is why a code that
+    names a store -- SESSION, UPLOAD -- can no longer be mistaken for a corpus."""
+    found = set(CATEGORIES)
+    try:
+        conn = connection()
+        if conn.execute("SELECT to_regclass('rag_categories')").fetchone()[0]:
+            found |= {r[0] for r in conn.execute("SELECT code FROM rag_categories").fetchall()}
+        found |= {r[0] for r in conn.execute("SELECT DISTINCT category FROM rag_documents").fetchall()}
+    except Exception:
+        pass  # before the first index there is nothing to read; the registry above stands
+    return sorted(c for c in found if c not in RESERVED_CODES)
 
 
 def describe(code: str) -> dict:
     meta = CATEGORIES.get(code, {})
-    url = database_url(code)
     return {
         "code": code,
         "label": meta.get("label", code),
         "description": meta.get("description", ""),
         "folder": meta.get("folder", f"solvay-spark/{code.lower()}/{MARKDOWN_FOLDER}"),
-        "database": database_name(url),
-        "exists": _live(url),
-        "configured": bool(os.environ.get(f"RAG_DATABASE_URL_{code}")),
     }
 
 
@@ -466,13 +432,16 @@ def embed(texts: list[str], input_type: str = "") -> list[np.ndarray]:
 # --- storage ------------------------------------------------------------------
 
 
-def connect(category: str | None = None, url: str | None = None):
-    """A connection to the database holding `category` (the default database
-    when no category is named)."""
+def connect(url: str | None = None):
+    """A fresh connection to the corpus database, or to `url`.
+
+    Most callers want `connection()` instead, which hands out a cached one. This
+    is for the paths that need a connection of their own: the CLI, and the
+    session database, which uploads.py opens with its own search_path."""
     import psycopg
     from pgvector.psycopg import register_vector
 
-    url = url or database_url(category)
+    url = url or base_url()
     # Autocommit, so each `with conn.transaction()` below is a real transaction
     # rather than a savepoint inside one that is never committed.
     conn = psycopg.connect(url, autocommit=True)
@@ -490,7 +459,10 @@ def _tune(conn) -> None:
     category that is a tenth of the corpus and a request for 40 chunks returns
     about four -- quietly, with no error, and they are not the best four
     either. pgvector 0.8 can keep walking until the limit is filled; ef_search
-    is raised as well, which is the only lever older versions have."""
+    is raised as well, which is the only lever older versions have.
+
+    The size of ef_search matters more now that one index covers every category
+    than it did when each category had one of its own -- see EF_SEARCH."""
     conn.execute(f"SET hnsw.ef_search = {EF_SEARCH}")
     try:
         conn.execute("SET hnsw.iterative_scan = relaxed_order")
@@ -499,37 +471,37 @@ def _tune(conn) -> None:
 
 
 _local = threading.local()
-_schema_ready: set[str] = set()
+_schema_ready = False
 _schema_lock = threading.Lock()
 
 
-def shard_connection(url: str, schema: bool = True):
-    """One connection per database per thread, reused across searches, with the
-    schema checked once per database per process. psycopg connections are not
-    thread safe, so these are never shared between threads."""
-    cache = getattr(_local, "shards", None)
-    if cache is None:
-        cache = _local.shards = {}
-    conn = cache.get(url)
+def connection(schema: bool = True):
+    """The corpus connection for this thread, reused across searches, with the
+    schema checked once per process. psycopg connections are not thread safe,
+    so these are never shared between threads."""
+    global _schema_ready
+    conn = getattr(_local, "conn", None)
     if conn is None or conn.closed:
-        conn = cache[url] = connect(url=url)
+        conn = _local.conn = connect()
     if schema:
         with _schema_lock:
-            first = url not in _schema_ready
-            _schema_ready.add(url)
+            first = not _schema_ready
+            _schema_ready = True
         if first:
             create_schema(conn)
     return conn
 
 
-def close_shards() -> None:
-    """Close this thread's cached connections."""
-    for conn in getattr(_local, "shards", {}).values():
+def close() -> None:
+    """Release this thread's connection. A worker calls this when it is done;
+    the schema check is per process and is not undone."""
+    conn = getattr(_local, "conn", None)
+    if conn is not None:
         try:
             conn.close()
         except Exception:
             pass
-    _local.shards = {}
+    _local.conn = None
 
 
 def create_schema(conn, rebuild: bool = False) -> None:
@@ -552,7 +524,7 @@ def _create_tables(conn, rebuild: bool) -> None:
         """
         CREATE TABLE IF NOT EXISTS rag_documents (
             id          bigserial PRIMARY KEY,
-            source      text NOT NULL UNIQUE,   -- path of the .md file
+            source      text NOT NULL UNIQUE,   -- path of the .md file; an identity again
             title       text NOT NULL,          -- original document, e.g. "X (pptx)"
             fingerprint text NOT NULL,          -- file content + chunking and embedding settings
             indexed_at  timestamptz NOT NULL DEFAULT now()
@@ -606,6 +578,7 @@ def _create_category_columns(conn) -> None:
             f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS category text NOT NULL DEFAULT '{UNFILED}'"
         )
     conn.execute("CREATE INDEX IF NOT EXISTS rag_chunks_category_idx ON rag_chunks (category)")
+    conn.execute("CREATE INDEX IF NOT EXISTS rag_documents_category_idx ON rag_documents (category)")
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS rag_categories (
@@ -623,6 +596,7 @@ def _create_category_columns(conn) -> None:
             [(c, m["label"], m["description"], m["folder"]) for c, m in CATEGORIES.items()],
         )
     _backfill_categories(conn)
+    _link_chunks_to_documents(conn)
 
 
 def _backfill_categories(conn) -> None:
@@ -653,6 +627,44 @@ def _backfill_categories(conn) -> None:
             )
 
 
+def _link_chunks_to_documents(conn) -> None:
+    """Make a chunk's category follow its document's, in the schema rather than
+    by repair.
+
+    rag_chunks.category is denormalised (see above), and nothing stopped it
+    drifting from rag_documents.category -- _backfill_categories exists to fix
+    that drift after the fact, which is an admission that it happens. A foreign
+    key on (document_id, category) makes the drift unrepresentable, and
+    ON UPDATE CASCADE means re-tagging a document carries its chunks with it in
+    the same statement rather than in a second one that can fail on its own.
+
+    Added with ALTER so an index built before this gains it. The plain
+    document_id key it replaces is dropped: the composite one implies it."""
+    if conn.execute(
+        "SELECT 1 FROM pg_constraint WHERE conname = 'rag_chunks_document_fkey'"
+    ).fetchone():
+        return
+    conn.execute(
+        "UPDATE rag_chunks c SET category = d.category FROM rag_documents d"
+        " WHERE d.id = c.document_id AND c.category <> d.category"
+    )
+    with conn.transaction():
+        conn.execute(
+            "ALTER TABLE rag_documents ADD CONSTRAINT rag_documents_id_category_key"
+            " UNIQUE (id, category)"
+        )
+        for (name,) in conn.execute(
+            "SELECT conname FROM pg_constraint"
+            " WHERE conrelid = 'rag_chunks'::regclass AND contype = 'f'"
+        ).fetchall():
+            conn.execute(f'ALTER TABLE rag_chunks DROP CONSTRAINT "{name}"')
+        conn.execute(
+            "ALTER TABLE rag_chunks ADD CONSTRAINT rag_chunks_document_fkey"
+            " FOREIGN KEY (document_id, category) REFERENCES rag_documents (id, category)"
+            " ON DELETE CASCADE ON UPDATE CASCADE"
+        )
+
+
 # Codes like M-090-030 or L-110-140-010. Postgres splits them at the hyphens
 # into "m", "-090", "-030", which also match every other M-090-... step.
 _CODE = re.compile(r"\b([A-Za-z][A-Za-z0-9]{0,3})-(\d{2,3}(?:-\d{2,3})+)\b")
@@ -669,11 +681,26 @@ def keyword_text(text: str) -> str:
 
 
 def fingerprint(text: str) -> str:
+    """Identifies what would be embedded from this text.
+
+    Front matter is excluded, because md_chunker strips it before chunking:
+    none of it reaches a vector, so a change to it is not a change to the
+    index. That matters because the category is RECORDED in front matter --
+    without this, writing down which corpus a document belongs to would
+    re-embed the whole file and renumber every chunk id, staling the citations
+    in stored runs. Recording a decision must not cost the evidence.
+
+    No document carried front matter when this was introduced, so every
+    existing fingerprint is unchanged by it."""
     settings = (
         f"{EMBED_MODEL}:{EMBED_DIMENSION}:{md_chunker.TARGET_TOKENS}:"
         f"{md_chunker.MAX_TOKENS}:{md_chunker.MIN_TOKENS}\n"
     )
-    return hashlib.sha256((settings + text).encode()).hexdigest()
+    # The blank line a front-matter block leaves behind is not content either:
+    # without dropping it, RECORDING a category on a file that had none would
+    # change the hash and re-embed the very document being filed.
+    body = md_chunker._strip_front_matter(text).lstrip("\r\n")
+    return hashlib.sha256((settings + body).encode()).hexdigest()
 
 
 def store(
@@ -716,7 +743,11 @@ def store(
 
 
 def recategorise(conn, path: Path, category: str) -> None:
-    """Move a document to another category without touching its vectors."""
+    """Move a document to another category without touching its vectors.
+
+    One statement: the foreign key on (document_id, category) is ON UPDATE
+    CASCADE, so the chunks follow the document rather than being updated after
+    it in a second statement that could fail on its own."""
     category = check_category(category)
     with conn.transaction():
         doc = conn.execute(
@@ -724,7 +755,6 @@ def recategorise(conn, path: Path, category: str) -> None:
             (category, str(path)),
         ).fetchone()
         if doc:
-            conn.execute("UPDATE rag_chunks SET category = %s WHERE document_id = %s", (category, doc[0]))
             conn.execute(
                 "INSERT INTO rag_categories (code, label, description, folder) VALUES (%s, %s, '', '')"
                 " ON CONFLICT (code) DO NOTHING",
@@ -769,9 +799,9 @@ def index_file(conn, path: Path, force: bool = False, on_embed=None, category: s
 
 
 def index_path(path: Path, force: bool = False, on_embed=None, category: str | None = None) -> dict:
-    """index_file, into whichever database the file's category belongs to."""
+    """index_file, filed under the category the file belongs to."""
     code = category_for(path, category)
-    return index_file(shard_connection(ensure_database(code)), path, force, on_embed, code)
+    return index_file(connection(), path, force, on_embed, code)
 
 
 def index(folder: Path, rebuild: bool = False, force: bool = False, category: str | None = None) -> None:
@@ -782,19 +812,13 @@ def index(folder: Path, rebuild: bool = False, force: bool = False, category: st
     # Normally every file in a folder shares its category, but front matter can
     # send one elsewhere, so each file is placed on its own.
     placed = {path: category_for(path, category) for path in files}
-    conns: dict[str, Any] = {}
-
-    def conn_for(url: str):
-        if url not in conns:
-            conns[url] = connect(url=url)
-            create_schema(conns[url], rebuild)
-        return conns[url]
-
+    conn = connect()
     try:
+        create_schema(conn, rebuild)
         for i, path in enumerate(files, 1):
             code = placed[path]
             result = index_file(
-                conn_for(ensure_database(code)), path, force,
+                conn, path, force,
                 on_embed=lambda n, i=i, path=path, code=code: print(
                     f"[{i}/{len(files)}] {path.name} -> {code}: {n} chunks, embedding...", flush=True
                 ),
@@ -804,121 +828,127 @@ def index(folder: Path, rebuild: bool = False, force: bool = False, category: st
                 was = result.get("recategorised")
                 print(f"[{i}/{len(files)}] {path.name}: unchanged" + (f", re-tagged {was} -> {code}" if was else ""))
 
-        # Files deleted from the folder leave the index -- and so does a row in
-        # a database the file no longer belongs to, which is what happens when
-        # a document changes category and its new category lives elsewhere.
-        keep = {str(path): placed[path] for path in files}
-        removed = 0
-        for url, _ in shards():
-            conn = conn_for(url)
-            rows = conn.execute("SELECT source FROM rag_documents").fetchall()
-            gone = [
-                src for (src,) in rows
-                if Path(src).parent == folder and (src not in keep or database_url(keep[src]) != url)
-            ]
-            with conn.transaction():
-                for src in gone:
-                    conn.execute("DELETE FROM rag_documents WHERE source = %s", (src,))
-            removed += len(gone)
-        if removed:
-            print(f"Removed {removed} stale document{'s' if removed != 1 else ''} from the index")
+        # Files deleted from the folder leave the index.
+        keep = set(str(path) for path in files)
+        rows = conn.execute("SELECT source FROM rag_documents").fetchall()
+        gone = [src for (src,) in rows if Path(src).parent == folder and src not in keep]
+        with conn.transaction():
+            for src in gone:
+                conn.execute("DELETE FROM rag_documents WHERE source = %s", (src,))
+        if gone:
+            print(f"Removed {len(gone)} stale document{'s' if len(gone) != 1 else ''} from the index")
 
         for code, docs, chunks in totals():
             print(f"  {code:<10} {docs:>4} documents  {chunks:>6} chunks")
     finally:
-        for conn in conns.values():
-            conn.close()
+        conn.close()
 
 
 def totals(categories: Sequence[str] | None = None) -> list[tuple[str, int, int]]:
-    """[(category, documents, chunks), ...] across every database."""
-    out: list[tuple[str, int, int]] = []
-    for url, cats in shards(categories):
-        conn = shard_connection(url)
-        where, params = _category_filter(cats, "d.category")
-        out += [
-            (row[0], row[1], row[2])
-            for row in conn.execute(
-                "SELECT d.category, count(DISTINCT d.id), count(c.id)"
-                " FROM rag_documents d LEFT JOIN rag_chunks c ON c.document_id = d.id"
-                f"{where} GROUP BY d.category",
-                params,
-            ).fetchall()
-        ]
-    return sorted(out)
+    """[(category, documents, chunks), ...]."""
+    where, params = _category_filter(categories, "d.category")
+    return sorted(
+        (row[0], row[1], row[2])
+        for row in connection().execute(
+            "SELECT d.category, count(DISTINCT d.id), count(c.id)"
+            " FROM rag_documents d LEFT JOIN rag_chunks c ON c.document_id = d.id"
+            f"{where} GROUP BY d.category",
+            params,
+        ).fetchall()
+    )
 
 
 def counts(categories: Sequence[str] | None = None) -> tuple[int, int]:
-    """(documents, chunks) across every database."""
+    """(documents, chunks)."""
     rows = totals(categories)
     return sum(d for _, d, _ in rows), sum(c for _, _, c in rows)
 
 
 def documents() -> list[dict]:
-    """Every indexed document, from every database."""
-    out: list[dict] = []
-    for url, cats in shards():
-        conn = shard_connection(url)
-        where, params = _category_filter(cats, "d.category")
-        out += [
-            {
-                "id": r[0], "source": r[1], "title": r[2], "category": r[3],
-                "chunks": int(r[4]), "tokens": int(r[5]), "indexed_at": r[6],
-            }
-            for r in conn.execute(
-                "SELECT d.id, d.source, d.title, d.category, count(c.id), coalesce(sum(c.tokens), 0),"
-                " d.indexed_at FROM rag_documents d LEFT JOIN rag_chunks c ON c.document_id = d.id"
-                f"{where} GROUP BY d.id, d.source, d.title, d.category, d.indexed_at",
-                params,
-            ).fetchall()
-        ]
+    """Every indexed document."""
+    out = [
+        {
+            "id": r[0], "source": r[1], "title": r[2], "category": r[3],
+            "chunks": int(r[4]), "tokens": int(r[5]), "indexed_at": r[6],
+        }
+        for r in connection().execute(
+            "SELECT d.id, d.source, d.title, d.category, count(c.id), coalesce(sum(c.tokens), 0),"
+            " d.indexed_at FROM rag_documents d LEFT JOIN rag_chunks c ON c.document_id = d.id"
+            " GROUP BY d.id, d.source, d.title, d.category, d.indexed_at"
+        ).fetchall()
+    ]
     out.sort(key=lambda d: (d["indexed_at"] is None, d["indexed_at"]), reverse=True)
     return out
 
 
 def find_document(filename: str) -> str | None:
-    """The source path of an indexed document, by file name, in any database."""
-    for url, _ in shards():
-        row = shard_connection(url).execute(
-            "SELECT source FROM rag_documents WHERE source LIKE %s OR source = %s LIMIT 1",
+    """The source path of an indexed document, by file name."""
+    row = connection().execute(
+        "SELECT source FROM rag_documents WHERE source LIKE %s OR source = %s LIMIT 1",
+        (f"%/{filename}", filename),
+    ).fetchone()
+    return row[0] if row else None
+
+
+def documents_named(filename: str) -> list[dict]:
+    """Every indexed document whose file has this name.
+
+    A file name is still not an identity -- knowledge_base/X.md and
+    solvay-spark/pkg/markdown/X.md are two documents -- but a source path is
+    one again, which it could not be while a category had a database of its
+    own and UNIQUE(source) only held inside each."""
+    return [
+        {"id": r[0], "title": r[1], "source": r[2], "category": r[3]}
+        for r in connection().execute(
+            "SELECT id, title, source, category FROM rag_documents"
+            " WHERE source LIKE %s OR source = %s ORDER BY id",
             (f"%/{filename}", filename),
-        ).fetchone()
-        if row:
-            return row[0]
-    return None
+        ).fetchall()
+    ]
 
 
-def delete_document(filename: str) -> int:
-    """Remove a document from whichever database holds it."""
-    removed = 0
-    for url, _ in shards():
-        conn = shard_connection(url)
-        with conn.transaction():
-            removed += len(
-                conn.execute(
-                    "DELETE FROM rag_documents WHERE source LIKE %s OR source = %s RETURNING id",
-                    (f"%/{filename}", filename),
-                ).fetchall()
-            )
-    return removed
+def delete_document(filename: str, category: str | None = None,
+                    source: str | None = None) -> int:
+    """Remove a document. Deletes its chunks with it: the foreign key on
+    rag_chunks is ON DELETE CASCADE.
+
+    With neither `source` nor `category` this removes every document of that
+    name. `source` identifies one exactly; the API endpoint passes it when the
+    name is shared."""
+    sql = "DELETE FROM rag_documents WHERE (source LIKE %s OR source = %s)"
+    args: list = [f"%/{filename}", filename]
+    if source:
+        sql += " AND source = %s"
+        args.append(source)
+    if category:
+        sql += " AND category = %s"
+        args.append(check_category(category))
+    conn = connection()
+    with conn.transaction():
+        return len(conn.execute(sql + " RETURNING id", tuple(args)).fetchall())
 
 
 def chunk(key: str) -> dict | None:
-    """One chunk by its Hit.key ("PKG:412"). A bare row id is read from the
-    default database, which is what a key meant before categories existed."""
+    """One chunk by its Hit.key ("PKG:412"), or by a bare row id.
+
+    The prefix names the category the chunk is filed under. It used to name the
+    database as well, and route the lookup; now it is checked against what the
+    row says, so a key from somewhere else cannot quietly return the wrong
+    chunk."""
     code, _, digits = str(key).rpartition(":")
     if not digits.isdigit():
         return None
-    try:
-        url = database_url(check_category(code)) if code else database_url(None)
-    except ValueError:
-        return None
-    row = shard_connection(url).execute(
+    if code:
+        try:
+            code = check_category(code)
+        except ValueError:
+            return None
+    row = connection().execute(
         "SELECT c.id, d.title, d.source, c.heading_path, c.content, c.tokens, c.category"
         " FROM rag_chunks c JOIN rag_documents d ON d.id = c.document_id WHERE c.id = %s",
         (int(digits),),
     ).fetchone()
-    if not row:
+    if not row or (code and row[6] != code):
         return None
     return {
         "chunk_id": f"{row[6]}:{row[0]}", "title": row[1], "source": row[2],
@@ -927,134 +957,44 @@ def chunk(key: str) -> dict | None:
 
 
 def duplicate_sources(title: str, source: str) -> list[str]:
-    """The same document indexed from somewhere else -- in any database, since
-    a document filed under two categories now lives in two of them."""
-    out: list[str] = []
-    for url, _ in shards():
-        out += [
-            r[0]
-            for r in shard_connection(url).execute(
-                "SELECT source FROM rag_documents WHERE title = %s AND source <> %s",
-                (title, source),
-            ).fetchall()
-        ]
-    return out
+    """The same document indexed from somewhere else."""
+    return [
+        r[0]
+        for r in connection().execute(
+            "SELECT source FROM rag_documents WHERE title = %s AND source <> %s",
+            (title, source),
+        ).fetchall()
+    ]
 
 
 def clear_index(categories: Sequence[str] | None = None) -> None:
-    """Delete indexed documents and chunks, in one category or in all of them."""
-    for url, cats in shards(categories):
-        conn = connect(url=url)
-        try:
-            with conn.transaction():
-                if cats:
-                    conn.execute("DELETE FROM rag_documents WHERE category = ANY(%s)", (cats,))
-                else:
-                    conn.execute("TRUNCATE TABLE rag_documents CASCADE")
-        finally:
-            conn.close()
+    """Delete indexed documents and chunks, in some categories or in all."""
+    conn = connect()
+    try:
+        with conn.transaction():
+            if categories:
+                conn.execute(
+                    "DELETE FROM rag_documents WHERE category = ANY(%s)",
+                    ([check_category(c) for c in categories],),
+                )
+            else:
+                conn.execute("TRUNCATE TABLE rag_documents CASCADE")
+    finally:
+        conn.close()
     scope = ", ".join(categories) if categories else "every category"
     print(f"✓ Cleared {scope}: documents and chunks removed.")
 
 
 def reset_schema(categories: Sequence[str] | None = None) -> None:
-    """Drop existing tables and recreate them cleanly with the configured vector dimensions."""
-    for url, _ in shards(categories):
-        conn = connect(url=url)
-        try:
-            create_schema(conn, rebuild=True)
-        finally:
-            conn.close()
-    print(f"✓ Reset schema: tables recreated with vector({EMBED_DIMENSION}).")
-
-
-def create_database(category: str) -> str:
-    """Create a category's database and put the schema in it."""
-    code = check_category(category)
-    url = ensure_database(code)
-    conn = connect(url=url)
+    """Drop the tables and recreate them with the configured vector dimension."""
+    if categories:
+        sys.exit("reset drops the whole index; use `clear --category` to empty one category")
+    conn = connect()
     try:
-        create_schema(conn)
+        create_schema(conn, rebuild=True)
     finally:
         conn.close()
-    name = database_name(url)
-    print(f"{code}: {name} ready")
-    return name
-
-
-def move_category(category: str, quiet: bool = False) -> dict:
-    """Move a category's rows into the database it belongs to, carrying the
-    embeddings across rather than paying Ollama to compute them again."""
-    code = check_category(category)
-    target_url = ensure_database(code)
-    target = shard_connection(target_url)
-    moved = {"documents": 0, "chunks": 0}
-    elsewhere = [url for url, _ in shards() if url != target_url]
-    if _base_holds_documents() and base_url() not in elsewhere and base_url() != target_url:
-        elsewhere.append(base_url())
-    for url in elsewhere:
-        source = shard_connection(url, schema=False)
-        if not source.execute("SELECT to_regclass('rag_documents')").fetchone()[0]:
-            continue
-        docs = source.execute(
-            "SELECT id, source, title, fingerprint, indexed_at FROM rag_documents WHERE category = %s",
-            (code,),
-        ).fetchall()
-        for doc_id, src, title, fp, indexed_at in docs:
-            chunks = source.execute(
-                "SELECT chunk_index, heading_path, content, tokens, embedding, tsv"
-                " FROM rag_chunks WHERE document_id = %s ORDER BY chunk_index",
-                (doc_id,),
-            ).fetchall()
-            with target.transaction():
-                target.execute("DELETE FROM rag_documents WHERE source = %s", (src,))
-                new_id = target.execute(
-                    "INSERT INTO rag_documents (source, title, fingerprint, category, indexed_at)"
-                    " VALUES (%s, %s, %s, %s, %s) RETURNING id",
-                    (src, title, fp, code, indexed_at),
-                ).fetchone()[0]
-                with target.cursor() as cur:
-                    cur.executemany(
-                        "INSERT INTO rag_chunks (document_id, chunk_index, heading_path,"
-                        " content, tokens, embedding, category, tsv)"
-                        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-                        [(new_id, ci, hp, ct, tk, emb, code, tsv) for ci, hp, ct, tk, emb, tsv in chunks],
-                    )
-            with source.transaction():
-                source.execute("DELETE FROM rag_documents WHERE id = %s", (doc_id,))
-            moved["documents"] += 1
-            moved["chunks"] += len(chunks)
-    global _base_documents
-    _base_documents = None
-    if not quiet:
-        print(f"{code}: moved {moved['documents']} documents, {moved['chunks']} chunks"
-              f" into {database_name(target_url)}")
-    return moved
-
-
-def migrate() -> dict:
-    """Give every category the database it belongs to.
-
-    This is the upgrade path for an index built before categories existed: the
-    rows are tagged by the folder they came from (create_schema does that), and
-    then each category's rows are carried out of the base database into its
-    own. Nothing is re-embedded."""
-    conn = shard_connection(base_url(), schema=False)
-    table = conn.execute("SELECT to_regclass('rag_documents')").fetchone()[0]
-    if not table:
-        print("Nothing to migrate: the base database has no index in it")
-        return {}
-    create_schema(conn)  # tags whatever is still UNFILED by its folder
-    codes = [r[0] for r in conn.execute("SELECT DISTINCT category FROM rag_documents").fetchall()]
-    moved = {}
-    for code in sorted(codes):
-        moved[code] = move_category(code)
-    left = conn.execute("SELECT count(*) FROM rag_documents").fetchone()[0]
-    print(f"Base database {database_name(base_url())} now holds {left} documents")
-    return moved
-
-
-# --- retrieval and answering --------------------------------------------------
+    print(f"✓ Reset schema: tables recreated with vector({EMBED_DIMENSION}).")
 
 
 def _category_filter(categories: Sequence[str] | None, column: str = "category") -> tuple[str, list]:
@@ -1080,8 +1020,12 @@ class Hit:
 
     @property
     def key(self) -> str:
-        """Identifies the chunk across databases: row ids restart in each one,
-        but a category lives in exactly one database."""
+        """The row id and the category it is filed under, "PKG:412".
+
+        The id alone would do now that there is one table, but the prefix is
+        what every stored run, export and trace already carries, and `chunk`
+        checks it against the row -- so a key from somewhere else fails rather
+        than quietly returning a different chunk."""
         return f"{self.category}:{self.chunk_id}"
 
     def ranks(self) -> str:
@@ -1111,13 +1055,13 @@ def vector_ranking(
 # weights each word by inverse document frequency.
 #
 # The corpus statistics -- how many chunks there are, how long they are on
-# average, and how many contain each word -- are collected across every
-# database being searched and then handed to each one, rather than each
-# database scoring against itself. That matters as soon as categories are
-# isolated: document frequency computed inside a category of one chunk makes
-# every word look common, the scores come out near zero, and merging by score
-# would bury the whole category under a larger one. With one set of statistics
-# for the whole search, a chunk scores the same wherever it is stored.
+# average, and how many contain each word -- are computed over the categories
+# being searched, so a chunk scores the same wherever it is filed. This used to
+# be assembled from one set of statistics per database and added up, because
+# document frequency computed inside a category of one chunk makes every word
+# look common, the scores come out near zero, and merging by score would bury
+# the whole category under a larger one. One table means one query and no
+# reassembly; the numbers it returns are the same ones.
 #
 # ts_stat takes its query as a string literal rather than a bind parameter,
 # which is why check_category guards every code that reaches these functions.
@@ -1141,7 +1085,7 @@ SELECT
 
 
 def corpus_stats(conn, question: str, categories: Sequence[str] | None = None) -> tuple[int, float, dict]:
-    """(chunks, average length, {word: chunks containing it}) for one database."""
+    """(chunks, average length, {word: chunks containing it}) over the scope."""
     scope = _scope_sql(categories)
     sql = _STATS.format(
         cfg=TEXT_SEARCH_CONFIG, scope=scope,
@@ -1149,18 +1093,6 @@ def corpus_stats(conn, question: str, categories: Sequence[str] | None = None) -
     )
     n, avgdl, df = conn.execute(sql, {"q": keyword_text(question)}).fetchone()
     return int(n), float(avgdl), dict(df or {})
-
-
-def merge_stats(parts: Sequence[tuple[int, float, dict]]) -> tuple[int, float, dict]:
-    """One corpus out of several: counts and document frequencies add up, and
-    the average length is weighted by how many chunks each contributed."""
-    total = sum(n for n, _, _ in parts)
-    avgdl = (sum(n * a for n, a, _ in parts) / total) if total else 0.0
-    df: dict[str, int] = {}
-    for _, _, part in parts:
-        for word, ndoc in part.items():
-            df[word] = df.get(word, 0) + int(ndoc)
-    return total, avgdl, df
 
 
 _BM25 = """
@@ -1239,60 +1171,41 @@ def _rows(conn, ids: list[int]) -> dict[int, tuple]:
     return {r[0]: r[1:] for r in rows}
 
 
-def _load_hits(conns: dict, fused, vector, keyword) -> list[Hit]:
-    """Hits across databases. A chunk key is (database key, row id)."""
+def _load_hits(conn, fused, vector, keyword) -> list[Hit]:
     if not fused:
         return []
-    wanted: dict[Any, list[int]] = {}
-    for (db, chunk_id), _ in fused:
-        wanted.setdefault(db, []).append(chunk_id)
-    by_key = {
-        (db, chunk_id): row
-        for db, ids in wanted.items()
-        for chunk_id, row in _rows(conns[db], ids).items()
-    }
-    vector_pos = {key: (n, sim) for n, (key, sim) in enumerate(vector, 1)}
-    keyword_pos = {key: (n, sc) for n, (key, sc) in enumerate(keyword, 1)}
+    by_id = _rows(conn, [cid for cid, _ in fused])
+    vector_pos = {cid: (n, sim) for n, (cid, sim) in enumerate(vector, 1)}
+    keyword_pos = {cid: (n, sc) for n, (cid, sc) in enumerate(keyword, 1)}
     hits = []
-    for key, score in fused:
-        v = vector_pos.get(key, (None, None))
-        kw = keyword_pos.get(key, (None, None))
-        hits.append(Hit(key[1], *by_key[key], score, v[0], kw[0], v[1], kw[1]))
+    for cid, score in fused:
+        v = vector_pos.get(cid, (None, None))
+        kw = keyword_pos.get(cid, (None, None))
+        hits.append(Hit(cid, *by_id[cid], score, v[0], kw[0], v[1], kw[1]))
     return hits
 
 
-def _rank_shards(
+def rank(
     question: str,
     query_vector: np.ndarray | None,
     mode: str,
     categories: Sequence[str] | None,
     conn=None,
-) -> tuple[dict, list, list]:
-    """Run both rankings in every database the categories span and merge them.
+) -> tuple[Any, list, list]:
+    """Both rankings over the categories in scope, best first.
 
-    Both rankings merge by score, and both scores are comparable across
-    databases: cosine similarity is absolute, and the BM25 scores are computed
-    against one set of corpus statistics gathered from every database in the
-    search (see corpus_stats). Isolating a category therefore does not change
-    where its chunks rank."""
-    if conn is not None:
-        targets = [(None, conn, [check_category(c) for c in categories] if categories else [])]
-    else:
-        targets = [(url, shard_connection(url), cats) for url, cats in shards(categories)]
-    conns = {db: c for db, c, _ in targets}
-    vector: list[tuple[Any, float]] = []
-    keyword: list[tuple[Any, float]] = []
-    stats = None
-    if mode in ("hybrid", "keyword") and len(targets) > 1:
-        stats = merge_stats([corpus_stats(c, question, cats) for _, c, cats in targets])
-    for db, c, cats in targets:
-        if mode in ("hybrid", "vector") and query_vector is not None:
-            vector += [((db, cid), sim) for cid, sim in vector_ranking(c, query_vector, categories=cats)]
-        if mode in ("hybrid", "keyword"):
-            keyword += [((db, cid), sc) for cid, sc in keyword_ranking(c, question, categories=cats, stats=stats)]
-    vector.sort(key=lambda pair: pair[1], reverse=True)
-    keyword.sort(key=lambda pair: pair[1], reverse=True)
-    return conns, vector[:CANDIDATES], keyword[:CANDIDATES]
+    They are run separately and fused rather than combined in SQL, because
+    reciprocal rank fusion works on positions and a chunk has to be able to
+    appear in one ranking and not the other."""
+    conn = conn if conn is not None else connection()
+    scope = [check_category(c) for c in categories] if categories else None
+    vector: list[tuple[int, float]] = []
+    keyword: list[tuple[int, float]] = []
+    if mode in ("hybrid", "vector") and query_vector is not None:
+        vector = vector_ranking(conn, query_vector, categories=scope)
+    if mode in ("hybrid", "keyword"):
+        keyword = keyword_ranking(conn, question, categories=scope)
+    return conn, vector[:CANDIDATES], keyword[:CANDIDATES]
 
 
 def search(
@@ -1303,12 +1216,11 @@ def search(
     query_vector: np.ndarray | None = None,
     categories: Sequence[str] | None = None,
 ) -> list[Hit]:
-    """The top k chunks for a question. With no `categories` this covers every
-    database; with `conn` it stays inside that one connection's database."""
+    """The top k chunks for a question, over every category or the ones named."""
     if mode in ("hybrid", "vector") and query_vector is None:
         [query_vector] = embed([question], "search_query")
-    conns, vector, keyword = _rank_shards(question, query_vector, mode, categories, conn)
-    return _load_hits(conns, fuse(vector, keyword, k), vector, keyword)
+    conn, vector, keyword = rank(question, query_vector, mode, categories, conn)
+    return _load_hits(conn, fuse(vector, keyword, k), vector, keyword)
 
 
 def build_prompt(question: str, hits: list[Hit]) -> str:
@@ -1323,13 +1235,18 @@ def build_prompt(question: str, hits: list[Hit]) -> str:
     return f"<excerpts>\n{excerpts}\n</excerpts>\n\nQuestion: {question}"
 
 
-def answer_stream(question: str, hits: list[Hit]):
+def answer_stream(question: str, hits: list[Hit], run=None):
     """Yield ("thinking", None) when Claude starts reasoning, ("text", str) for
-    each piece of the answer, and finally ("usage", {...})."""
+    each piece of the answer, and finally ("usage", {...}).
+
+    `run` is the caller's trace, if it has one. The generation is recorded by
+    the Anthropic instrumentor rather than by hand, so all this has to do is
+    make the run current while the request is made -- see `tracing.Run.current`
+    for why that cannot be done once around the whole loop."""
     import anthropic
 
     client = anthropic.Anthropic()
-    with client.messages.stream(
+    with (run or tracing.Run(None, {})).current(), client.messages.stream(
         model=ANSWER_MODEL,
         max_tokens=16000,
         system=ANSWER_SYSTEM,
@@ -1357,6 +1274,15 @@ def ask_events(
 
     started = time.perf_counter()
     scope = [check_category(c) for c in categories] if categories else []
+    # One trace per question. The retrieval stages are observations of their
+    # own because "the answer was wrong" is usually a retrieval problem, and a
+    # trace that shows only the generation cannot tell you that.
+    run = tracing.start_run(
+        "answer-question",
+        input={"question": question, "categories": scope or "all", "mode": mode, "k": k},
+        metadata={"model": ANSWER_MODEL, "embed_model": EMBED_MODEL},
+        tags=["rag-ask", f"mode-{mode}"],
+    )
 
     def stage(key, status, detail="", t0=None):
         info = {"key": key, "status": status, "detail": detail}
@@ -1368,19 +1294,20 @@ def ask_events(
     # categories the excerpts came from is reported by the "fuse" stage; the
     # steps here are the pipeline, so there is no stage of its own for scope.
     where = ", ".join(scope) if scope else "every category"
-    targets = shards(scope or None)
 
     query_vector = None
     if mode in ("hybrid", "vector"):
         t0 = time.perf_counter()
         yield stage("embed", "running", f"Ollama {EMBED_MODEL}")
-        [query_vector] = embed([question], "search_query")
+        with run.step("embed-question", as_type="embedding", model=EMBED_MODEL,
+                      input=question) as span:
+            [query_vector] = embed([question], "search_query")
+            span.update(output={"dimensions": len(query_vector)})
         yield stage("embed", "done", f"{len(query_vector)}-dimension vector from Ollama {EMBED_MODEL}", t0)
 
     terms: list[str] = []
     if mode in ("hybrid", "keyword"):
-        probe = shard_connection(targets[0][0])
-        terms = query_terms(probe, question)
+        terms = query_terms(connection(), question)
         # Show codes as typed, not as their index forms ("m090030", "-090").
         codes = [m.group(0) for m in _CODE.finditer(question)]
         joined = set(keyword_text(" ".join(codes)).split()) - set(" ".join(codes).split())
@@ -1395,7 +1322,13 @@ def ask_events(
     t0 = time.perf_counter()
     if mode in ("hybrid", "vector"):
         yield stage("vector", "running", "Nearest chunks by cosine similarity")
-    conns, vector, keyword = _rank_shards(question, query_vector, mode, scope or None)
+    with run.step("search-corpus", as_type="retriever",
+                  input={"question": question, "mode": mode},
+                  metadata={"categories": scope or known_categories()}) as span:
+        conn, vector, keyword = rank(question, query_vector, mode, scope or None)
+        span.update(output={"vector_candidates": len(vector),
+                            "keyword_candidates": len(keyword),
+                            "best_similarity": round(vector[0][1], 4) if vector else None})
     if mode in ("hybrid", "vector"):
         best = f", best similarity {vector[0][1]:.3f}" if vector else ""
         yield stage("vector", "done", f"{len(vector)} candidates{best}", t0)
@@ -1408,7 +1341,15 @@ def ask_events(
 
     t0 = time.perf_counter()
     yield stage("fuse", "running", "Reciprocal rank fusion")
-    hits = _load_hits(conns, fuse(vector, keyword, k), vector, keyword)
+    with run.step("fuse-and-load", as_type="retriever",
+                  input={"k": k, "vector": len(vector), "keyword": len(keyword)}) as span:
+        hits = _load_hits(conn, fuse(vector, keyword, k), vector, keyword)
+        # The excerpts themselves, which is what the answer is actually built
+        # from and the first thing to read when an answer looks wrong.
+        span.update(output=[{"n": n, "title": h.title, "section": h.heading_path,
+                             "category": h.category, "score": h.score,
+                             "content": h.content}
+                            for n, h in enumerate(hits, 1)])
     if not hits:
         raise RuntimeError(
             f"Nothing matched in {where}. Is the index empty? Run `python rag.py index <folder>`."
@@ -1428,6 +1369,8 @@ def ask_events(
             "category": h.category,
             "score": h.score, "similarity": h.similarity, "bm25": h.bm25,
             "vector_rank": h.vector_rank, "keyword_rank": h.keyword_rank,
+            "file": Path(h.source).name,
+            "source_path": h.source,
         }
         for n, h in enumerate(hits, 1)
     ]
@@ -1435,13 +1378,18 @@ def ask_events(
     t0 = time.perf_counter()
     yield stage("answer", "running", f"Sending {len(hits)} excerpts to {ANSWER_MODEL}")
     writing = False
-    for kind, value in answer_stream(question, hits):
+    # Kept only for the trace: the trace's output is taken from its root
+    # observation and is what the tracing table shows, so a root that reports
+    # token counts and not the answer makes every row unreadable at a glance.
+    written: list[str] = []
+    for kind, value in answer_stream(question, hits, run):
         if kind == "thinking":
             yield stage("answer", "running", f"{ANSWER_MODEL} is reasoning over the excerpts")
         elif kind == "text":
             if not writing:
                 writing = True
                 yield stage("answer", "running", f"{ANSWER_MODEL} is writing")
+            written.append(value)
             yield "token", value
         else:
             yield stage(
@@ -1449,6 +1397,10 @@ def ask_events(
                 f"{ANSWER_MODEL}: {value['input_tokens']:,} tokens in, {value['output_tokens']:,} out",
                 t0,
             )
+            run.end(output={"answer": "".join(written),
+                            "sources": len(hits),
+                            "documents": sorted({h.title for h in hits}),
+                            **value})
             yield "done", {"seconds": round(time.perf_counter() - started, 1), **value}
 
 
@@ -1504,19 +1456,7 @@ def main() -> None:
     p = sub.add_parser("chunks", help="print how a file is chunked (no API calls)")
     p.add_argument("file", type=Path)
 
-    sub.add_parser("categories", help="what each category holds, and where")
-
-    p = sub.add_parser("createdb", help="create a category's database")
-    p.add_argument("category")
-
-    p = sub.add_parser(
-        "move", help="move a category's rows into its own database, carrying the embeddings across"
-    )
-    p.add_argument("category")
-
-    sub.add_parser(
-        "migrate", help="give every category its own database (nothing is re-embedded)"
-    )
+    sub.add_parser("categories", help="what each category holds")
 
     p = sub.add_parser("retag", help="change a document's category without re-embedding it")
     p.add_argument("file", type=Path)
@@ -1536,42 +1476,30 @@ def main() -> None:
         held = {code: (docs, chunks) for code, docs, chunks in totals()}
         codes = sorted(set(known_categories()) | set(held))
         width = max((len(c) for c in codes), default=8)
-        print(f"  {'CODE':<{width}}  {'DOCS':>5} {'CHUNKS':>7}  DATABASE")
+        print(f"  {'CODE':<{width}}  {'DOCS':>5} {'CHUNKS':>7}  FOLDER")
         for code in codes:
             docs, chunks = held.get(code, (0, 0))
-            meta = describe(code)
-            state = "" if meta["exists"] else "  (not created yet)"
-            print(f"  {code:<{width}}  {docs:>5} {chunks:>7}  {meta['database']}{state}")
-        base = database_name(base_url())
-        if _base_holds_documents():
-            print(f"\n  {base} still holds documents; run `python rag.py migrate` to move them out")
-        else:
-            print(f"\n  base: {base} (no documents by design)")
-    elif args.command == "createdb":
-        create_database(args.category)
-    elif args.command == "move":
-        move_category(args.category)
-    elif args.command == "migrate":
-        migrate()
+            print(f"  {code:<{width}}  {docs:>5} {chunks:>7}  {describe(code)['folder']}")
+        docs, chunks = counts()
+        print(f"\n  {database_name(base_url())}: {docs} documents, {chunks} chunks")
     elif args.command == "retag":
         code = check_category(args.category)
         path = args.file.resolve()
-        # Re-tag where the document is, then move that category's rows into the
-        # right database -- the vectors travel with it, nothing is re-embedded.
-        found = None
-        for url, _ in shards():
-            conn = shard_connection(url)
-            row = conn.execute(
-                "SELECT category FROM rag_documents WHERE source = %s", (str(path),)
-            ).fetchone()
-            if row:
-                found = row[0]
-                recategorise(conn, path, code)
-                break
-        if found is None:
+        # The vectors do not move and nothing is re-embedded: the category is
+        # deliberately not part of the fingerprint, and the chunks follow the
+        # document through the foreign key.
+        conn = connection()
+        row = conn.execute(
+            "SELECT category FROM rag_documents WHERE source = %s", (str(path),)
+        ).fetchone()
+        if row is None:
             sys.exit(f"{path.name} is not indexed; run `python rag.py index {path.parent}` first")
-        move_category(code, quiet=True)
-        print(f"{path.name}: {found} -> {code} ({database_name(database_url(code))})")
+        recategorise(conn, path, code)
+        # Record it on disk too, or the next `index` over this folder resets
+        # the document to whatever the folder implies and the choice is lost.
+        recorded = record_category(path, code)
+        print(f"{path.name}: {row[0]} -> {code}"
+              + (" (recorded in the file)" if recorded else ""))
     elif args.command == "search":
         for n, h in enumerate(search(args.question, args.k, mode=args.mode, categories=args.category), 1):
             print(f"\n[{n}] [{h.category}] {h.title} -- {h.heading_path or '(top)'}  ({h.ranks()})")

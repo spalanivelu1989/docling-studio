@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import knowledge_graph  # noqa: E402
 
-from evidence import independence, paths, provenance, scoring  # noqa: E402
+from evidence import independence, paths, provenance, scoring, trace  # noqa: E402
 from evidence.schemas import Answer, Claim, GraphFact, Source  # noqa: E402
 
 MD = "solvay-spark/pkg/markdown/"
@@ -287,6 +287,353 @@ def test_confidence_ignores_unweighted_claims():
     ])
     assert len(a.load_bearing) == 1
     assert a.confidence == 0.50, "a context claim must not drag the answer down"
+
+
+# --- graph scoping -------------------------------------------------------------
+# The Evidence Agent reads with the same Session as the Copilot, so its four
+# graph tools have to honour the same category scope its retrieval does.
+# graph_enumerate is the one that matters most: it produces an exact count,
+# and an unscoped count puts documents the run cannot open into a figure the
+# answer then quotes.
+
+
+def _fake_graph():
+    nodes = [
+        {"id": "system:S", "label": "SAP S/4HANA", "type": "system", "degree": 3},
+        {"id": "doc:A", "label": "Package doc", "type": "document", "category": "PKG", "degree": 1},
+        {"id": "doc:B", "label": "Design record", "type": "document", "category": "DR", "degree": 1},
+        {"id": "doc:C", "label": "Second design record", "type": "document",
+         "category": "DR", "degree": 1},
+    ]
+    edges = [{"id": f"e{i}", "source": d, "target": "system:S",
+              "relation": "mentions", "label": ""}
+             for i, d in enumerate(("doc:A", "doc:B", "doc:C"))]
+    return {"nodes": nodes, "edges": edges,
+            "stats": {"sources": "fingerprint-for-the-test",
+                      "categories": {"PKG": 1, "DR": 2}}}
+
+
+def _with_fake_graph(fn):
+    from fitgap import tools as ftools
+    real = knowledge_graph.extract_graph
+    knowledge_graph.extract_graph = _fake_graph
+    ftools._scoped_graphs.clear()
+    try:
+        return fn()
+    finally:
+        knowledge_graph.extract_graph = real
+        ftools._scoped_graphs.clear()
+
+
+def test_graph_enumerate_counts_only_what_the_run_may_read():
+    from fitgap import tools as ftools
+    from evidence import agent
+
+    def check():
+        assert agent.graph_enumerate(ftools.Session(), "system:S", "document")["count"] == 3
+        scoped = agent.graph_enumerate(
+            ftools.Session(categories=("PKG",)), "system:S", "document")
+        assert scoped["count"] == 1, "a PKG run counted DR documents it cannot open"
+        assert [i["label"] for i in scoped["items"]] == ["Package doc"]
+    _with_fake_graph(check)
+
+
+def test_an_exact_count_says_what_it_counted_over():
+    from fitgap import tools as ftools
+    from evidence import agent
+
+    def check():
+        note = agent.graph_enumerate(
+            ftools.Session(categories=("PKG",)), "system:S", "document")["note"]
+        assert "PKG" in note and "scope of this run" in note
+        assert "scope of this run" not in agent.graph_enumerate(
+            ftools.Session(), "system:S", "document")["note"]
+    _with_fake_graph(check)
+
+
+def test_a_path_cannot_be_drawn_to_a_node_outside_the_scope():
+    from fitgap import tools as ftools
+    from evidence import agent
+
+    def check():
+        out = agent.graph_path(ftools.Session(categories=("PKG",)), "doc:B", "system:S")
+        assert "outside this run's categories" in out["error"]
+    _with_fake_graph(check)
+
+
+# --- the run history ----------------------------------------------------------
+#
+# An investigation is written down as it happens, so an answer can be gone back
+# to. These run against a throwaway database: what is being tested is the
+# bookkeeping, not what the agent thinks.
+
+def _with_store(check):
+    """A throwaway database with the evidence schema in it."""
+    import uuid
+    from urllib.parse import urlsplit, urlunsplit
+    import psycopg
+    import rag
+    from evidence import store
+
+    original = rag.base_url
+    parts = urlsplit(original())
+    name = f"docling_test_ev_{uuid.uuid4().hex[:8]}"
+    admin = urlunsplit((parts.scheme, parts.netloc, "/postgres", "", ""))
+    with psycopg.connect(admin, autocommit=True) as c:
+        c.execute(f'CREATE DATABASE "{name}"')
+    rag.base_url = lambda: urlunsplit((parts.scheme, parts.netloc, f"/{name}", "", ""))
+    rag.close()
+    try:
+        conn = rag.connection(schema=False)
+        store.create_schema(conn)
+        check(store, conn)
+    finally:
+        rag.close()
+        rag.base_url = original
+        with psycopg.connect(admin, autocommit=True) as c:
+            c.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
+
+
+def test_an_investigation_is_recorded_before_it_answers():
+    # The row exists from the first moment, so a run whose stream is dropped
+    # still leaves a trace of having been asked.
+    def check(store, conn):
+        store.start_run(conn, {"id": "ev_1", "question": "does it record?", "holdout": False,
+                               "categories": [], "model": "m", "prompt_hash": "h",
+                               "corpus_fingerprint": "f"})
+        run = store.get_run(conn, "ev_1")
+        assert run["status"] == "running" and run["answer"] is None
+        assert run["question"] == "does it record?"
+        assert store.list_runs(conn)[0]["id"] == "ev_1"
+    _with_store(check)
+
+
+def test_the_tool_calls_are_kept_so_a_reopened_run_shows_its_working():
+    def check(store, conn):
+        store.start_run(conn, {"id": "ev_2", "question": "q", "holdout": False, "categories": [],
+                               "model": "m", "prompt_hash": "h", "corpus_fingerprint": "f"})
+        calls = [{"tool": "search_corpus", "engine": "rag", "summary": "8 chunks"},
+                 {"tool": "graph_entity", "engine": "graph", "summary": "1 node"}]
+        store.save_calls(conn, "ev_2", calls)
+        store.finish_run(conn, "ev_2", {
+            "state": "supported", "answer": "yes", "input_tokens": 10, "output_tokens": 2,
+            "seconds": 1.5, "claims": [{"text": "c", "sources": [{"chunk_id": "PKG:1"}]}],
+        }, calls)
+        run = store.get_run(conn, "ev_2")
+        assert run["status"] == "done" and run["state"] == "supported"
+        assert [c["tool"] for c in run["calls"]] == ["search_corpus", "graph_entity"]
+        row = store.list_runs(conn)[0]
+        assert row["tool_calls"] == 2 and row["claims"] == 1 and row["sources"] == 1
+    _with_store(check)
+
+
+def test_a_failed_investigation_is_kept_with_what_it_had_done():
+    # What the agent managed to read before it failed is often the whole point
+    # of looking again, so a failure is recorded rather than dropped.
+    def check(store, conn):
+        store.start_run(conn, {"id": "ev_3", "question": "q", "holdout": True, "categories": ["PKG"],
+                               "model": "m", "prompt_hash": "h", "corpus_fingerprint": "f"})
+        store.fail_run(conn, "ev_3", "RuntimeError: the model refused",
+                       [{"tool": "search_corpus", "engine": "rag", "summary": "3 chunks"}])
+        run = store.get_run(conn, "ev_3")
+        assert run["status"] == "failed"
+        assert "refused" in run["error"] and len(run["calls"]) == 1
+        assert run["holdout"] is True and run["categories"] == ["PKG"]
+    _with_store(check)
+
+
+def test_a_run_whose_stream_was_dropped_reads_as_abandoned_not_running():
+    def check(store, conn):
+        store.start_run(conn, {"id": "ev_4", "question": "q", "holdout": False, "categories": [],
+                               "model": "m", "prompt_hash": "h", "corpus_fingerprint": "f"})
+        conn.execute("UPDATE evidence_runs SET started_at = now() - interval '2 hours'"
+                     " WHERE id = 'ev_4'")
+        assert store.get_run(conn, "ev_4")["status"] == "abandoned"
+        assert store.list_runs(conn)[0]["status"] == "abandoned"
+        # The row is not mutated -- it still records that it was interrupted
+        # rather than finished.
+        assert conn.execute("SELECT status FROM evidence_runs WHERE id = 'ev_4'").fetchone()[0] \
+            == "running"
+    _with_store(check)
+
+
+def test_history_is_newest_first_and_deletable():
+    def check(store, conn):
+        for i, q in enumerate(["first", "second", "third"]):
+            store.start_run(conn, {"id": f"ev_{i}", "question": q, "holdout": False,
+                                   "categories": [], "model": "m", "prompt_hash": "h",
+                                   "corpus_fingerprint": "f"})
+            conn.execute("UPDATE evidence_runs SET started_at = now() + make_interval(secs => %s)"
+                         " WHERE id = %s", (i, f"ev_{i}"))
+        assert [r["question"] for r in store.list_runs(conn)] == ["third", "second", "first"]
+        assert store.delete_run(conn, "ev_1") is True
+        assert store.delete_run(conn, "ev_1") is False
+        assert [r["question"] for r in store.list_runs(conn)] == ["third", "first"]
+    _with_store(check)
+
+
+
+
+def test_the_history_is_trimmed_so_traces_do_not_grow_without_bound():
+    # A call used to be a summary line. Now it carries the passages that call
+    # returned, so a row is kilobytes rather than bytes and the table has to be
+    # capped -- oldest first, after each run finishes.
+    def check(store, conn):
+        for i in range(6):
+            store.start_run(conn, {"id": f"ev_t{i}", "question": f"q{i}", "holdout": False,
+                                   "categories": [], "model": "m", "prompt_hash": "h",
+                                   "corpus_fingerprint": "f"})
+        assert store.trim(conn, keep=3) == 3
+        kept = [r["id"] for r in store.list_runs(conn)]
+        assert len(kept) == 3
+        # The newest survive; the oldest go.
+        assert "ev_t5" in kept and "ev_t0" not in kept
+    _with_store(check)
+
+
+def test_counting_calls_does_not_drag_every_trace_across_the_wire():
+    # list_runs counts calls in SQL. Selecting the column to take its length
+    # was free when a call was one line and is not now.
+    def check(store, conn):
+        store.start_run(conn, {"id": "ev_c", "question": "q", "holdout": False, "categories": [],
+                               "model": "m", "prompt_hash": "h", "corpus_fingerprint": "f"})
+        big = [{"tool": "search_corpus", "engine": "rag", "summary": "s",
+                "trace": {"kind": "rag", "hits": [{"text": "x" * 2000}]}} for _ in range(3)]
+        store.save_calls(conn, "ev_c", big)
+        assert store.list_runs(conn)[0]["tool_calls"] == 3
+        # The full trace is still there when the run itself is opened.
+        assert store.get_run(conn, "ev_c")["calls"][0]["trace"]["kind"] == "rag"
+    _with_store(check)
+
+
+# --- the investigation trace ---------------------------------------------------
+#
+# The log records that a call happened; the trace records what it brought back.
+# These check the three things that make it worth keeping: that a retrieval hit
+# carries its own text rather than only a pointer to it, that all four graph
+# tools come back in one shape the page can draw, and that nothing here can turn
+# a working call into a failed one.
+
+def _hit(cid="PKG:412", rank_v=2, rank_k=5):
+    return {"chunk_id": cid, "doc": "A spec (docx)", "heading_path": "Scope > Returns",
+            "text": "the return is created in S/4HANA", "score": 0.031,
+            "vector_rank": rank_v, "keyword_rank": rank_k}
+
+
+def test_a_retrieval_trace_keeps_the_passage_not_just_its_id():
+    # ask_store learned this the hard way: re-indexing renumbers chunks, so a
+    # trace that kept only the id would show a different passage next month --
+    # or none. The text the agent was given is recorded verbatim.
+    t = trace.of("search_corpus", {"query": "returns", "k": 8},
+                 {"query": "returns", "results": [_hit(), _hit("DR:7")]})
+    assert t["kind"] == "rag" and len(t["hits"]) == 2
+    assert t["hits"][0]["text"] == "the return is created in S/4HANA"
+    assert t["hits"][0]["rank"] == 1 and t["hits"][1]["rank"] == 2
+
+
+def test_a_retrieval_trace_carries_both_ranks_behind_the_fusion_score():
+    # A hit ranked first overall but fourteenth by vector got there on words.
+    # Keeping only the fused score would hide that, which is the one thing a
+    # reader checking a suspicious hit actually wants to see.
+    t = trace.of("search_corpus", {"query": "O-050-030"},
+                 {"results": [_hit(rank_v=14, rank_k=1)]})
+    hit = t["hits"][0]
+    assert hit["vector_rank"] == 14 and hit["keyword_rank"] == 1 and hit["score"] == 0.031
+
+
+def test_a_chunk_id_declares_the_store_it_came_from():
+    # Chunk ids are prefixed with the category they are filed under, so the
+    # panel can say "this came from DR" without a second lookup.
+    t = trace.of("search_corpus", {"query": "q"}, {"results": [_hit("DR:88")]})
+    assert t["hits"][0]["category"] == "DR"
+
+
+def test_a_retrieval_trace_is_capped():
+    t = trace.of("search_corpus", {"query": "q"},
+                 {"results": [_hit(f"PKG:{i}") for i in range(40)]})
+    assert len(t["hits"]) == trace.MAX_HITS and t["truncated"] is True
+
+
+def test_all_four_graph_tools_come_back_in_one_shape():
+    # One payload means the page has one graph renderer rather than four, and a
+    # node id is a node id whichever tool produced it.
+    calls = [
+        ("graph_entity", {"text_or_code": "SOVOS"},
+         {"matches": [{"node_id": "system:SOVOS", "label": "SOVOS (Tax Engine)", "type": "system"}]}),
+        ("graph_neighbors", {"node_id": "system:SOVOS"},
+         {"node": {"node_id": "system:SOVOS", "label": "SOVOS", "type": "system"},
+          "neighbors": [{"node_id": "doc:a.md", "label": "a", "type": "document", "hops": 1}],
+          "edges": [{"edge_id": "e1", "source": "doc:a.md", "target": "system:SOVOS",
+                     "relation": "interfaces_with", "label": "Tax Engine Interface"}]}),
+        ("graph_path", {"a": "Salesforce", "b": "SOVOS"},
+         {"hops": 2, "node_ids": ["system:Salesforce", "doc:a.md", "system:SOVOS"],
+          "edge_ids": ["e0", "e1"], "meaningful": True,
+          "steps": [{"from": "Salesforce", "relation": "integrates_with", "to": "a"}],
+          "note": "every hop is content-derived"}),
+        ("graph_enumerate", {"node_id": "system:SOVOS", "type": "document"},
+         {"node": {"node_id": "system:SOVOS", "label": "SOVOS", "type": "system"},
+          "count": 23, "type_filter": "document",
+          "items": [{"node_id": "doc:a.md", "label": "a", "type": "document",
+                     "relation": "interfaces_with"}]}),
+    ]
+    for tool, args, result in calls:
+        t = trace.of(tool, args, result, session=None)
+        assert t["kind"] == "graph", tool
+        assert t["op"] == tool
+        assert t["nodes"], f"{tool} produced no nodes"
+        for n in t["nodes"]:
+            assert n["id"] and n["label"] and n["role"] in ("seed", "path", "match", "neighbour")
+
+
+def test_a_path_trace_says_where_it_started_and_whether_the_route_is_real():
+    # paths.judge decides whether a route is an integration or an artefact of
+    # the graph's shape. That verdict has to survive into the panel, or the
+    # picture presents a meaningless route as a finding.
+    t = trace.of("graph_path", {"a": "A", "b": "B"},
+                 {"hops": 4, "node_ids": ["system:A", "stream:L2C", "system:B"],
+                  "edge_ids": ["e1"], "meaningful": False,
+                  "steps": [], "note": "NOT a real connection"})
+    assert t["seeds"] == ["system:A", "system:B"]
+    assert t["path"]["meaningful"] is False and "NOT a real" in t["path"]["note"]
+    roles = {n["id"]: n["role"] for n in t["nodes"]}
+    assert roles["system:A"] == "seed" and roles["stream:L2C"] == "path"
+
+
+def test_a_node_is_typed_from_its_id_when_the_graph_is_not_to_hand():
+    t = trace.of("graph_entity", {"text_or_code": "x"},
+                 {"matches": [{"node_id": "proc:O-050-030"}, {"node_id": "spec:SPARK-21265"}]})
+    assert [n["type"] for n in t["nodes"]] == ["process", "spec"]
+
+
+def test_a_bpml_trace_keeps_the_ancestry_so_the_scope_reads_as_a_ladder():
+    t = trace.of("get_scope", {"bpml_code": "4.5.2.4"},
+                 {"process": {"code": "4.5.2.4", "name": "Validate Order Readiness"},
+                  "parent": {"code": "4.5.2", "name": "Manage Orders"},
+                  "ancestry": [{"code": "4", "name": "Lead to Cash"},
+                               {"code": "4.5", "name": "Manage Sales Orders"}],
+                  "children": [{"code": "O-050-030", "name": "Check credit"}]})
+    assert t["kind"] == "bpml" and len(t["ancestry"]) == 2 and len(t["children"]) == 1
+
+
+def test_a_failed_call_has_no_trace_rather_than_an_empty_one():
+    # An empty panel reads as "nothing was found"; no panel reads as "this call
+    # failed", which is what happened.
+    assert trace.of("search_corpus", {"query": "q"}, {"error": "boom"}) is None
+    assert trace.of("graph_entity", {"text_or_code": "q"}, {"matches": []}) is None
+
+
+def test_a_broken_trace_never_breaks_the_run():
+    # A trace is a record of what happened. Failing to build one must not turn a
+    # successful investigation into a failed one.
+    class Exploding(dict):
+        def get(self, *a, **k):
+            raise RuntimeError("malformed result")
+
+    assert trace.of("search_corpus", {"query": "q"}, Exploding()) is None
+
+
+def test_an_unknown_tool_contributes_nothing():
+    assert trace.of("submit_answer", {}, {"ok": True}) is None
 
 
 if __name__ == "__main__":

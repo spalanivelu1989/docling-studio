@@ -22,10 +22,11 @@ import pydantic
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import knowledge_graph  # noqa: E402
+import tracing  # noqa: E402
 from fitgap import tools as ftools  # noqa: E402
 from fitgap import verifier as fverify  # noqa: E402
 
-from . import independence, paths, provenance, scoring  # noqa: E402
+from . import independence, paths, provenance, scoring, trace  # noqa: E402
 from .schemas import Answer, Claim, Source  # noqa: E402
 
 MODEL = os.environ.get("EVIDENCE_MODEL") or os.environ.get("RAG_ANSWER_MODEL", "claude-opus-5")
@@ -76,9 +77,12 @@ two fills of one template. If your sources are near-identical, you have ONE
 source. Your tools flag this. Check dates and authors; prefer the later one and
 say a requirement changed if it did.
 
-THE ONTOLOGY IS NOT AN INVENTORY. The graph models six systems because six are
-hard-coded, and it holds no dotted BPML codes at all. The corpus names many
-more systems. Never present the graph's list as the complete landscape.
+THE ONTOLOGY IS NOT AN INVENTORY. The graph models the systems that are
+hard-coded in the extractor, and the BPML codes that the register or a document
+mentions. The corpus names more systems than the graph holds, and the BPML
+sheet holds more steps. Never present the graph's list as the complete
+landscape -- but do resolve a BPML code, a system or a ticket through it first,
+because it says what is connected to what, which search cannot.
 
 A FILENAME IS NOT AN IDENTIFIER. A document named ...21999... may say 21199
 inside. When they disagree, report BOTH and flag the mismatch.
@@ -245,12 +249,25 @@ def get_chunk(session: ftools.Session, chunk_id: str) -> dict:
 
 
 def graph_path(session: ftools.Session, a: str, b: str) -> dict:
-    """BFS, then a verdict on whether the route means anything."""
-    g = knowledge_graph.extract_graph()
+    """BFS, then a verdict on whether the route means anything.
+
+    The graph is the run's, not the corpus's: `_graph` cuts it to the
+    categories this session may read, so a route cannot be built out of
+    documents the same run's retrieval would refuse to open. Hub degree is
+    recomputed for that subgraph, so "this path only goes through a hub" is
+    judged on what the run can see."""
+    g = ftools._graph(session)
     nodes = {n["id"]: n for n in g["nodes"]}
     src = a if a in nodes else ftools._best_node(g, a)
     tgt = b if b in nodes else ftools._best_node(g, b)
     if not src or not tgt:
+        unresolved = a if not src else b
+        if session.categories:
+            corpus = {n["id"] for n in knowledge_graph.extract_graph()["nodes"]}
+            if unresolved in corpus:
+                return {"error": (f"'{unresolved}' is outside this run's categories "
+                                  f"({', '.join(session.categories)}), so no path to it can be "
+                                  "drawn from what this run may read")}
         return {"error": f"could not resolve {'a' if not src else 'b'} to a graph node"}
     verdict = paths.shortest(g, src, tgt)
     if verdict is None:
@@ -265,11 +282,18 @@ def graph_enumerate(session: ftools.Session, node_id: str, type: str = "") -> di
     Retrieval answers "how many" by reading whatever eight chunks it found.
     The graph knows, so this asks it directly.
     """
-    g = knowledge_graph.extract_graph()
+    # Scoped like every other read this run makes. This one counts, so an
+    # unscoped graph here would not merely show the agent a document it cannot
+    # open -- it would put it in an exact figure the answer then quotes.
+    g = ftools._graph(session)
     nodes = {n["id"]: n for n in g["nodes"]}
     if node_id not in nodes:
         near = [n["id"] for n in g["nodes"]
                 if node_id.lower() in n["label"].lower() or node_id.lower() in n["id"].lower()][:6]
+        if session.categories and any(n["id"] == node_id
+                                      for n in knowledge_graph.extract_graph()["nodes"]):
+            return {"error": (f"'{node_id}' is outside this run's categories "
+                              f"({', '.join(session.categories)})"), "did_you_mean": near}
         return {"error": f"'{node_id}' is not a graph node", "did_you_mean": near}
     wanted = (type or "").strip().lower()
     out = []
@@ -291,9 +315,12 @@ def graph_enumerate(session: ftools.Session, node_id: str, type: str = "") -> di
         "type_filter": wanted or "any",
         "count": len(out),
         "items": out[:200],
-        "note": ("This count is exact for the graph, which is built by pattern matching over the "
-                 "same Markdown files. A thing the patterns miss is absent here but may still be "
-                 "in the corpus."),
+        # A count is quoted in answers, so it has to say what it counted over.
+        "note": (("This count is exact for the graph, which is built by pattern matching over the "
+                  "same Markdown files. A thing the patterns miss is absent here but may still be "
+                  "in the corpus.")
+                 + (f" It counts only what {', '.join(session.categories)} accounts for, which is "
+                    "the scope of this run." if session.categories else "")),
     }
 
 
@@ -372,6 +399,14 @@ def run(question: str, holdout: bool = False,
     scope = tuple(sorted({c.strip().upper() for c in (categories or []) if c.strip()}))
     session = ftools.Session(holdout=holdout, categories=scope)
     client = anthropic.Anthropic()
+    # One trace per investigation. No session id: an investigation is a single
+    # question with no attached documents and nothing to group it with.
+    run = tracing.start_run(
+        "investigate-question",
+        input={"question": question, "categories": list(scope) or "all"},
+        metadata={"model": MODEL, "prompt_hash": prompt_hash(), "holdout": holdout},
+        tags=["evidence-agent"] + (["holdout"] if holdout else []),
+    )
     prompt = question
     if scope:
         prompt = (
@@ -399,10 +434,11 @@ def run(question: str, holdout: bool = False,
                     "'not_in_corpus' and say in open_questions what you were still missing. "
                     "Do not guess.")})
 
-            response = client.messages.create(
-                model=MODEL, max_tokens=MAX_TOKENS_OUT, system=SYSTEM,
-                tools=defs, messages=messages, cache_control={"type": "ephemeral"},
-            )
+            with run.current():
+                response = client.messages.create(
+                    model=MODEL, max_tokens=MAX_TOKENS_OUT, system=SYSTEM,
+                    tools=defs, messages=messages, cache_control={"type": "ephemeral"},
+                )
             last_in = _input_tokens(response.usage)
             in_tokens += last_in
             out_tokens += response.usage.output_tokens
@@ -437,21 +473,36 @@ def run(question: str, holdout: bool = False,
                 calls += 1
                 t0 = time.time()
                 fn = DISPATCH.get(use.name)
-                if fn is None:
-                    result: dict = {"error": f"unknown tool {use.name}"}
-                else:
-                    try:
-                        result = fn(session, **dict(use.input))
-                    except TypeError as exc:
-                        result = {"error": f"bad arguments: {exc}"}
-                    except Exception as exc:
-                        result = {"error": f"{type(exc).__name__}: {exc}"}
+                args = dict(use.input)
                 engine = ENGINE_OF.get(use.name, "other")
+                with run.step(use.name,
+                              as_type=ftools.OBSERVATION_TYPE.get(use.name, "tool"),
+                              input=args) as observed:
+                    if fn is None:
+                        result: dict = {"error": f"unknown tool {use.name}"}
+                    else:
+                        try:
+                            result = fn(session, **args)
+                        except TypeError as exc:
+                            result = {"error": f"bad arguments: {exc}"}
+                        except Exception as exc:
+                            result = {"error": f"{type(exc).__name__}: {exc}"}
+                    observed.update(output=result, metadata={"engine": engine})
+                    if result.get("error"):
+                        observed.update(level="ERROR", status_message=result["error"])
                 engines[engine] = engines.get(engine, 0) + 1
                 event = {
                     "tool": use.name, "engine": engine,
-                    "arguments": dict(use.input),
-                    "summary": _summarise(use.name, dict(use.input), result),
+                    "arguments": args,
+                    "summary": _summarise(use.name, args, result),
+                    # What this call actually returned, bounded and in a shape
+                    # the page can render. The summary says a search ran; the
+                    # trace says which passages came back and at what rank,
+                    # which is the difference between a log and evidence.
+                    "trace": trace.of(use.name, args, result, session),
+                    # Which store this call actually read: the per-category
+                    # Postgres databases, the in-memory graph, or the sheet.
+                    "sources": ftools.describe_sources(use.name, args, result),
                     "ms": int((time.time() - t0) * 1000),
                     "error": result.get("error"),
                     "warning": result.get("duplicate_warning") or (
@@ -474,10 +525,17 @@ def run(question: str, holdout: bool = False,
                 open_questions=["Re-run this question."])
 
         final = finalise(submitted, session, engines, calls, in_tokens, out_tokens, started)
+        run.end(output={"state": final.state, "answer": final.answer,
+                        "claims": len(final.claims),
+                        "open_questions": len(final.open_questions),
+                        "limits": len(final.limits),
+                        "engines": engines, "tool_calls": calls})
         yield "answer", final.model_dump()
     except Exception as exc:
+        run.fail(exc)
         yield "error", {"message": f"{type(exc).__name__}: {exc}"}
     finally:
+        run.end()
         session.close()
 
 

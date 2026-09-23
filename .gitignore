@@ -8,3 +8,8 @@ knowledge_base/
 solvay-spark/
 .DS_Store
 ~$*
+backup/
+
+# Rebuilt from Postgres by frontend/test/quote-highlight-fixture.py. Four
+# megabytes of real corpus, and stale the moment the index is rebuilt.
+frontend/test/quote-highlight.fixture.json

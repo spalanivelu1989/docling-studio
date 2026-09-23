@@ -134,6 +134,10 @@ class RunRequest(BaseModel):
     # on the run beside the corpus fingerprint: what a run was allowed to see
     # is part of reproducing it (§10).
     categories: list[str] = Field(default_factory=list)
+    # An upload session id, when the analyst attached documents of their own.
+    # Their chunks live in that session's Postgres schema and are reached by a
+    # tool of their own -- never by search_corpus.
+    upload_session: str | None = None
 
 
 class Review(BaseModel):

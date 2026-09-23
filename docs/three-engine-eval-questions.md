@@ -1,14 +1,24 @@
-# Eight questions that separate the three engines
+# Questions that separate the three engines
 
-A discriminating evaluation set for the Solvay SPARK L2C corpus
-(`solvay-spark/pkg/markdown`, 83 documents / 4,257 chunks), aimed at the three
-query systems in Docling Studio:
+A discriminating evaluation set for the Solvay SPARK L2C corpus, aimed at the
+three query systems in Docling Studio. The corpus is one Postgres table with a
+category on every row, and a run can be scoped to some of them:
+
+| Category | Folder | Size |
+|---|---|---|
+| **PKG** | `solvay-spark/pkg/markdown` | 81 documents / 4,255 chunks |
+| **DR** | `solvay-spark/dr/markdown` | 132 documents / 3,195 chunks |
 
 | Engine | Route | Where it is strong | Where it breaks |
 |---|---|---|---|
 | **RAG** (`/ask`) | bge-m3 vector + BM25 → RRF → top-8 → Claude | exact codes, verbatim detail | sees only 8 chunks; no notion of document version, date or count |
-| **Graph** (`/graph`) | regex + ontology → BFS → templated answer | enumeration, connectivity, counting | 6 systems only; no dotted BPML codes; co-membership looks like integration |
+| **Graph** (`/graph`) | regex + ontology → BFS → templated answer | enumeration, connectivity, counting | 6 systems only; holds only the BPML codes a document or the register mentions; co-membership looks like integration |
 | **Fit-Gap Copilot** (`/fit-gap`) | both, as agent tools → rubric → verifier | judgement with cited evidence | one BPML step at a time; 12 tool calls; will answer UNKNOWN |
+
+The set has three parts. **Q1–Q16** are grounded in PKG. **D1–D6** are
+grounded in DR, whose failure modes differ in kind. **C1–C5** need both
+categories, and exist to test whether an engine reads across both and
+reconciles them rather than answering from whichever half it reached first.
 
 Every **Ground truth** below was read out of the corpus and checked. The
 **Watch for** lines are the failure modes each question is built to provoke —
@@ -32,9 +42,18 @@ billing document via **GOS**, archives to DMS and **Arkhineo**, and emails the
 customer. Volume: 60 K invoices yearly, all EMEA. Legal requirement.
 
 **Why it discriminates.** CPI, DMS, Arkhineo and GOS are **not in the graph's
-six-system ontology**, and `4.7.1.3` is a dotted BPML code, of which the graph
-holds **zero**. The graph can only say "this ticket's document interfaces with
-SOVOS" — structurally it cannot express the answer.
+six-system ontology**. The graph does now hold dotted BPML codes — 149 of them,
+from the hierarchy and the register — so `4.7.1.3` resolves, but resolving a
+code is not the same as modelling a message flow: the graph can only say "this
+ticket's document interfaces with SOVOS". Structurally it cannot express the
+answer.
+
+> This paragraph used to say the graph held **zero** dotted codes. That was
+> true when the question was written and is no longer. The same stale claim sat
+> in the `graph_entity` guard and in both agents' prompts, where it told them
+> not to bother asking — which is why the Evidence Agent used `search_corpus`
+> for almost everything. Worth re-reading any ground truth that rests on what
+> an engine "cannot" do.
 
 **Watch for.** The graph presenting its one edge as if it were the flow. RAG
 reproducing `INOIC02` — the document itself contains that typo alongside the
@@ -645,3 +664,353 @@ alone can query both the graph's list and the corpus and compare them.
 
 If any engine scores evenly across all sixteen, the set is not discriminating
 and should be made harder.
+
+---
+---
+
+# Questions D1–D6 · the DR corpus
+
+`solvay-spark/dr/markdown`, 132 documents / 3,195 chunks:
+workshop decks, minutes of meeting, and machine transcripts of the sessions
+themselves. Twenty-five workshops appear as **both** a transcript and a set of
+minutes.
+
+That changes what can go wrong. A specification is wrong, ambiguous, or
+superseded. A workshop record fails in three other ways:
+
+- **it defers** — the action item is the question, not its answer, and the
+  owner is often `TBD`;
+- **it proposes without deciding** — a transcript is someone explaining how a
+  standard solution works, which reads exactly like an agreed design;
+- **it arrives twice** — the same session under two file names, byte for byte
+  identical, inviting a copy to be counted as corroboration.
+
+None of these are retrieval failures. Retrieval finds the passage; the error is
+in what the passage is taken to mean.
+
+---
+
+## D1 · A demonstration is not a decision
+
+> **"For returnable packaging, was the sales-order-based solution or the EWM solution chosen, and what was settled about ATP for packaging materials?"**
+
+**Ground truth.** `Minutes of Meeting _ SPARK Imagine _ L2C-WS022 _ Returnable
+Packaging_docx.md`, 30.07.2025. The session demonstrated the standard
+sales-related returnable-packaging process in S/4HANA and **chose nothing**. It
+closes with five open items, every one owned by **I2D** and due **"TBC Next
+Session"** — including whether the EWM solution supports invoicing damaged or
+unreturned packaging and whether it can handle late-return penalties. On ATP
+the minutes state the opposite of a solution: *"there is no ATP running for
+these materials in the presented solution, and manual follow-up is currently
+required."*
+
+**Why it discriminates.** RAG will retrieve the demonstration and the
+confirmation and has no field that distinguishes "presented" from "agreed". The
+graph holds the documents but not their modality. The Copilot's rubric has an
+UNKNOWN class and a materiality judgement, which is the only machinery here
+that can return "not decided" as the answer rather than as a failure.
+
+**Watch for.** The demonstrated process reported as the decision. Also an
+answer that says ATP "is handled" — the minutes say it is not.
+
+**Must not.** State that returnable packaging is settled on either solution.
+**Double weight.**
+
+**Scores well if** the answer names both candidate solutions, says no choice
+was made, attributes the open items to I2D, and reports the ATP gap as a gap.
+
+---
+
+## D2 · Twenty-eight action items and no owners
+
+> **"What did the master data follow-up session decide about customer material info records, and who owns the outcome?"**
+
+**Ground truth.** `Minutes of Meeting - SPARK Imagine _ L2C-WS048 _ Master Data
+Follow-Up Session_docx.md`, 01.08.2025. Twenty-eight action items. Almost every
+one carries owner **TBD** and due date **TBD**; only two carry a date at all.
+Item 12 reads *"Verify whether customer material information records (CMIR)
+prioritize ship-to over sold-to in sales orders"* — and item 16 asks to
+*"Verify and confirm the use of standard SAP fields for CMIR"*. Neither is an
+answer.
+
+**Why it discriminates.** The text of item 12 is a fluent statement about CMIR
+priority. Retrieved as a chunk and read without its table columns, it looks
+like the design. The columns are what make it a question.
+
+**Watch for.** "CMIR prioritise ship-to" returned as the decision. An invented
+owner — a stream name or a role — where the sheet says TBD.
+
+**Must not.** Attribute an owner to an action item whose owner is TBD.
+
+**Scores well if** the answer reports it as an unresolved, unowned verification
+item and says so plainly. (See **C1**: PKG closes this question two months
+later, which is why the combined version is the harder one.)
+
+---
+
+## D3 · Four files, three sources
+
+> **"How many independent records are there of the returnable packaging workshop, and do they agree?"**
+
+**Ground truth.** Four files carry `L2C-WS022`: a deck, one set of minutes, and
+**two transcripts that are byte-for-byte identical** —
+`SPARK Imagine _ L2C-WS022 _ Returnable Packaging  - 2025_07_30 15_27 CEST - Transcript_docx.md`
+and `SPARK Imagine _ L2C-WS022 _ Returnable Packaging - Transcript_docx.md`
+(note the double space in the first). Three independent records, not four. The
+identical-pair trap exists again for `L2C-WS002`, and three near-identical
+`WS015` pricing decks make a softer version of it.
+
+**Why it discriminates.** This is what `evidence/independence.py` exists for:
+it groups documents by embedding centroid and collapses each group to one
+source, so two copies cannot corroborate each other. The question is a direct
+test of whether that fires — and whether the answer *says* it fired.
+
+**Watch for.** Files counted as sources. Two identical transcripts cited as
+agreement between two records.
+
+**Must not.** Present the two identical transcripts as two sources that agree.
+**Double weight.**
+
+---
+
+## D4 · The L2C corpus makes everything look like an L2C decision
+
+> **"Who is responsible for deciding how returnable packaging material is determined at delivery level, and how large containers are handled?"**
+
+**Ground truth.** Both were handed out of Lead to Cash. Packaging determination
+at delivery level was deferred to **I2D** — *"Confirm with I2D if the returnable
+packaging material can be automatically determined at the delivery level
+through a packaging instruction functionality in S/4HANA (as opposed to a sales
+BOM)"*. Large fleets — rail cars, large containers — sit with **Transportation
+Management**, where the minutes record *"identified gaps"* and ongoing
+discussions with SAP. Small fleets (cylinders, IBCs) stay in **EWM**.
+
+**Why it discriminates.** Every document in the corpus is a Lead to Cash
+document, so every answer drawn from it inherits an L2C frame. Getting this
+right means noticing that the L2C workshop's conclusion was *to hand the
+question to someone else*.
+
+**Watch for.** An answer that assigns ownership to L2C because that is where
+the discussion appears. Conflating the small-fleet and large-fleet answers.
+
+---
+
+## D5 · Which session spoke last
+
+> **"What is the current state of the pricing procedure design, and which session last touched it?"**
+
+**Ground truth.** Pricing runs across `L2C-WS015` Part 1 (13.05.2025),
+`L2C-WS016` Part 2, and a dedicated configuration meeting on **06.11.2025**
+(`20251106_SPARK_L2C_MoM_Pricing Procedure Configuration_14471_docx.md`) whose
+minutes close with **twenty action items, every one TBD/TBD** — among them
+whether to remove condition types and subtotals such as *Net Value Two*,
+whether plant-specific pricing belongs in the access sequence, and whether
+planned freight costs from TM can feed pro forma invoices. The November meeting
+reopened the procedure; it is the later word.
+
+**Why it discriminates.** The May decks are richer and more quotable; the
+November minutes are terser and are what supersede them. Nothing in a chunk
+carries its date, so ordering has to come from the document title or body.
+
+**Watch for.** A May deck quoted as the current design. Three near-identical
+WS015 decks read as three confirmations.
+
+---
+
+## D6 · A register records a classification; it does not evidence one
+
+> **"According to the L2C fit register, which processes are FITs, and does the register say why?"**
+
+**Ground truth.** `L2C - Fits_xlsx.md` lists tickets with a one-line summary,
+an owner and a short user story — `SPARK-18542` appears as *"O-020-020
+Determine Order Type - FIT"* with *"As a CSR, I only want to see order types I
+am allowed to create"*, and nothing more. Its companion file is titled
+`L2C FITs with missing description_xlsx.md`. The register says **what** was
+decided, never **why**.
+
+**Why it discriminates.** This is the densest file in DR — 93 `SPARK-`
+references, and on its own it produces 183 graph edges — so it surfaces for
+almost any FIT question and dominates the top of the ranking. An engine that
+treats a row as reasoning will sound authoritative and cite a real quote.
+
+**Watch for.** A register row presented as the rationale for a classification.
+
+**Must not.** Present a register row as the rationale for a classification.
+
+---
+
+---
+---
+
+# Questions C1–C5 · both categories
+
+Each of these was checked by retrieving it three times — unfiltered, `PKG`
+only, `DR` only — and kept only because **neither half answers it correctly
+alone**. The mix from one unfiltered retrieval at k=10 is recorded with each
+question, because it is the measurement that decides whether a question belongs
+here.
+
+The failure these provoke is not a wrong fact. It is a **confident answer built
+from half the corpus** — which is the specific risk a per-category split
+introduces, and the reason the category filters exist.
+
+---
+
+## C1 · The question was open, then it was closed
+
+> **"Do customer material info records prioritise ship-to over sold-to, and is that still an open question?"**
+
+**Ground truth.** Two documents, two months apart, and the order matters.
+
+| | source | date | says |
+|---|---|---|---|
+| DR | `L2C-WS048` master data follow-up | **01.08.2025** | *"verify whether CMIR prioritize ship-to over sold-to"* — owner TBD, due TBD |
+| PKG | `..._L2C_21999_CMIR & Master Data Priority on Ship-to_docx.md` | **2025-10-31** | the sequence is **ship-to CMIR (all fields + texts), then sold-to CMIR**; the shipping-condition half *"can be covered as per standard configuration"* |
+
+So it was an unowned open question in August and a specified design by October.
+
+**Why it discriminates.** Each half alone produces a confident, wrong answer.
+**DR alone**: still open, nobody owns it. **PKG alone**: settled design, never
+mentions it was ever in doubt. Only both, read in date order, give the truth.
+
+**Watch for.** Either single-category answer delivered without hedging. A bonus
+trap: the file is named `21999` but its body says **SPARK-21199** throughout —
+the same identity bug as **Q4**.
+
+**Must not.** Report the question as still open without the specification, or
+as never having been open. **Double weight.**
+
+**Mix.** PKG-led; DR contributes the fact that it was ever open.
+
+---
+
+## C2 · One ticket, two coding schemes
+
+> **"Which process step does SPARK-18542 belong to, and is it a FIT?"**
+
+**Ground truth.** The two halves index the same ticket differently, and both
+are right:
+
+- **PKG** — `SPARK_Interface__L2C_18542_Determine Order Type - FIT_docx.md`,
+  GAP title *"**4.5.1.3** Determine Order Type - FIT"*, WRICEF ID SPARK-18542,
+  complexity Medium.
+- **DR** — `L2C - Fits_xlsx.md` keys it to dash code *"**O-020-020**-Determine
+  Order Type - FIT"*.
+
+Second tension, in PKG alone: the document is labelled **FIT** while carrying
+*Interface Details*, *Mapping and Transformation*, *Proposed Message Type /
+API*, *Routing Rules* and *Reprocessing* sections — the structure of a build.
+
+**Why it discriminates.** The graph holds both codes as separate process nodes,
+so traversal can find each and has nothing that says they are the same step.
+Reconciling them requires the ticket as the join key.
+
+**Watch for.** One code reported and not the other. `4.5.1.3` and `O-020-020`
+treated as two different steps. A "FIT" accepted at face value when the
+document beneath it specifies an interface.
+
+**Mix.** PKG 5 / DR 5 — balanced.
+
+---
+
+## C3 · The specification and the workshop that discussed it
+
+> **"What does SPARK-22234 require for the signed PDF invoice, and what did the outputs workshop say about EDI, IDOC and forms?"**
+
+**Ground truth.** PKG holds the SOVOS interface specification (the full flow is
+in **Q1**). DR holds `L2C-WS006 - 02.07.2025 - Outputs (pptx)` with its minutes
+and a 79-chunk transcript, covering output determination across EDI, IDOC and
+forms.
+
+**Why it discriminates.** The specification describes an intended flow; the
+workshop is where output determination was argued. An answer from the
+specification alone is correct and incomplete, which is the hardest kind of
+partial answer to notice.
+
+**Mix.** PKG 5 / DR 5 — the most balanced question in the set.
+
+---
+
+## C4 · Design and conclusion
+
+> **"How is the invoice split handled, and what did the billing workshop conclude about it?"**
+
+**Ground truth.** PKG has `SPARK_FS_L2C_SPARK-49618_Billing Split_Enhancement`
+— custom split logic in BAdI `SD_BIL_DATA_TRANSFER` driven by `KNVV-KVGR2`,
+justified at *"446 customers with 4400 invoices per month × 3 minutes = 1.5
+FTE"* — plus `SPARK L2C Create Billing Types`, which records the existing split
+rules and marks them a GAP while listing standard split criteria. DR has the
+`L2C-WS018` billing deck and its two-part transcript.
+
+**Why it discriminates.** The PKG pair already contains a tension — a GAP
+marked beside standard criteria that might cover it — and the workshop is where
+that was discussed. Verified end to end through the Evidence Agent: **eleven
+PKG chunks and four DR chunks in a single answer**, citing both categories.
+
+**Mix.** PKG 3 / DR 7.
+
+---
+
+## C5 · When one search is not enough
+
+> **"What is the agreed approach for agent commissions settlement in S/4, and which document specifies the commissions reporting?"**
+
+**Ground truth.** DR has the WS-045 and WS-046 agent-commissions sessions and
+`L2C-WS017-02` commissions minutes. PKG has
+`20260520_SPARK_L2C_R2R_Agent Commissions`, `SPARK Cross Stream_Commissions
+process` and `Reporting needs Credit Management, Cash collection, Commission`.
+
+**Why it discriminates.** This one is about retrieval behaviour, not about a
+fact. One unfiltered search returns **DR 10 / PKG 0** — workshop vocabulary
+dominates, and the specifications never appear. Measured: the Evidence Agent
+recovers only by reformulating across seven searches, moving from *"agent
+commissions settlement approach S/4"* through *"commissions reporting … functional
+specification"*, a ticket number, a dash code and a guessed object name, ending
+at **PKG 9 / DR 5**.
+
+**Why that matters.** The `/ask` page issues **one** search. On this question a
+single search cannot reach PKG at all, so the RAG route fails by construction
+while the agent route succeeds — and the difference is reformulation, not
+retrieval quality.
+
+**Watch for.** An answer built entirely from the workshop minutes that never
+reaches the cross-stream process or the reporting workbook. The failure is
+stopping after the first search.
+
+**Must not.** Present the workshop discussion as the specification.
+**Double weight.**
+
+**Mix.** DR 10 / PKG 0 on one query; PKG 9 / DR 5 through the agent.
+
+---
+
+## Scoring D1–D6 and C1–C5
+
+The PKG set splits into *is the fact right?* and *is its standing right?*. The
+DR set is almost entirely the second kind — five of six sit in half 2, because
+a workshop record's facts are rarely in doubt and its **standing** almost
+always is. Score them the same way, with one addition: an answer that reports a
+deferral as a decision is a hard fail even when every quote in it is accurate.
+
+The combined set has its own failure to score, which none of the other
+twenty-two capture: **answering completely from one category**. An answer can
+be fluent, fully cited and internally consistent and still be half the story.
+Two checks make that visible:
+
+1. **Do the citations span both categories?** The investigation log records the
+   database behind every call, so this is readable rather than inferred.
+2. **If they do not, does the answer say so?** A single-category answer that
+   names its own boundary is a pass; the same answer delivered as complete is
+   the failure the set exists to catch.
+
+**Double weight** on C1 and C5 — C1 because each half alone yields a confident
+wrong answer, C5 because it separates a one-search route from a reformulating
+one.
+
+**Expected shape.** The Copilot and the Evidence Agent should beat the `/ask`
+page across C1–C5, and the margin should come almost entirely from issuing more
+than one query. If `/ask` scores level with them, either the questions are not
+asymmetric enough or the corpus statistics are doing more work than expected —
+both worth knowing.
+
+

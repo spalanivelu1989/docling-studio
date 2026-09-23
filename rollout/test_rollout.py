@@ -1,0 +1,690 @@
+"""Unit tests for the parts a rollout team's decisions rest on: the scoring
+arithmetic, the quality gates, and the invariant that stops a rated alignment
+score sitting on top of an empty register.
+
+Run: python rollout/test_rollout.py   (or python -m pytest rollout/test_rollout.py -q)
+
+Nothing here calls Claude or the database.
+"""
+
+from __future__ import annotations
+
+import sys
+import traceback
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+import pydantic  # noqa: E402
+
+from fitgap import tools as ftools  # noqa: E402
+from rollout import gates, scoring  # noqa: E402
+from rollout.schemas import (DEVIATION_TYPES, DIMENSIONS, DISPOSITIONS,  # noqa: E402
+                             SUBJECTS,
+                             LOCALIZATION_STATES, Analysis, AsIsModel, AsIsStep,
+                             BacklogCandidate, Deviation, DimensionRating, Evidence,
+                             FitArea)
+
+
+# --- helpers ------------------------------------------------------------------
+
+def dev(**kw) -> Deviation:
+    base = dict(
+        gap_id="GAP-01", as_is_statement="country does X", gt_statement="template does Y",
+        exact_difference="X vs Y", primary_type="BR", dimension="rules",
+        localization_state="CORPORATE_POLICY", materiality="High",
+        gt_fit_rating=2, harmonization_potential=60,
+        candidate_disposition="REQUIRES_DECISION", workshop_bucket="MUST_DISCUSS",
+        decision_question="Which one?", workshop_minutes=10,
+    )
+    base.update(kw)
+    return Deviation(**base)
+
+
+def ev(quote="the quote", side="as_is", cls="E1", chunk="UPLOAD:1") -> Evidence:
+    return Evidence(chunk_id=chunk, doc="doc", quote=quote, side=side, evidence_class=cls)
+
+
+def session_with(*quotes) -> ftools.Session:
+    s = ftools.Session()
+    for i, q in enumerate(quotes, 1):
+        s.retrieved[f"UPLOAD:{i}"] = {"full_text": q}
+    return s
+
+
+def analysis(**kw) -> Analysis:
+    base = dict(dimension_ratings=[], deviations=[], fit_areas=[], localization=[], backlog=[])
+    base.update(kw)
+    return Analysis(**base)
+
+
+def rate(dimension, gt, bp=None) -> DimensionRating:
+    return DimensionRating(dimension=dimension, gt_rating=gt, sap_bp_rating=bp, note="")
+
+
+# --- the controlled vocabularies ----------------------------------------------
+
+def test_the_specification_taxonomy_is_complete():
+    assert len(DEVIATION_TYPES) == 16
+    assert len(DISPOSITIONS) == 10
+    assert len(LOCALIZATION_STATES) == 6
+    assert len(DIMENSIONS) == 7
+
+
+def test_the_dimension_weights_sum_to_one():
+    assert abs(sum(w for _, w in DIMENSIONS.values()) - 1.0) < 1e-9
+
+
+# --- the invariant that caught a real failure ---------------------------------
+
+def test_a_rated_divergence_must_name_its_deviations():
+    # A dimension rated 2 ("moderate deviation") with nothing in the register
+    # produces an alignment score that looks measured over a register saying
+    # the process matched. This is the exact shape of a real failed run.
+    try:
+        analysis(dimension_ratings=[rate("governance", 1)])
+    except pydantic.ValidationError as exc:
+        assert "governance" in str(exc)
+    else:
+        raise AssertionError("a 1/4 rating with no deviation was accepted")
+
+
+def test_a_clean_fit_needs_no_deviations():
+    a = analysis(dimension_ratings=[rate(d, 4) for d in DIMENSIONS])
+    assert scoring.score(a)["gt_alignment"] == 100.0
+
+
+def test_a_minor_variation_may_stay_out_of_the_register():
+    # 3 is "minor variation — standard configuration or local parameter"; it
+    # is allowed to be below materiality, unlike 2 and below.
+    analysis(dimension_ratings=[rate("reporting", 3)])
+
+
+# --- the scoring arithmetic (§12) ---------------------------------------------
+
+def test_the_score_is_the_weighted_rating():
+    # flow 4/4 at 25%, rules 2/4 at 20%, everything else 4/4.
+    ratings = [rate(d, 4) for d in DIMENSIONS if d != "rules"] + [rate("rules", 2)]
+    a = analysis(dimension_ratings=ratings, deviations=[dev(dimension="rules")])
+    # 0.80 * 100 + 0.20 * 50 = 90
+    assert scoring.score(a)["gt_alignment"] == 90.0
+
+
+def test_an_unrated_dimension_is_dropped_not_counted_as_zero():
+    a = analysis(dimension_ratings=[rate("flow", 4), rate("rules", 4)])
+    # Only two dimensions rated, both full marks: the answer is 100, not 45.
+    assert scoring.score(a)["gt_alignment"] == 100.0
+
+
+def test_no_rating_at_all_is_not_assessable_rather_than_zero():
+    s = scoring.score(analysis())
+    assert s["gt_alignment"] is None
+    assert s["sap_bp_alignment"] is None
+
+
+def test_only_confirmed_localization_lifts_the_adjusted_score():
+    ratings = [rate(d, 4) for d in DIMENSIONS if d != "rules"] + [rate("rules", 2)]
+    # A suspicion must not launder itself into a better score -- that is the
+    # exact assumption §5.3 forbids.
+    suspected = analysis(dimension_ratings=ratings,
+                         deviations=[dev(dimension="rules", localization_state="SUSPECTED")])
+    confirmed = analysis(dimension_ratings=ratings,
+                         deviations=[dev(dimension="rules", localization_state="CONFIRMED_STATUTORY")])
+    assert scoring.score(suspected)["localization_adjusted"] == 90.0
+    assert scoring.score(confirmed)["localization_adjusted"] == 100.0
+
+
+def test_harmonization_is_weighted_by_materiality():
+    ratings = [rate(d, 4) for d in DIMENSIONS if d != "rules"] + [rate("rules", 2)]
+    a = analysis(dimension_ratings=ratings, deviations=[
+        dev(gap_id="GAP-01", dimension="rules", materiality="Critical", harmonization_potential=0),
+        dev(gap_id="GAP-02", dimension="rules", materiality="Low", harmonization_potential=100),
+    ])
+    # (5*0 + 2*100) / 7 = 28.6 -- the critical gap that cannot be harmonised
+    # outweighs the low one that can.
+    assert scoring.score(a)["harmonization_potential"] == 28.6
+
+
+def test_the_four_score_patterns():
+    assert "template review" in scoring._pattern(85, 40)
+    assert "closer to SAP standard" in scoring._pattern(40, 85)
+    assert scoring._pattern(85, 85).startswith("Strong")
+    assert scoring._pattern(None, 80) == ""
+
+
+def test_the_agenda_puts_legal_blockers_first():
+    ratings = [rate(d, 4) for d in DIMENSIONS if d != "rules"] + [rate("rules", 2)]
+    a = analysis(dimension_ratings=ratings, deviations=[
+        dev(gap_id="GAP-RP", dimension="rules", primary_type="RP", materiality="Low"),
+        dev(gap_id="GAP-LC", dimension="rules", primary_type="LC", materiality="Medium"),
+        dev(gap_id="GAP-AP", dimension="rules", primary_type="AP", materiality="Critical"),
+    ])
+    assert [i["gap_id"] for i in scoring.agenda(a)] == ["GAP-LC", "GAP-AP", "GAP-RP"]
+
+
+def test_the_heatmap_is_built_from_the_register():
+    ratings = [rate(d, 4) for d in DIMENSIONS if d != "rules"] + [rate("rules", 2)]
+    a = analysis(dimension_ratings=ratings,
+                 deviations=[dev(dimension="rules", materiality="Critical")])
+    rows = {r["dimension"]: r for r in scoring.heatmap(a)}
+    assert rows["rules"]["focus"] == "High" and rows["rules"]["gap_ids"] == ["GAP-01"]
+    assert rows["flow"]["focus"] == "None" and rows["flow"]["deviations"] == 0
+
+
+# --- the quality gates (§25) --------------------------------------------------
+
+def test_an_invented_quote_is_dropped():
+    sess = session_with("the delivery is blocked when exposure exceeds the limit")
+    a = analysis(dimension_ratings=[rate("rules", 2)],
+                 deviations=[dev(evidence=[ev("a sentence nobody wrote"),
+                                           ev("the delivery is blocked", side="template")])])
+    out, issues = gates.check(a, AsIsModel(), sess, has_sap_bp_source=False)
+    assert len(out.deviations[0].evidence) == 1
+    assert any(i.gate == "QG2" and i.severity == "hard" for i in issues)
+
+
+def test_a_quote_from_a_chunk_never_retrieved_is_dropped():
+    a = analysis(dimension_ratings=[rate("rules", 2)],
+                 deviations=[dev(evidence=[ev("anything", chunk="PKG:999")])])
+    out, issues = gates.check(a, AsIsModel(), ftools.Session(), has_sap_bp_source=False)
+    assert out.deviations[0].evidence == []
+    assert any("never retrieved" in i.detail for i in issues)
+
+
+def test_statutory_localization_without_an_explicit_source_is_demoted():
+    sess = session_with("the local block applies")
+    a = analysis(dimension_ratings=[rate("controls", 2)], deviations=[
+        dev(dimension="controls", localization_state="CONFIRMED_STATUTORY",
+            evidence=[ev("the local block applies", cls="E3")]),
+    ])
+    out, issues = gates.check(a, AsIsModel(), sess, has_sap_bp_source=False)
+    assert out.deviations[0].localization_state == "SUSPECTED"
+    assert any(i.gate == "QG4" for i in issues)
+
+
+def test_an_extension_without_standard_options_becomes_a_decision():
+    sess = session_with("country needs a custom check")
+    a = analysis(dimension_ratings=[rate("rules", 2)], deviations=[
+        dev(candidate_disposition="EXTEND_STANDARD", standard_options_considered=[],
+            evidence=[ev("country needs a custom check")]),
+    ])
+    out, issues = gates.check(a, AsIsModel(), sess, has_sap_bp_source=False)
+    assert out.deviations[0].candidate_disposition == "REQUIRES_DECISION"
+    assert any(i.gate == "QG5" for i in issues)
+
+
+def test_an_extension_that_shows_its_working_survives():
+    sess = session_with("country needs a custom check")
+    a = analysis(dimension_ratings=[rate("rules", 2)], deviations=[
+        dev(candidate_disposition="EXTEND_STANDARD",
+            standard_options_considered=["SAP credit management configuration cannot hold advances"],
+            evidence=[ev("country needs a custom check")]),
+    ])
+    out, _ = gates.check(a, AsIsModel(), sess, has_sap_bp_source=False)
+    assert out.deviations[0].candidate_disposition == "EXTEND_STANDARD"
+
+
+def test_an_sap_best_practice_rating_needs_an_sap_source():
+    # §26: do not hallucinate SAP functionality. A Best Practice rating with
+    # no Best Practice quote behind it is exactly that.
+    sess = session_with("country does X")
+    a = analysis(dimension_ratings=[rate("rules", 2, bp=3)], deviations=[
+        dev(sap_bp_fit_rating=3, evidence=[ev("country does X")]),
+    ])
+    out, issues = gates.check(a, AsIsModel(), sess, has_sap_bp_source=False)
+    assert out.deviations[0].sap_bp_fit_rating is None
+    assert out.dimension_ratings[0].sap_bp_rating is None
+    assert scoring.score(out)["sap_bp_alignment"] is None
+    assert "no SAP Best Practice source" in out.sap_bp_note
+
+
+def test_a_material_gap_that_loses_all_its_evidence_cannot_keep_a_disposition():
+    a = analysis(dimension_ratings=[rate("rules", 2)], deviations=[
+        dev(materiality="Critical", candidate_disposition="ADOPT_GT",
+            evidence=[ev("invented", chunk="PKG:404")]),
+    ])
+    out, issues = gates.check(a, AsIsModel(), ftools.Session(), has_sap_bp_source=False)
+    assert out.deviations[0].candidate_disposition == "REQUIRES_DECISION"
+    assert out.deviations[0].evidence_confidence == "Low"
+
+
+def test_one_sided_evidence_on_a_material_gap_is_flagged():
+    sess = session_with("country does X")
+    a = analysis(dimension_ratings=[rate("rules", 2)],
+                 deviations=[dev(materiality="High", evidence=[ev("country does X")])])
+    _, issues = gates.check(a, AsIsModel(), sess, has_sap_bp_source=False)
+    assert any("only the as_is side" in i.detail for i in issues)
+
+
+def test_a_backlog_candidate_must_trace_to_a_gap():
+    sess = session_with("x")
+    a = analysis(dimension_ratings=[rate("rules", 2)], deviations=[dev(evidence=[ev("x")])],
+                 backlog=[BacklogCandidate(title="Build a thing", requirement="r", gap_id="GAP-99")])
+    out, issues = gates.check(a, AsIsModel(), sess, has_sap_bp_source=False)
+    assert out.backlog == []
+    assert any(i.gate == "QG7" for i in issues)
+
+
+def test_an_unmapped_as_is_step_is_reported():
+    sess = session_with("x")
+    asis = AsIsModel(steps=[AsIsStep(step_id="S1", name="one"), AsIsStep(step_id="S2", name="two")])
+    a = analysis(dimension_ratings=[rate("rules", 2)],
+                 deviations=[dev(as_is_step_id="S1", evidence=[ev("x")])])
+    _, issues = gates.check(a, asis, sess, has_sap_bp_source=False)
+    assert any(i.gate == "QG1" and "S2" in i.detail for i in issues)
+
+
+# --- the Global Template process is optional ---------------------------------
+
+def test_naming_no_template_process_is_allowed():
+    from rollout.orchestrator import _resolve
+
+    assert _resolve("") == (None, "")
+    assert _resolve("   ") == (None, "")
+
+
+def test_a_template_process_that_does_not_resolve_is_still_an_error():
+    # A typo must not quietly become "no scope" -- that would analyse against
+    # a different process than the one the analyst asked for.
+    #
+    # The text has no real words in it on purpose: bpml.resolve_scope matches
+    # on name as well as code, so a string containing "process" resolves to a
+    # real node. That looseness is the Copilot's too, and the page shows what
+    # it landed on beside the field.
+    from rollout.orchestrator import _resolve
+
+    found, err = _resolve("zzzqqq")
+    assert found is None and "does not resolve" in err
+    assert "Clear the field" in err
+
+
+def test_an_unscoped_run_must_say_what_it_compared_against():
+    sess = session_with("x")
+    a = analysis(dimension_ratings=[rate("rules", 2)], deviations=[dev(evidence=[ev("x")])])
+    out, issues = gates.check(a, AsIsModel(), sess, has_sap_bp_source=False, scope_named=False)
+    assert any(i.gate == "QG7" and "no stated baseline" in i.detail for i in issues)
+    assert out.template_process.startswith("not identified")
+
+
+def test_an_unscoped_run_that_names_its_baseline_passes():
+    sess = session_with("x")
+    a = analysis(dimension_ratings=[rate("rules", 2)], deviations=[dev(evidence=[ev("x")])],
+                 template_process="4.5.2 Order Fulfillment")
+    _, issues = gates.check(a, AsIsModel(), sess, has_sap_bp_source=False, scope_named=False)
+    assert not any("no stated baseline" in i.detail for i in issues)
+
+
+def test_a_scoped_run_needs_no_template_process_of_its_own():
+    sess = session_with("x")
+    a = analysis(dimension_ratings=[rate("rules", 2)], deviations=[dev(evidence=[ev("x")])])
+    _, issues = gates.check(a, AsIsModel(), sess, has_sap_bp_source=False, scope_named=True)
+    assert not any("no stated baseline" in i.detail for i in issues)
+
+
+def test_a_matched_process_becomes_a_label_that_fits_on_one_line():
+    # The agent answers `template_process` with a paragraph. The run history
+    # menu gives it one line, so what lands in `scope_label` is the name, not
+    # the reasoning behind it.
+    from rollout.store import _short_label
+
+    long = ('Global Template: BPML **4.5.2.2 Block Delivery** (L2C > 4.0 Lead to Cash > 4.5 '
+            'Manage Sales Orders), equivalent to dash code **O-050-020**. No Global Template '
+            'document is attached, so the template side is reconstructed from the corpus.')
+    assert _short_label(long) == "Global Template: BPML 4.5.2.2 Block Delivery"
+
+    # No bracket to cut at: trimmed on a word boundary, never mid-word.
+    unbracketed = "Global Template " + "process " * 20
+    short = _short_label(unbracketed)
+    assert len(short) <= 91 and short.endswith("\u2026") and "proces\u2026" not in short
+
+    # A statement that opens with its qualifier keeps enough to be identifiable.
+    assert _short_label("(no direct match) 4.3.3 Release or block orders").startswith("(no direct")
+    assert _short_label("") == ""
+
+
+def test_the_trace_headline_reports_the_numbers_the_scorer_actually_produced():
+    """The headline is built from `scoring.score`, so it is only as right as
+    its key names -- and a wrong key here is silent: it yields a plausible
+    zero, not an error. This builds a real scores payload and checks the
+    headline against it rather than against remembered key names.
+
+    The first version of `_headline` failed exactly this: it read
+    `counts["workshop"]["must"]` and reported 0 must-discuss items on a run
+    that had nine."""
+    from rollout.orchestrator import _headline
+
+    a = analysis(
+        dimension_ratings=[rate("rules", 2)],
+        deviations=[dev(materiality="Critical", workshop_bucket="MUST_DISCUSS", evidence=[ev("x")]),
+                    dev(materiality="Low", workshop_bucket="CONFIRM", evidence=[ev("x")])],
+    )
+    scores = scoring.score(a)
+    head = _headline(a, scores, {"hard": 0, "soft": 1}, "4.3.3 Something")
+
+    assert head["deviations"] == 2
+    # Taken whole from the scorer, so the names cannot drift apart.
+    assert head["workshop"] == scores["counts"]["workshop"]
+    assert head["workshop"]["MUST_DISCUSS"] == 1
+    assert head["workshop_minutes"] == scores["counts"]["workshop_minutes"]
+    assert head["by_materiality"] == scores["counts"]["by_materiality"]
+    assert head["gt_alignment"] == scores["gt_alignment"]
+    assert head["hard_gate_failures"] == 0
+    # No value in the headline may be a key that the scorer does not have.
+    assert not [k for k, v in head.items() if v is None and k in
+                ("workshop", "workshop_minutes", "by_materiality")]
+
+
+def test_a_gap_decided_twice_counts_once():
+    """The decision log is append-only, so clicking Accept three times writes
+    three rows. The workshop pack must report one decided gap, not three --
+    and must still be able to show that the verdict changed."""
+    from rollout.export import _standing
+
+    log = [
+        {"gap_id": "GAP-01", "verdict": "accept", "reviewer": "A", "decided_at": "2026-09-22T10:00:00"},
+        {"gap_id": "GAP-01", "verdict": "accept", "reviewer": "A", "decided_at": "2026-09-22T10:00:02"},
+        {"gap_id": "GAP-02", "verdict": "defer", "reviewer": "B", "decided_at": "2026-09-22T10:01:00"},
+        {"gap_id": "GAP-01", "verdict": "reject", "reviewer": "C", "decided_at": "2026-09-22T11:00:00"},
+    ]
+    standing, superseded = _standing(log)
+
+    assert set(standing) == {"GAP-01", "GAP-02"}
+    # The last word on GAP-01 is C's reject, not A's first accept.
+    assert standing["GAP-01"]["verdict"] == "reject"
+    assert standing["GAP-01"]["reviewer"] == "C"
+    assert standing["GAP-02"]["verdict"] == "defer"
+    # Nothing is thrown away: both of A's rows survive as history.
+    assert len(superseded) == 2
+    assert [d["reviewer"] for d in superseded] == ["A", "A"]
+
+
+def test_the_decision_log_survives_rows_with_no_timestamp():
+    # `decided_at` is nullable in the schema; sorting must not raise on it.
+    from rollout.export import _standing
+
+    standing, _ = _standing([
+        {"gap_id": "G", "verdict": "accept", "reviewer": "A", "decided_at": None},
+        {"gap_id": "G", "verdict": "reject", "reviewer": "B", "decided_at": "2026-01-01T00:00:00"},
+    ])
+    assert standing["G"]["verdict"] == "reject"
+
+
+# --- analysing something other than a country -------------------------------
+
+BP = SUBJECTS["sap_best_practice"]
+COUNTRY = SUBJECTS["country_as_is"]
+
+
+def test_each_subject_requires_its_own_upload_role():
+    # The whole reason the second subject exists: a Best Practice document had
+    # to be mis-tagged as a country's As-Is to be analysed at all, which made
+    # the agent report SAP's process as a country's own.
+    assert COUNTRY.role == "as_is"
+    assert BP.role == "sap_bp"
+
+
+def test_a_best_practice_run_cannot_claim_a_statutory_localization():
+    """There is no country in the run, so there is nobody for a legal
+    obligation to apply to. The vocabulary still offers the state, so this is
+    repaired rather than trusted to the prompt."""
+    sess = session_with("x")
+    a = analysis(
+        dimension_ratings=[rate("rules", 2)],
+        deviations=[dev(localization_state="CONFIRMED_STATUTORY", evidence=[ev("x")])],
+    )
+    a, issues = gates.check(a, AsIsModel(), sess, has_sap_bp_source=True, subject=BP)
+
+    assert a.deviations[0].localization_state == "NOT_LOCALIZATION"
+    assert any("has no country" in i.detail for i in issues)
+
+
+def test_a_best_practice_run_drops_localization_items():
+    from rollout.schemas import LocalizationItem
+
+    sess = session_with("x")
+    a = analysis(localization=[LocalizationItem(topic="GST e-way bill", status="Confirmed")])
+    a, issues = gates.check(a, AsIsModel(), sess, has_sap_bp_source=True, subject=BP)
+
+    assert a.localization == []
+    assert any("localization item" in i.detail for i in issues)
+
+
+def test_a_best_practice_run_does_not_rate_itself_against_itself():
+    sess = session_with("x")
+    a = analysis(
+        dimension_ratings=[rate("rules", 2, bp=3)],
+        deviations=[dev(sap_bp_fit_rating=2, evidence=[ev("x")])],
+    )
+    a, issues = gates.check(a, AsIsModel(), sess, has_sap_bp_source=True, subject=BP)
+
+    assert a.deviations[0].sap_bp_fit_rating is None
+    assert a.dimension_ratings[0].sap_bp_rating is None
+    # The note has to say why Score B is absent, or a reader assumes the
+    # comparison was attempted and came out empty.
+    assert "Not applicable" in a.sap_bp_note and "subject of this run" in a.sap_bp_note
+    assert any("comparison with itself" in i.detail for i in issues)
+
+
+def test_score_c_is_not_reported_when_there_is_no_country():
+    """Not zero, and not silently equal to Score A -- a number that happens to
+    match reads as a second measurement agreeing with the first."""
+    a = analysis(dimension_ratings=[rate("rules", 2)],
+                 deviations=[dev(localization_state="NOT_LOCALIZATION", evidence=[ev("x")])])
+    bp = scoring.score(a, BP)
+    country = scoring.score(a, COUNTRY)
+
+    assert bp["gt_alignment"] is not None
+    assert bp["localization_adjusted"] is None
+    assert bp["subject"] == "sap_best_practice"
+    assert "does not apply" in bp["formula"]
+    # The country reading of the same register still computes Score C.
+    assert country["localization_adjusted"] is not None
+
+
+def test_a_country_run_is_unchanged_by_the_new_subject():
+    """The default has to mean exactly what it meant before this existed."""
+    sess = session_with("the quote")
+    a = analysis(dimension_ratings=[rate("rules", 2)],
+                 deviations=[dev(localization_state="CORPORATE_POLICY", evidence=[ev("the quote")])])
+    a, _ = gates.check(a, AsIsModel(), sess, has_sap_bp_source=False)
+
+    assert a.deviations[0].localization_state == "CORPORATE_POLICY"
+    assert scoring.score(a)["localization_adjusted"] is not None
+
+
+def test_the_two_subjects_do_not_share_a_prompt_hash():
+    # A run recorded against a hash that does not describe its instructions
+    # cannot be reproduced from the record.
+    from rollout import agent
+
+    assert agent.prompt_hash(COUNTRY) != agent.prompt_hash(BP)
+    assert agent.prompt_hash() == agent.prompt_hash(COUNTRY)
+
+
+def test_the_best_practice_prompt_says_there_is_no_country():
+    from rollout import agent
+
+    text = agent.system_compare(BP)
+    assert "NOT_LOCALIZATION" in text
+    assert "no country in this run" in text
+    # And it must not still be describing a three-way comparison.
+    assert "three-way" not in text.lower()
+
+
+# --- source traceability -----------------------------------------------------
+
+
+def _retrieved(cid, doc, category, heading, score, text, uploaded=False):
+    rec = {"chunk_id": cid, "true_doc": doc, "category": category,
+           "true_heading_path": heading, "score": score, "full_text": text,
+           "source": f"/corpus/{doc}.md", "vector_rank": 1, "keyword_rank": 2}
+    if uploaded:
+        rec["uploaded"] = True
+    return rec
+
+
+def test_the_source_index_says_where_each_finding_came_from():
+    from rollout import sources
+
+    a = analysis(
+        dimension_ratings=[rate("rules", 2)],
+        deviations=[dev(gap_id="GAP-01", evidence=[
+            ev("the template says X", side="template", chunk="PKG:12"),
+            ev("the country does Y", side="as_is", chunk="UPLOAD:3"),
+        ])],
+        fit_areas=[FitArea(as_is_step_id="S1", statement="matches",
+                           evidence=[ev("same thing", side="template", chunk="PKG:12")])],
+    )
+    log = {
+        "PKG:12": _retrieved("PKG:12", "L2C Billing", "PKG", "Billing / Blocks", 0.031,
+                             "the template says X and rather a lot more besides"),
+        "UPLOAD:3": _retrieved("UPLOAD:3", "India SOP.docx", "UPLOAD", "Step 3", None,
+                               "the country does Y", uploaded=True),
+    }
+    idx = sources.index(a.model_dump(), AsIsModel().model_dump(), log,
+                        upload_names={"India SOP.docx"})
+
+    assert idx["cited_total"] == 2
+    pkg = idx["chunks"]["PKG:12"]
+    assert pkg["document"] == "L2C Billing"
+    assert pkg["category"] == "PKG" and pkg["kind"] == "corpus"
+    assert pkg["heading_path"] == "Billing / Blocks"
+    assert pkg["score"] == 0.031
+    assert "the template says X" in pkg["snippet"]
+    # One chunk, cited by two different findings, stored once.
+    assert {u["kind"] for u in pkg["used_by"]} == {"deviation", "fit_area"}
+    assert {u["ref"] for u in pkg["used_by"]} == {"GAP-01", "S1"}
+
+    up = idx["chunks"]["UPLOAD:3"]
+    assert up["kind"] == "upload" and up["category"] == "UPLOAD"
+
+    # And the document roll-up counts citations, not chunks.
+    billing = next(d for d in idx["documents"] if d["document"] == "L2C Billing")
+    assert billing["chunks"] == 1 and billing["citations"] == 2
+
+
+def test_the_index_counts_what_was_read_and_not_used():
+    """The gap between retrieved and cited is the honest measure of how much
+    the run looked at without relying on: it separates "the corpus does not
+    say" from "the agent did not look"."""
+    from rollout import sources
+
+    a = analysis(dimension_ratings=[rate("rules", 2)],
+                 deviations=[dev(evidence=[ev("q", chunk="PKG:1")])])
+    log = {f"PKG:{n}": _retrieved(f"PKG:{n}", "doc", "PKG", "h", 0.01, "q") for n in range(1, 8)}
+    idx = sources.index(a.model_dump(), AsIsModel().model_dump(), log)
+
+    assert idx["retrieved_total"] == 7
+    assert idx["cited_total"] == 1
+    assert idx["unused_total"] == 6
+
+
+def test_a_citation_the_gates_pruned_is_marked_not_guessed_at():
+    # The quote gate drops evidence whose chunk this run never retrieved. If
+    # one survives into the index anyway, an empty row that looks like a real
+    # source is the worst outcome.
+    from rollout import sources
+
+    a = analysis(dimension_ratings=[rate("rules", 2)],
+                 deviations=[dev(evidence=[ev("q", chunk="GHOST:9")])])
+    idx = sources.index(a.model_dump(), AsIsModel().model_dump(), {})
+
+    assert idx["chunks"]["GHOST:9"]["known"] is False
+    assert idx["chunks"]["GHOST:9"]["document"] == ""
+
+
+def test_semantic_accuracy_is_never_claimed_as_checked():
+    # A gate that always passes would make the report look better than it is.
+    assert any("QG3" in n for n in gates.summarise([])["not_checked"])
+
+
+# --- the subject decides which documents are the subject -----------------------
+# compare_entities asked for role "as_is" whatever the run was about. A Best
+# Practice run attaches its document as "sap_bp", so the filter matched nothing
+# and the tool returned an empty comparison -- which reads as "no shared
+# entities", not as "you asked for the wrong documents". The prompt tells the
+# agent to call this, so the blindness was silent.
+
+
+def _compare_entities_with(subject_key, attached_role):
+    """Run the tool against a stub upload store, and report what it asked for."""
+    from rollout import tools as rtools
+    import uploads
+
+    asked = {}
+
+    def fake_compare(sid, roles=None, categories=None):
+        asked["roles"] = list(roles or [])
+        asked["categories"] = list(categories or [])
+        match = not roles or attached_role in roles
+        return {"documents": [{"node_id": "doc:subject", "label": "The subject document"}]
+                             if match else [],
+                "entities": ([{"node_id": "system:S", "type": "system", "label": "SAP S/4HANA",
+                               "code": None, "ticket": None, "in_corpus": True,
+                               "corpus_documents": ["A template doc"], "corpus_mentions": 1}]
+                             if match else []),
+                "shared": 1 if match else 0, "new": 0, "scope": list(categories or [])}
+
+    real = uploads.compare
+    uploads.compare = fake_compare
+    try:
+        session = ftools.Session(categories=("PKG",), uploads="sid",
+                                 subject_role=SUBJECTS[subject_key].role)
+        return rtools.compare_entities(session), asked
+    finally:
+        uploads.compare = real
+
+
+def test_compare_entities_asks_for_the_subject_role_not_always_as_is():
+    for key, attached in (("country_as_is", "as_is"), ("sap_best_practice", "sap_bp")):
+        result, asked = _compare_entities_with(key, attached)
+        assert asked["roles"] == [SUBJECTS[key].role], f"{key} asked for {asked['roles']}"
+        assert result["subject_documents"] == ["The subject document"], (
+            f"{key} found none of its own documents")
+        assert result["shared"] == 1
+
+
+def test_a_best_practice_run_is_not_blind_to_its_own_document():
+    """The regression itself: sap_bp attached, as_is requested, nothing found."""
+    result, asked = _compare_entities_with("sap_best_practice", "sap_bp")
+    assert asked["roles"] != ["as_is"]
+    assert result["subject_role"] == "sap_bp"
+    assert result["subject_documents"], "the Best Practice document was filtered out"
+
+
+def test_compare_entities_passes_the_run_scope_to_the_corpus_side():
+    """'The corpus already knows this' has to mean the corpus this run reads."""
+    _, asked = _compare_entities_with("country_as_is", "as_is")
+    assert asked["categories"] == ["PKG"]
+
+
+def test_a_session_with_no_subject_still_defaults_to_the_country():
+    """The Copilot builds sessions without a subject; it only ever has one."""
+    from rollout import tools as rtools
+    import uploads
+
+    asked = {}
+    real = uploads.compare
+    uploads.compare = lambda sid, roles=None, categories=None: (
+        asked.update(roles=list(roles or [])) or
+        {"documents": [], "entities": [], "shared": 0, "new": 0, "scope": []})
+    try:
+        rtools.compare_entities(ftools.Session(uploads="sid"))
+    finally:
+        uploads.compare = real
+    assert asked["roles"] == ["as_is"]
+
+
+if __name__ == "__main__":
+    fns = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]
+    failed = 0
+    for name, fn in fns:
+        try:
+            fn()
+            print(f"  ok   {name}")
+        except Exception:
+            failed += 1
+            print(f"  FAIL {name}")
+            traceback.print_exc()
+    print(f"\n{len(fns) - failed}/{len(fns)} passed")
+    sys.exit(1 if failed else 0)

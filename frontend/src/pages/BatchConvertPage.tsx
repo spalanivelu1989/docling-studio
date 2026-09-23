@@ -46,10 +46,10 @@ import {
 } from "lucide-react";
 import { useEffect, useId, useRef, useState, type DragEvent } from "react";
 import { Group, Panel, Separator } from "react-resizable-panels";
-import type { BatchEmbedSummary } from "../api";
+import { type BatchEmbedSummary } from "../api";
 import Markdown from "../components/Markdown";
 
-const ACCEPT = ".pptx,.ppt,.docx,.doc,.xlsx,.xls,.xlsm,.pdf,.html,.htm,.xml,.png,.jpg,.jpeg,.webp,.bmp,.tiff,.tif";
+const ACCEPT = ".pptx,.ppt,.docx,.doc,.xlsx,.xlsm,.xls,.pdf,.html,.htm,.xml,.csv,.txt,.json,.msg,.eml,.png,.jpg,.jpeg,.webp,.bmp,.tiff,.tif";
 
 const PROVIDERS = [
   { value: "claude", label: "Claude (Anthropic API)" },
@@ -118,6 +118,10 @@ export default function BatchConvertPage() {
   const [startTime, setStartTime] = useState<number | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
+  // Nothing is asked about where the batch is filed: it lands in
+  // knowledge_base/, which is the folder UNFILED claims, and every run reads
+  // the whole corpus.
+
   // pgvector Knowledge Base bulk embedding state
   const [embedding, setEmbedding] = useState(false);
   const [embedProgress, setEmbedProgress] = useState<{ current: number; total: number; filename: string } | null>(null);
@@ -127,6 +131,7 @@ export default function BatchConvertPage() {
   const folderInputRef = useRef<HTMLInputElement>(null);
   const filesInputId = useId();
   const folderInputId = useId();
+
 
   // Timer while batch is running
   useEffect(() => {
@@ -304,9 +309,7 @@ export default function BatchConvertPage() {
     setNotice("Connecting to pgvector knowledge base...");
 
     try {
-      const res = await fetch(`/api/batch/${batchId}/embed`, {
-        method: "POST",
-      });
+      const res = await fetch(`/api/batch/${batchId}/embed`, { method: "POST" });
 
       if (!res.ok) {
         const errJson = await res.json().catch(() => ({}));
@@ -429,6 +432,8 @@ export default function BatchConvertPage() {
   const completedFiles = queue.filter((q) => q.status === "done" && q.result).map((q) => q.result!);
   const completedCount = completedFiles.length;
   const errorCount = queue.filter((q) => q.status === "error").length;
+
+  const destinationLabel = "Knowledge Base";
 
   const embeddedItems = queue.filter((q) => q.embed && q.embed.status !== "error");
   const isAllEmbedded =
@@ -581,7 +586,7 @@ export default function BatchConvertPage() {
             title={
               completedCount === 0
                 ? "Convert documents first before inserting into Knowledge Base"
-                : "Chunk, embed with Ollama bge-m3 (1024d), and store all converted Markdown documents in PostgreSQL pgvector knowledge base"
+                : "Chunk, embed with Ollama bge-m3 (1024d), and store all converted Markdown documents"
             }
           >
             <span>
@@ -605,10 +610,10 @@ export default function BatchConvertPage() {
                 {embedding
                   ? `Embedding (${embedProgress ? `${embedProgress.current}/${embedProgress.total}` : "..."})`
                   : isAllEmbedded
-                  ? `In Knowledge Base (${embeddedItems.length})`
+                  ? `In ${destinationLabel} (${embeddedItems.length})`
                   : completedCount > 0
-                  ? `Insert into Knowledge Base (${completedCount})`
-                  : "Insert into Knowledge Base"}
+                  ? `Insert into ${destinationLabel} (${completedCount})`
+                  : `Insert into ${destinationLabel}`}
               </Button>
             </span>
           </Tooltip>
@@ -1052,8 +1057,8 @@ export default function BatchConvertPage() {
                       {embedding
                         ? "Embedding into pgvector..."
                         : isAllEmbedded
-                        ? "Indexed in KB"
-                        : `Insert into Knowledge Base (${completedCount})`}
+                        ? `Indexed in ${destinationLabel}`
+                        : `Insert into ${destinationLabel} (${completedCount})`}
                     </Button>
                   </Stack>
                 </Box>
@@ -1098,7 +1103,7 @@ export default function BatchConvertPage() {
                               pgvector Knowledge Base Ingestion Complete
                             </Typography>
                             <Typography variant="caption" sx={{ color: "text.secondary" }}>
-                              Stored {embedSummary.succeeded} document(s) ({embedSummary.total_chunks} chunks, ~{embedSummary.total_tokens} tokens) in {embedSummary.seconds}s. Total documents in DB: {embedSummary.db_documents} ({embedSummary.db_chunks} chunks).
+                              Stored {embedSummary.succeeded} document(s) ({embedSummary.total_chunks} chunks, ~{embedSummary.total_tokens} tokens) in {embedSummary.seconds}s, . Total documents in DB: {embedSummary.db_documents} ({embedSummary.db_chunks} chunks).
                             </Typography>
                           </Box>
                         </Stack>
