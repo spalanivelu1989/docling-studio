@@ -629,8 +629,16 @@ def extract_graph(
                 relation, edge_label = SYSTEM_EDGE[sys_key]
                 add_edge(doc_id, f"system:{sys_key}", relation, edge_label)
 
-        # Extract BPML Process Codes
-        found_codes = set(CODE_RE.findall(content))
+        # Extract BPML Process Codes.
+        #
+        # Sorted, not just de-duplicated. Iterating the set directly left the
+        # order of node creation up to string hashing, which is seeded per
+        # process, so two builds of an unchanged corpus produced the same
+        # 2,386 nodes and 4,780 edges in a different order -- a 38,000-line
+        # diff in a tracked file that said nothing. Rebuilding has to be a pure
+        # function of the corpus, or you cannot diff two builds to see what a
+        # change to an extraction rule actually did.
+        found_codes = sorted(set(CODE_RE.findall(content)))
         for prefix, code_num in found_codes:
             full_code = f"{prefix}-{code_num}"
             proc_id = f"proc:{full_code}"
@@ -675,7 +683,7 @@ def extract_graph(
         # Extract Tickets / Functional Specifications. The filename is included
         # because some documents never repeat their own ticket in the body, e.g.
         # "SPARK-51136 - ATP and TRS check.docx".
-        found_tickets = set(TICKET_RE.findall(haystack))
+        found_tickets = sorted(set(TICKET_RE.findall(haystack)))
         for t_num in found_tickets:
             ticket_id = f"SPARK-{t_num}"
             # A Lowest Level Key names a process step, not a functional spec.
