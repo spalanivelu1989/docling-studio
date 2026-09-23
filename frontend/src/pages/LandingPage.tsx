@@ -118,7 +118,7 @@ export default function LandingPage({ onNavigate }: { onNavigate: (page: Page) =
                 mx: "auto",
               }}
             >
-              Docling Studio bridges complex office documents, presentations, spreadsheets, and PDFs with modern AI pipelines. Extract layout-aware Markdown, rebuild PowerPoint flowcharts in Mermaid.js, read embedded graphics with Claude Vision, and query your knowledge base using hybrid pgvector search.
+              Spark AI Spine bridges complex office documents, presentations, spreadsheets, and PDFs with modern AI pipelines. Extract layout-aware Markdown, rebuild PowerPoint flowcharts in Mermaid.js, read embedded graphics with Claude Vision, and query your knowledge base using hybrid pgvector search.
             </Typography>
           </motion.div>
 
@@ -303,7 +303,7 @@ export default function LandingPage({ onNavigate }: { onNavigate: (page: Page) =
                   </Box>
                 </Stack>
                 <Typography variant="body2" sx={{ color: "text.secondary", lineHeight: 1.65, mb: 2 }}>
-                  Docling Studio handles the documents other parsers fail on: process flow diagrams with custom connectors, massive financial spreadsheets, multi-column process orders, and complex tabular specifications.
+                  Spark AI Spine handles the documents other parsers fail on: process flow diagrams with custom connectors, massive financial spreadsheets, multi-column process orders, and complex tabular specifications.
                 </Typography>
               </Box>
 

@@ -73,6 +73,45 @@ check(
   `no path for: ${noPath.join(", ")}`,
 );
 
+// --- the browser tab title ------------------------------------------------
+//
+// Same failure as MOUNTED, in a different costume. document.title used to be a
+// twelve-branch ternary written out per page, parallel to TABS. The product
+// was renamed to Spark AI Spine and ten of the twelve branches kept saying
+// "Docling"; the tab bar read "Ask RAG" while the title it was meant to match
+// read "Ask"; and a page added without a branch fell through to the else and
+// was titled "Docling Convert Studio". None of that raises an error -- the tab
+// just says the wrong thing, which is the kind of wrong nobody files.
+
+check(
+  "the page title is derived from TABS",
+  /TABS\.find\(\(t\) => t\.value === page\)\?\.label/.test(src) &&
+    /document\.title = label/.test(src),
+  "document.title is written out per page again, so it can drift from the tab bar",
+);
+
+const product = src.match(/const PRODUCT = "([^"]+)"/);
+check("the product is named once, in PRODUCT", Boolean(product),
+      "no PRODUCT constant -- the name is spelled inline and will drift");
+
+if (product) {
+  // Every title the app can produce, evaluated the way the effect evaluates it.
+  const labels = new Map(
+    [...src.matchAll(/\{\s*value:\s*"([a-z-]+)",\s*label:\s*"([^"]+)"/g)].map((m) => [m[1], m[2]]),
+  );
+  const titles = [...tabs, "landing"].map((p) =>
+    labels.has(p)
+      ? `${product[1]} — ${labels.get(p)}`
+      : `${product[1]} — Enterprise Document Intelligence`,
+  );
+  const stale = titles.filter((t) => /docling/i.test(t));
+  check(
+    `no page is titled after the old product name (${titles.length} pages checked)`,
+    stale.length === 0,
+    `still titled Docling: ${stale.join(", ")}`,
+  );
+}
+
 console.log(`\n${tabs.length} tabs: ${tabs.join(", ")}`);
 console.log(failed ? `${failed} check(s) failed` : "all checks passed");
 process.exit(failed ? 1 : 0);

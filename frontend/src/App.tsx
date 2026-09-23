@@ -24,6 +24,11 @@ type Page = "ask" | "graph" | "evidence" | "fitgap" | "rollout" | "extract" | "b
  *  read. */
 type TabGroup = "engine" | "convert" | "index" | "inspect";
 
+// The product, named once. It reaches the browser tab through the effect
+// below and the masthead through the tooltip; index.html carries the same
+// string for the first paint, before React runs.
+const PRODUCT = "Spark AI Spine";
+
 const TABS: { value: Page; label: string; icon: ReactElement; group: TabGroup }[] = [
   // The order a question escalates through them: one engine, the other
   // engine, an agent over both, then the agent that writes a register.
@@ -150,31 +155,18 @@ export default function App() {
     return () => removeEventListener("popstate", onPop);
   }, []);
 
+  // Derived from TABS, not written out per page. This was a twelve-branch
+  // ternary parallel to the tab bar, and it drifted exactly as a second list
+  // always does: the product was renamed to Spark AI Spine and ten of the
+  // twelve branches kept saying "Docling", while the tab bar read "Ask RAG"
+  // and the title it was supposed to match read "Ask". A page added without
+  // remembering this fell through to the final else and was titled
+  // "Docling Convert Studio" -- wrong, and silent about it.
   useEffect(() => {
-    document.title =
-      page === "landing"
-        ? "Spark AI Spine — Enterprise Document Intelligence"
-        : page === "ask"
-          ? "Docling Ask"
-          : page === "viewer"
-            ? "Docling MD Viewer"
-            : page === "batch"
-              ? "Docling Batch Convert"
-              : page === "add-kb"
-                ? "Docling Add to Knowledge Base"
-                : page === "graph"
-                  ? "Docling Knowledge Graph"
-                  : page === "fitgap"
-                    ? "Docling Fit-Gap Copilot"
-                    : page === "rollout"
-                      ? "Docling Rollout Agent"
-                      : page === "evidence"
-                      ? "Docling Agent"
-                      : page === "coverage"
-                        ? "Spark AI Spine — Coverage"
-                        : page === "review"
-                        ? "Docling Doc vs MD Review"
-                        : "Docling Convert Studio";
+    const label = TABS.find((t) => t.value === page)?.label;
+    document.title = label
+      ? `${PRODUCT} — ${label}`
+      : `${PRODUCT} — Enterprise Document Intelligence`;
   }, [page]);
 
   const go = (next: Page) => {
@@ -215,7 +207,7 @@ export default function App() {
           >
             <Toolbar variant="dense" disableGutters sx={{ minHeight: 52, px: 2, gap: 2 }}>
               {/* Brand Logo & Title — Clickable link to Landing Page */}
-              <Tooltip title="Home / About Spark AI Spine">
+              <Tooltip title={`Home / About ${PRODUCT}`}>
                 <Box
                   onClick={() => go("landing")}
                   sx={{
