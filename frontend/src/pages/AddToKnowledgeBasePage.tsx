@@ -58,6 +58,7 @@ import {
   type RagStatus,
 } from "../api";
 import { clearAdornment, clearOnEscape } from "../components/ClearAdornment";
+import { surface } from "../theme";
 
 interface StagedFile {
   id: string;
@@ -1088,7 +1089,7 @@ export default function AddToKnowledgeBasePage({ active }: { active: boolean }) 
                   <TableContainer sx={{ border: 1, borderColor: "divider", borderRadius: 2 }}>
                     <Table size="small">
                       <TableHead>
-                        <TableRow sx={{ bgcolor: (t) => alpha(t.palette.action.hover, 0.4) }}>
+                        <TableRow sx={{ bgcolor: (t) => surface(t, 0.4) }}>
                           <TableCell sx={{ fontWeight: 700 }}>Document Title</TableCell>
                           <TableCell sx={{ fontWeight: 700 }}>Location / Source</TableCell>
                           <TableCell sx={{ fontWeight: 700 }}>File Size</TableCell>

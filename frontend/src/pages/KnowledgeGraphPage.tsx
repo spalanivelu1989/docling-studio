@@ -64,6 +64,7 @@ import {
   type ModelNode,
 } from "../api";
 import Markdown from "../components/Markdown";
+import { surface } from "../theme";
 
 interface SimNode extends d3.SimulationNodeDatum, GraphNode {
   x?: number;
@@ -1303,7 +1304,7 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
                   color: "text.secondary",
                   height: 24,
                   borderRadius: 1.5,
-                  bgcolor: (t) => alpha(t.palette.action.hover, 0.5),
+                  bgcolor: (t) => surface(t, 0.5),
                   borderColor: "divider",
                 }}
               />
@@ -1531,7 +1532,7 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
                               px: 0.75,
                               py: 0.1,
                               borderRadius: 1,
-                              bgcolor: (t) => alpha(t.palette.action.hover, 0.8),
+                              bgcolor: (t) => surface(t, 0.8),
                               border: 1,
                               borderColor: "divider",
                               fontSize: 10,
@@ -2415,7 +2416,7 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
               fontSize: 11,
               height: 26,
               mr: 0.5,
-              bgcolor: (t) => alpha(t.palette.action.hover, 0.7),
+              bgcolor: (t) => surface(t, 0.7),
               color: "text.primary",
               fontFamily: "monospace",
               borderRadius: 999,
@@ -2672,7 +2673,7 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
                 sx={{
                   p: 1.5,
                   borderRadius: 2,
-                  bgcolor: (t) => alpha(t.palette.action.hover, 0.6),
+                  bgcolor: (t) => surface(t, 0.6),
                   border: 1,
                   borderColor: "divider",
                   mb: 2,

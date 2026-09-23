@@ -31,6 +31,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, type Source } from "../api";
 import Markdown, { locateRegex } from "./Markdown";
+import { surface } from "../theme";
 
 interface Props {
   open: boolean;
@@ -278,7 +279,7 @@ export default function DocumentInspectorDrawer({
                     fontSize: 11,
                     fontWeight: 700,
                     borderColor: "divider",
-                    bgcolor: (t) => alpha(t.palette.action.hover, 0.5),
+                    bgcolor: (t) => surface(t, 0.5),
                   }}
                 />
               )}
@@ -361,7 +362,7 @@ export default function DocumentInspectorDrawer({
           bgcolor: (t) =>
             t.palette.mode === "dark"
               ? alpha(t.palette.common.white, 0.04)
-              : alpha(t.palette.action.hover, 0.35),
+              : surface(t, 0.35),
           borderBottom: 1,
           borderColor: "divider",
         }}

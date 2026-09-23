@@ -16,7 +16,7 @@ import Markdown, { highlightRegex } from "../components/Markdown";
 import DocumentInspectorDrawer from "../components/DocumentInspectorDrawer";
 import SampleQuestionsDrawer from "../components/SampleQuestionsDrawer";
 import AskHistoryDrawer from "../components/AskHistoryDrawer";
-import { searchColors } from "../theme";
+import { searchColors, surface } from "../theme";
 import { clearAdornment } from "../components/ClearAdornment";
 
 interface Step {
@@ -396,7 +396,7 @@ export default function AskPage({ active }: { active: boolean }) {
                     fontSize: 11.5,
                     height: 26,
                     borderRadius: 1.5,
-                    bgcolor: (t) => alpha(t.palette.action.hover, 0.5),
+                    bgcolor: (t) => surface(t, 0.5),
                     borderColor: "divider",
                   }}
                 />
@@ -525,7 +525,7 @@ export default function AskPage({ active }: { active: boolean }) {
                   fontSize: 12.5,
                   fontWeight: 700,
                   borderRadius: 1.75,
-                  bgcolor: (t) => alpha(t.palette.action.hover, 0.4),
+                  bgcolor: (t) => surface(t, 0.4),
                   "& .MuiSelect-select": { py: 0.5, px: 1.25 },
                 }}
               >
@@ -570,7 +570,7 @@ export default function AskPage({ active }: { active: boolean }) {
                 borderRadius: 1.25,
                 border: 1,
                 borderColor: "divider",
-                bgcolor: (t) => alpha(t.palette.action.hover, 0.5),
+                bgcolor: (t) => surface(t, 0.5),
               }}
             >
               <Typography variant="caption" sx={{ fontFamily: "monospace", fontSize: 10.5, fontWeight: 700, color: "text.secondary" }}>
@@ -873,7 +873,7 @@ export default function AskPage({ active }: { active: boolean }) {
                 WebkitLineClamp: 3,
                 WebkitBoxOrient: "vertical",
                 overflow: "hidden",
-                bgcolor: (t) => alpha(t.palette.action.hover, 0.5),
+                bgcolor: (t) => surface(t, 0.5),
                 p: 1.25,
                 borderRadius: 1.5,
               }}

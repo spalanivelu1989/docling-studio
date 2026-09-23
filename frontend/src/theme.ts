@@ -9,6 +9,24 @@ export const searchColors = {
   dark: { combined: "#60a5fa", vector: "#2dd4bf", keyword: "#a78bfa", mark: "#6b5310" },
 };
 
+/** A faintly tinted surface: the inset panels, snippet boxes and striped rows
+ *  that need to sit a step away from the paper behind them.
+ *
+ *  Use this instead of `alpha(theme.palette.action.hover, x)`. That looks like
+ *  it dims a subtle tint and does the opposite: `action.hover` is ALREADY
+ *  transparent -- rgba(0,0,0,0.04) light, rgba(255,255,255,0.08) dark -- and
+ *  MUI's `alpha()` REPLACES the alpha channel rather than multiplying it. So
+ *  `alpha(action.hover, 0.5)` is a 50% black wash in light mode, not a 2% one:
+ *  a mid-grey box that took secondary text down to 1.45:1 against a 4.5:1
+ *  floor. The higher the number looked, the worse it got.
+ *
+ *  `strength` keeps the relative weighting those numbers were reaching for.
+ *  1 matches MUI's own hover tint, which is the most a panel should need. */
+export function surface(theme: { palette: { mode: string } }, strength = 1) {
+  const dark = theme.palette.mode === "dark";
+  return alpha(dark ? "#ffffff" : "#000000", (dark ? 0.08 : 0.045) * strength);
+}
+
 export function makeTheme(mode: Mode) {
   const dark = mode === "dark";
   const primary = dark ? "#60a5fa" : "#2563eb";

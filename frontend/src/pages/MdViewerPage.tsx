@@ -35,6 +35,7 @@ import {
 import { useEffect, useId, useRef, useState, type ChangeEvent, type DragEvent } from "react";
 import { Group, Panel, Separator } from "react-resizable-panels";
 import Markdown from "../components/Markdown";
+import { surface } from "../theme";
 
 interface PaneState {
   id: "left" | "right";
@@ -818,7 +819,7 @@ function EmptyPane({
           justifyContent: "center",
           gap: 1.5,
           border: `2px dashed ${isDragging ? t.palette.primary.main : t.palette.divider}`,
-          bgcolor: isDragging ? alpha(t.palette.primary.main, 0.04) : alpha(t.palette.action.hover, 0.4),
+          bgcolor: isDragging ? alpha(t.palette.primary.main, 0.04) : surface(t, 0.4),
           transition: "border-color .15s, background-color .15s",
         })}
       >

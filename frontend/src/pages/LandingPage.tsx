@@ -24,6 +24,7 @@ import {
   Workflow,
 } from "lucide-react";
 import type { ReactNode } from "react";
+import { surface } from "../theme";
 
 type Page = "extract" | "batch" | "add-kb" | "review" | "viewer" | "ask" | "landing";
 
@@ -517,7 +518,7 @@ function PipelineStep({
       sx={{
         p: 2.5,
         borderRadius: 3,
-        bgcolor: (t) => alpha(t.palette.action.hover, 0.3),
+        bgcolor: (t) => surface(t, 0.3),
         border: 1,
         borderColor: "divider",
       }}

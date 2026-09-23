@@ -44,6 +44,7 @@ import { useEffect, useId, useRef, useState, type DragEvent, type ReactNode } fr
 import { Group, Panel, Separator } from "react-resizable-panels";
 import { api, type KbFileItem, type Upload } from "../api";
 import Markdown from "../components/Markdown";
+import { surface } from "../theme";
 
 const ACCEPT_DOCS = ".pptx,.ppt,.docx,.doc,.xlsx,.xlsm,.xls,.pdf,.html,.htm,.xml,.csv,.txt,.json,.msg,.eml,.png,.jpg,.jpeg,.webp,.bmp,.tiff,.tif";
 const ACCEPT_MD = ".md,.markdown,.mdown,.mkd,.txt";
@@ -1006,7 +1007,7 @@ function DropZoneCard({
         border: "2px dashed",
         borderColor: isDragOver ? "primary.main" : "divider",
         borderRadius: 3,
-        bgcolor: (t) => (isDragOver ? alpha(t.palette.primary.main, 0.06) : alpha(t.palette.action.hover, 0.3)),
+        bgcolor: (t) => (isDragOver ? alpha(t.palette.primary.main, 0.06) : surface(t, 0.3)),
         transition: "all 0.2s ease",
       }}
     >

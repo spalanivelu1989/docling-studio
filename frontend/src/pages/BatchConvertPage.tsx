@@ -48,6 +48,7 @@ import { useEffect, useId, useRef, useState, type DragEvent } from "react";
 import { Group, Panel, Separator } from "react-resizable-panels";
 import { type BatchEmbedSummary } from "../api";
 import Markdown from "../components/Markdown";
+import { surface } from "../theme";
 
 const ACCEPT = ".pptx,.ppt,.docx,.doc,.xlsx,.xlsm,.xls,.pdf,.html,.htm,.xml,.csv,.txt,.json,.msg,.eml,.png,.jpg,.jpeg,.webp,.bmp,.tiff,.tif";
 
@@ -766,7 +767,7 @@ export default function BatchConvertPage() {
                       border: "2px dashed",
                       borderColor: "divider",
                       borderRadius: 3,
-                      bgcolor: (t) => alpha(t.palette.action.hover, 0.4),
+                      bgcolor: (t) => surface(t, 0.4),
                     }}
                   >
                     <Box
@@ -1348,7 +1349,7 @@ function ToolDetailTile({
                 ? alpha(t.palette.primary.main, 0.06)
                 : color === "primary"
                   ? alpha(t.palette.primary.main, 0.04)
-                  : alpha(t.palette.action.hover, 0.5),
+                  : surface(t, 0.5),
         border: (t) =>
           color === "success"
             ? `1px solid ${alpha(t.palette.success.main, 0.3)}`
