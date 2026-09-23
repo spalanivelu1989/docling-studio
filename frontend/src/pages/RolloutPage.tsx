@@ -52,7 +52,7 @@ const MANDATORY: LocalizationState[] = ["CONFIRMED_STATUTORY", "SAP_DELIVERED"];
 
 function SectionLabel({ icon, children, right }: { icon?: ReactNode; children: ReactNode; right?: ReactNode }) {
   return (
-    <Stack direction="row" spacing={1} sx={{ alignItems: "center", mb: 1.25 }}>
+    <Stack direction="row" spacing={1.25} sx={{ alignItems: "center", mb: 1.75 }}>
       {icon}
       <Typography variant="overline" sx={{ letterSpacing: ".08em", color: "text.secondary" }}>
         {children}
@@ -72,11 +72,11 @@ function ScoreTile({ label, value, band, hint, accent }: {
   const theme = useTheme();
   const colour = accent ?? theme.palette.primary.main;
   return (
-    <Paper variant="outlined" sx={{ p: 1.75, flex: "1 1 190px", minWidth: 180 }}>
+    <Paper variant="outlined" sx={{ p: 2, flex: "1 1 190px", minWidth: 180 }}>
       <Typography sx={{ fontSize: 11, color: "text.secondary", textTransform: "uppercase", letterSpacing: ".06em" }}>
         {label}
       </Typography>
-      <Stack direction="row" spacing={0.75} sx={{ alignItems: "baseline", mt: 0.4 }}>
+      <Stack direction="row" spacing={1} sx={{ alignItems: "baseline", mt: 0.75 }}>
         <Typography sx={{ fontSize: 30, fontWeight: 800, lineHeight: 1, color: value === null ? "text.disabled" : colour }}>
           {value === null ? "—" : value}
         </Typography>
@@ -88,7 +88,7 @@ function ScoreTile({ label, value, band, hint, accent }: {
                transition={{ duration: 0.7 }} sx={{ height: "100%", bgcolor: colour }} />
         </Box>
       )}
-      <Typography sx={{ fontSize: 11, color: "text.secondary", mt: 0.75, minHeight: 28 }}>
+      <Typography sx={{ fontSize: 12, color: "text.secondary", mt: 0.75, minHeight: 28 }}>
         {value === null ? (hint || "Not assessable") : band}
       </Typography>
     </Paper>
@@ -204,7 +204,7 @@ function Sources({
         }}
       />
 
-      <Stack direction="row" spacing={1} sx={{ alignItems: "center", flexWrap: "wrap", gap: 0.75 }}>
+      <Stack direction="row" spacing={1.25} sx={{ alignItems: "center", flexWrap: "wrap", gap: 0.75 }}>
         <Paperclip size={14} color={theme.palette.text.secondary} />
         <Typography sx={{ fontSize: 12.5, fontWeight: 700 }}>Sources</Typography>
         {files.length > 0 && (
@@ -215,7 +215,7 @@ function Sources({
         {files.length > 0 && (
           <Button size="small" variant="text" color="inherit" disabled={disabled}
                   startIcon={<Trash2 size={13} />} onClick={onClear}
-                  sx={{ fontSize: 11.5, color: "text.secondary" }}>
+                  sx={{ fontSize: 12.5, color: "text.secondary" }}>
             Discard all
           </Button>
         )}
@@ -223,7 +223,7 @@ function Sources({
           size="small" value={role} disabled={disabled || !!busy}
           onChange={(e) => setRole(e.target.value as UploadRole)}
           title="What the next upload is in the analysis"
-          sx={{ fontSize: 12, minWidth: 168 }}
+          sx={{ fontSize: 12.5, minWidth: 168 }}
         >
           {roles.map((r) => (
             <MenuItem key={r.value} value={r.value} sx={{ fontSize: 12.5 }}>
@@ -238,24 +238,24 @@ function Sources({
         </Select>
         <Button size="small" variant="outlined" startIcon={<Upload size={14} />}
                 disabled={disabled || full || !!busy} onClick={() => input.current?.click()}
-                sx={{ fontSize: 12 }}>
+                sx={{ fontSize: 12.5 }}>
           Attach
         </Button>
       </Stack>
 
       {files.length === 0 && !busy && (
-        <Typography sx={{ fontSize: 11.5, color: "text.secondary", mt: 0.75 }}>
+        <Typography sx={{ fontSize: 12.5, color: "text.secondary", mt: 0.75 }}>
           Start with the <b>{subject.label}</b> — {subject.value === "country_as_is"
             ? "an SOP, work instruction, process narrative or workshop transcript describing how"
               + " the country works today"
             : "SAP's delivered process: a scope item description, process flow or test script"}.
           That one is <b>required</b>: it is what the run analyses. PDF, Word, Excel, PowerPoint,
           HTML, XML or plain text.
-          <Box component="span" sx={{ display: "block", mt: 0.5 }}>
+          <Box component="span" sx={{ display: "block", mt: 0.85 }}>
             The other roles are optional baselines to compare it against, so the comparison rests
             on your documents rather than on the indexed corpus alone.
           </Box>
-          <Box component="span" sx={{ display: "block", mt: 0.5 }}>
+          <Box component="span" sx={{ display: "block", mt: 0.85 }}>
             Everything is converted, embedded and graphed in a store of its own, and is never
             added to the permanent knowledge bases.
           </Box>
@@ -267,9 +267,9 @@ function Sources({
           <Box component={motion.div} key="busy"
                initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }}
                exit={{ opacity: 0, height: 0 }} sx={{ mt: 1 }}>
-            <Stack direction="row" spacing={1} sx={{ alignItems: "center", mb: 0.5 }}>
+            <Stack direction="row" spacing={1.25} sx={{ alignItems: "center", mb: 0.5 }}>
               <CircularProgress size={12} />
-              <Typography sx={{ fontSize: 11.5, color: "text.secondary" }}>
+              <Typography sx={{ fontSize: 12.5, color: "text.secondary" }}>
                 {busy.total > 1 ? `${busy.index}/${busy.total} · ` : ""}
                 {busy.filename} — {STAGES[busy.stage] ?? busy.stage}
               </Typography>
@@ -284,7 +284,7 @@ function Sources({
           <Typography sx={{ fontSize: 10.5, color: "text.secondary", textTransform: "uppercase", letterSpacing: ".07em", mb: 0.4 }}>
             {g.label}
           </Typography>
-          <Stack direction="row" useFlexGap sx={{ flexWrap: "wrap", gap: 0.6 }}>
+          <Stack direction="row" useFlexGap sx={{ flexWrap: "wrap", gap: 0.75 }}>
             {g.items.map((f) => (
               <Chip
                 key={f.name} size="small" icon={<FileText size={12} />}
@@ -324,25 +324,25 @@ function Sources({
         ))}
       </Menu>
 
-      {error && <Typography sx={{ fontSize: 11.5, color: "error.main", mt: 0.75 }}>{error}</Typography>}
+      {error && <Typography sx={{ fontSize: 12.5, color: "error.main", mt: 0.75 }}>{error}</Typography>}
 
       {files.length > 0 && !hasSubject && alternative && (
-        <Alert severity="info" sx={{ mt: 1, py: 0.5, fontSize: 11.5 }}
+        <Alert severity="info" sx={{ mt: 1, py: 0.5, fontSize: 12.5 }}
                action={<Button size="small" onClick={() => onSubject(alternative.value)}
-                               sx={{ fontSize: 11 }}>Analyse {alternative.label}</Button>}>
+                               sx={{ fontSize: 12 }}>Analyse {alternative.label}</Button>}>
           You have attached <b>{alternative.label}</b> content and nothing tagged{" "}
           <b>{subject.label}</b>. Analyse what you have against the Global Template instead?
         </Alert>
       )}
 
       {files.length > 0 && !hasSubject && !alternative && (
-        <Alert severity="warning" sx={{ mt: 1, py: 0.5, fontSize: 11.5 }}>
+        <Alert severity="warning" sx={{ mt: 1, py: 0.5, fontSize: 12.5 }}>
           <b>The {subject.label} document is missing.</b>{" "}
           {grouped.map((g) => g.label).join(" and ")}
           {grouped.length === 1 ? " is a baseline" : " are baselines"} to compare
           <i>against</i>; this run analyses the {subject.label}, so one document has to be
           tagged <b>{subject.label}</b>.
-          <Box component="span" sx={{ display: "block", mt: 0.5, color: "text.secondary" }}>
+          <Box component="span" sx={{ display: "block", mt: 0.85, color: "text.secondary" }}>
             {subject.value === "country_as_is"
               ? "Attach the SOP, work instruction, process narrative or workshop transcript that"
                 + " describes how the country works today. If one of the documents above is that,"
@@ -384,21 +384,21 @@ function EvidenceRow({ ev, chunk, session }: {
   const heading = chunk?.heading_path || ev.heading_path || "";
   return (
     <Box sx={{ mt: 0.6, pl: 1, borderLeft: 2, borderColor: "divider" }}>
-      <Typography sx={{ fontSize: 12, fontStyle: "italic" }}>“{ev.quote}”</Typography>
-      <Stack direction="row" spacing={0.75}
-             sx={{ alignItems: "center", flexWrap: "wrap", gap: 0.4, mt: 0.25 }}>
-        <Chip size="small" label={ev.side} sx={{ height: 17, fontSize: 9.5 }} />
-        <Chip size="small" label={ev.evidence_class} sx={{ height: 17, fontSize: 9.5 }} />
+      <Typography sx={{ fontSize: 12.5, fontStyle: "italic" }}>“{ev.quote}”</Typography>
+      <Stack direction="row" spacing={1}
+             sx={{ alignItems: "center", flexWrap: "wrap", gap: 0.75, mt: 0.25 }}>
+        <Chip size="small" label={ev.side} sx={{ height: 17, fontSize: 10.5 }} />
+        <Chip size="small" label={ev.evidence_class} sx={{ height: 17, fontSize: 10.5 }} />
         {chunk?.category && (
           <Chip size="small" color={chunk.kind === "upload" ? "warning" : "default"}
                 label={chunk.kind === "upload" ? "attached" : chunk.category}
-                sx={{ height: 17, fontSize: 9.5 }} />
+                sx={{ height: 17, fontSize: 10.5 }} />
         )}
         <Typography sx={{ fontSize: 10.5, color: "text.secondary" }}>
           {chunk?.document || ev.doc}
         </Typography>
         {chunk?.score != null && (
-          <Typography sx={{ fontSize: 10, color: "text.disabled" }}>
+          <Typography sx={{ fontSize: 10.5, color: "text.disabled" }}>
             score {chunk.score.toFixed(4)}
             {chunk.vector_rank != null ? ` · vector #${chunk.vector_rank}` : ""}
             {chunk.keyword_rank != null ? ` · keyword #${chunk.keyword_rank}` : ""}
@@ -406,29 +406,29 @@ function EvidenceRow({ ev, chunk, session }: {
         )}
         <Box sx={{ flex: 1 }} />
         <Button size="small" variant="text" onClick={() => setOpen((v) => !v)}
-                sx={{ fontSize: 10, minWidth: 0, py: 0 }}>
+                sx={{ fontSize: 10.5, minWidth: 0, py: 0 }}>
           {open ? "less" : "source"}
         </Button>
       </Stack>
       <Collapse in={open}>
-        <Box sx={{ mt: 0.5, p: 1, borderRadius: 1, bgcolor: "action.hover" }}>
+        <Box sx={{ mt: 0.85, p: 1, borderRadius: 1, bgcolor: "action.hover" }}>
           {heading && (
             <Typography sx={{ fontSize: 10.5, color: "text.secondary", mb: 0.5 }}>
               {heading}
             </Typography>
           )}
           {chunk?.known === false ? (
-            <Typography sx={{ fontSize: 11, color: "warning.main" }}>
+            <Typography sx={{ fontSize: 12, color: "warning.main" }}>
               This chunk is not in the run's retrieval log — the quote gate dropped it, so
               there is no passage to show.
             </Typography>
           ) : chunk ? (
             <>
-              <Typography sx={{ fontSize: 11.5, whiteSpace: "pre-wrap" }}>
+              <Typography sx={{ fontSize: 12.5, whiteSpace: "pre-wrap" }}>
                 {chunk.snippet}{chunk.truncated ? " …" : ""}
               </Typography>
-              <Stack direction="row" spacing={1} sx={{ mt: 0.75, alignItems: "center" }}>
-                <Typography sx={{ fontSize: 10, color: "text.disabled", fontFamily: "monospace" }}>
+              <Stack direction="row" spacing={1.25} sx={{ mt: 0.75, alignItems: "center" }}>
+                <Typography sx={{ fontSize: 10.5, color: "text.disabled", fontFamily: "monospace" }}>
                   {ev.chunk_id}
                 </Typography>
                 {href && (
@@ -440,7 +440,7 @@ function EvidenceRow({ ev, chunk, session }: {
               </Stack>
             </>
           ) : (
-            <Typography sx={{ fontSize: 11, color: "text.secondary" }}>
+            <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
               No source record for this run. Traceability is kept from this version on;
               runs made earlier show the quote only. <code>{ev.chunk_id}</code>
             </Typography>
@@ -469,16 +469,16 @@ function SourceDocument({ doc, sources, session, onGap }: {
     .sort((a, b) => (b.used_by.length - a.used_by.length));
   const href = chunks[0] ? rollout.sourceUrl(chunks[0], session) : "";
   return (
-    <Paper variant="outlined" sx={{ p: 1.5 }}>
-      <Stack direction="row" spacing={1} sx={{ alignItems: "center", flexWrap: "wrap", gap: 0.5 }}>
+    <Paper variant="outlined" sx={{ p: 2 }}>
+      <Stack direction="row" spacing={1.25} sx={{ alignItems: "center", flexWrap: "wrap", gap: 0.75 }}>
         <FileText size={14} />
         <Typography sx={{ fontSize: 13, fontWeight: 700, flex: "1 1 260px", minWidth: 0 }}>
           {doc.document || "(unrecorded document)"}
         </Typography>
         <Chip size="small" color={doc.kind === "upload" ? "warning" : "default"}
               label={doc.kind === "upload" ? "attached" : doc.category}
-              sx={{ height: 19, fontSize: 10 }} />
-        <Typography sx={{ fontSize: 11, color: "text.secondary" }}>
+              sx={{ height: 19, fontSize: 10.5 }} />
+        <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
           {doc.citations} citation{doc.citations === 1 ? "" : "s"} · {doc.chunks} passage
           {doc.chunks === 1 ? "" : "s"}
           {doc.best_score != null ? ` · best score ${doc.best_score.toFixed(4)}` : ""}
@@ -492,37 +492,37 @@ function SourceDocument({ doc, sources, session, onGap }: {
       </Stack>
 
       <Collapse in={open}>
-        <Divider sx={{ my: 1 }} />
-        <Stack spacing={1}>
+        <Divider sx={{ my: 1.5 }} />
+        <Stack spacing={1.25}>
           {chunks.map((c) => (
             <Box key={c.chunk_id} sx={{ pl: 1, borderLeft: 2, borderColor: "divider" }}>
-              <Stack direction="row" spacing={0.75}
-                     sx={{ alignItems: "center", flexWrap: "wrap", gap: 0.4 }}>
-                <Typography sx={{ fontSize: 11, fontWeight: 600 }}>
+              <Stack direction="row" spacing={1}
+                     sx={{ alignItems: "center", flexWrap: "wrap", gap: 0.75 }}>
+                <Typography sx={{ fontSize: 12, fontWeight: 600 }}>
                   {c.heading_path || "(no heading)"}
                 </Typography>
-                <Typography sx={{ fontSize: 10, color: "text.disabled", fontFamily: "monospace" }}>
+                <Typography sx={{ fontSize: 10.5, color: "text.disabled", fontFamily: "monospace" }}>
                   {c.chunk_id}
                 </Typography>
                 {c.score != null && (
-                  <Typography sx={{ fontSize: 10, color: "text.disabled" }}>
+                  <Typography sx={{ fontSize: 10.5, color: "text.disabled" }}>
                     score {c.score.toFixed(4)}
                   </Typography>
                 )}
               </Stack>
-              <Typography sx={{ fontSize: 11.5, color: "text.secondary", mt: 0.4,
+              <Typography sx={{ fontSize: 12.5, color: "text.secondary", mt: 0.75,
                                 whiteSpace: "pre-wrap" }}>
                 {c.snippet}{c.truncated ? " …" : ""}
               </Typography>
-              <Stack direction="row" spacing={0.5}
-                     sx={{ mt: 0.5, flexWrap: "wrap", gap: 0.4, alignItems: "center" }}>
+              <Stack direction="row" spacing={0.85}
+                     sx={{ mt: 0.85, flexWrap: "wrap", gap: 0.75, alignItems: "center" }}>
                 <Typography sx={{ fontSize: 10.5, color: "text.secondary" }}>supports</Typography>
                 {c.used_by.map((u, i) => (
                   <Chip key={i} size="small" clickable={u.kind === "deviation"}
                         onClick={u.kind === "deviation" ? () => onGap(u.ref) : undefined}
                         label={`${u.ref || u.kind}${u.side ? ` · ${u.side}` : ""}`}
                         title={u.label}
-                        sx={{ height: 18, fontSize: 10 }} />
+                        sx={{ height: 18, fontSize: 10.5 }} />
                 ))}
               </Stack>
             </Box>
@@ -563,22 +563,22 @@ function AlignmentRow({ deviations, chunks, session, onGap, children }: {
         </Typography>
       </Box>
       <Collapse in={open}>
-        <Stack spacing={1} sx={{ ml: "228px", mt: 0.75, mb: 1 }}>
+        <Stack spacing={1.25} sx={{ ml: "228px", mt: 0.75, mb: 1 }}>
           {deviations.map((d) => (
-            <Paper key={d.gap_id} variant="outlined" sx={{ p: 1.25 }}>
-              <Stack direction="row" spacing={1} sx={{ alignItems: "center", flexWrap: "wrap", gap: 0.5 }}>
-                <Typography sx={{ fontSize: 12, fontWeight: 800, fontFamily: "monospace" }}>
+            <Paper key={d.gap_id} variant="outlined" sx={{ p: 2 }}>
+              <Stack direction="row" spacing={1.25} sx={{ alignItems: "center", flexWrap: "wrap", gap: 0.75 }}>
+                <Typography sx={{ fontSize: 12.5, fontWeight: 800, fontFamily: "monospace" }}>
                   {d.gap_id}
                 </Typography>
-                <Chip size="small" label={d.materiality} sx={{ height: 18, fontSize: 10 }} />
-                <Chip size="small" label={`GT fit ${d.gt_fit_rating}/4`} sx={{ height: 18, fontSize: 10 }} />
+                <Chip size="small" label={d.materiality} sx={{ height: 18, fontSize: 10.5 }} />
+                <Chip size="small" label={`GT fit ${d.gt_fit_rating}/4`} sx={{ height: 18, fontSize: 10.5 }} />
                 <Box sx={{ flex: 1 }} />
                 <Button size="small" variant="text" sx={{ fontSize: 10.5, py: 0 }}
                         onClick={() => onGap(d.gap_id)}>Open in Deviations</Button>
               </Stack>
-              <Typography sx={{ fontSize: 12.5, mt: 0.4 }}>{d.exact_difference}</Typography>
+              <Typography sx={{ fontSize: 12.5, mt: 0.75 }}>{d.exact_difference}</Typography>
               {d.evidence.length > 0 && (
-                <Box sx={{ mt: 0.5 }}>
+                <Box sx={{ mt: 0.85 }}>
                   {d.evidence.map((e, i) => (
                     <EvidenceRow key={i} ev={e} chunk={chunks?.[e.chunk_id]} session={session} />
                   ))}
@@ -620,10 +620,10 @@ function GapCard({ gap, types, dispositions, states, onDecide, decisions = [], r
   const latest = decisions.length ? decisions[decisions.length - 1] : null;
   const named = reviewer.trim().length > 0;
   return (
-    <Paper variant="outlined" sx={{ p: 1.75, borderLeft: 3, borderLeftColor:
+    <Paper variant="outlined" sx={{ p: 2, borderLeft: 3, borderLeftColor:
       gap.workshop_bucket === "MUST_DISCUSS" ? "error.main"
         : gap.workshop_bucket === "CONFIRM" ? "warning.main" : "success.main" }}>
-      <Stack direction="row" spacing={1} sx={{ alignItems: "center", flexWrap: "wrap", gap: 0.6 }}>
+      <Stack direction="row" spacing={1.25} sx={{ alignItems: "center", flexWrap: "wrap", gap: 0.75 }}>
         <Typography sx={{ fontSize: 13, fontWeight: 800, fontFamily: "monospace" }}>{gap.gap_id}</Typography>
         <Chip size="small" label={gap.materiality} color={MATERIALITY_HUE[gap.materiality]}
               sx={{ height: 20, fontSize: 10.5, fontWeight: 700 }} />
@@ -633,7 +633,7 @@ function GapCard({ gap, types, dispositions, states, onDecide, decisions = [], r
         {gap.secondary_types.map((t) => (
           <Tooltip key={t} title={types[t] ?? t}>
             <Chip size="small" variant="outlined" label={t}
-                  sx={{ height: 20, fontSize: 10, opacity: 0.7 }} />
+                  sx={{ height: 20, fontSize: 10.5, opacity: 0.7 }} />
           </Tooltip>
         ))}
         {mandatory && (
@@ -642,7 +642,7 @@ function GapCard({ gap, types, dispositions, states, onDecide, decisions = [], r
                       color: "info.main", fontWeight: 700 }} />
         )}
         <Box sx={{ flex: 1 }} />
-        <Typography sx={{ fontSize: 11, color: "text.secondary" }}>
+        <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
           GT fit {gap.gt_fit_rating}/4 · harmonisation {gap.harmonization_potential}%
         </Typography>
         <IconButton size="small" onClick={() => setOpen((v) => !v)}>
@@ -652,7 +652,7 @@ function GapCard({ gap, types, dispositions, states, onDecide, decisions = [], r
 
       <Typography sx={{ fontSize: 13.5, fontWeight: 600, mt: 1 }}>{gap.exact_difference}</Typography>
 
-      <Stack spacing={0.4} sx={{ mt: 1 }}>
+      <Stack spacing={0.75} sx={{ mt: 1 }}>
         <Row label={subjectLabel} value={gap.as_is_statement} />
         <Row label="Template" value={gap.gt_statement} />
         {gap.sap_bp_reference && <Row label="SAP standard" value={gap.sap_bp_reference} />}
@@ -660,19 +660,19 @@ function GapCard({ gap, types, dispositions, states, onDecide, decisions = [], r
       </Stack>
 
       {gap.decision_question && (
-        <Box sx={{ mt: 1.25, p: 1.25, borderRadius: 1.5, bgcolor: alpha(theme.palette.error.main, 0.06) }}>
-          <Stack direction="row" spacing={0.75} sx={{ alignItems: "flex-start" }}>
+        <Box sx={{ mt: 1.25, p: 2, borderRadius: 1.5, bgcolor: alpha(theme.palette.error.main, 0.06) }}>
+          <Stack direction="row" spacing={1} sx={{ alignItems: "flex-start" }}>
             <Gavel size={13} style={{ marginTop: 2, flexShrink: 0 }} />
             <Box>
               <Typography sx={{ fontSize: 12.5, fontWeight: 700 }}>{gap.decision_question}</Typography>
               {gap.decision_options.length > 0 && (
-                <Stack direction="row" useFlexGap sx={{ flexWrap: "wrap", gap: 0.5, mt: 0.6 }}>
+                <Stack direction="row" useFlexGap sx={{ flexWrap: "wrap", gap: 0.75, mt: 0.6 }}>
                   {gap.decision_options.map((o, i) => (
                     <Chip key={i} size="small" label={o} sx={{ height: 21, fontSize: 10.5, maxWidth: 340 }} />
                   ))}
                 </Stack>
               )}
-              <Typography sx={{ fontSize: 11, color: "text.secondary", mt: 0.6 }}>
+              <Typography sx={{ fontSize: 12, color: "text.secondary", mt: 0.6 }}>
                 {gap.decision_owner.length ? `Owner: ${gap.decision_owner.join(", ")} · ` : ""}
                 ~{gap.workshop_minutes || 10} min
               </Typography>
@@ -681,7 +681,7 @@ function GapCard({ gap, types, dispositions, states, onDecide, decisions = [], r
         </Box>
       )}
 
-      <Stack direction="row" spacing={1} sx={{ alignItems: "center", mt: 1, flexWrap: "wrap", gap: 0.5 }}>
+      <Stack direction="row" spacing={1.25} sx={{ alignItems: "center", mt: 1, flexWrap: "wrap", gap: 0.75 }}>
         <Chip size="small" icon={<Target size={11} />}
               label={dispositions[gap.candidate_disposition] ?? gap.candidate_disposition}
               sx={{ height: 21, fontSize: 10.5, maxWidth: 420 }} />
@@ -691,17 +691,17 @@ function GapCard({ gap, types, dispositions, states, onDecide, decisions = [], r
         </Typography>
         <Box sx={{ flex: 1 }} />
         {onDecide && (
-          <Stack direction="row" spacing={0.5}>
+          <Stack direction="row" spacing={0.85}>
             <Button size="small" variant={latest?.verdict === "accept" ? "contained" : "text"}
-                    color="success" disabled={!named || !!busy} sx={{ fontSize: 11 }}
+                    color="success" disabled={!named || !!busy} sx={{ fontSize: 12 }}
                     startIcon={busy === "accept" ? <CircularProgress size={11} /> : undefined}
                     onClick={() => onDecide("accept")}>Accept</Button>
             <Button size="small" variant={latest?.verdict === "defer" ? "contained" : "text"}
-                    color="warning" disabled={!named || !!busy} sx={{ fontSize: 11 }}
+                    color="warning" disabled={!named || !!busy} sx={{ fontSize: 12 }}
                     startIcon={busy === "defer" ? <CircularProgress size={11} /> : undefined}
                     onClick={() => onDecide("defer")}>Defer</Button>
             <Button size="small" variant={latest?.verdict === "reject" ? "contained" : "text"}
-                    color="error" disabled={!named || !!busy} sx={{ fontSize: 11 }}
+                    color="error" disabled={!named || !!busy} sx={{ fontSize: 12 }}
                     startIcon={busy === "reject" ? <CircularProgress size={11} /> : undefined}
                     onClick={() => onDecide("reject")}>Reject</Button>
           </Stack>
@@ -715,20 +715,20 @@ function GapCard({ gap, types, dispositions, states, onDecide, decisions = [], r
       )}
 
       {decisions.length > 0 && (
-        <Stack spacing={0.4} sx={{ mt: 1 }}>
+        <Stack spacing={0.75} sx={{ mt: 1 }}>
           {decisions.map((d, i) => (
-            <Stack key={d.id} direction="row" spacing={0.75}
+            <Stack key={d.id} direction="row" spacing={1}
                    sx={{ alignItems: "center", opacity: i === decisions.length - 1 ? 1 : 0.55 }}>
               <Chip size="small" label={d.verdict}
                     color={d.verdict === "accept" ? "success" : d.verdict === "reject" ? "error" : "warning"}
-                    sx={{ height: 18, fontSize: 10, fontWeight: 700 }} />
-              <Typography sx={{ fontSize: 11.5, fontWeight: 600 }}>{d.reviewer}</Typography>
+                    sx={{ height: 18, fontSize: 10.5, fontWeight: 700 }} />
+              <Typography sx={{ fontSize: 12.5, fontWeight: 600 }}>{d.reviewer}</Typography>
               <Typography sx={{ fontSize: 10.5, color: "text.secondary" }}>
                 {d.decided_at ? new Date(d.decided_at).toLocaleString() : ""}
                 {i < decisions.length - 1 ? " · superseded" : ""}
               </Typography>
               {d.comment && (
-                <Typography sx={{ fontSize: 11, color: "text.secondary", flex: 1, minWidth: 0 }} noWrap>
+                <Typography sx={{ fontSize: 12, color: "text.secondary", flex: 1, minWidth: 0 }} noWrap>
                   {d.comment}
                 </Typography>
               )}
@@ -738,22 +738,22 @@ function GapCard({ gap, types, dispositions, states, onDecide, decisions = [], r
       )}
 
       <Collapse in={open}>
-        <Divider sx={{ my: 1.25 }} />
+        <Divider sx={{ my: 1.75 }} />
         {gap.standard_options_considered.length > 0 && (
           <Box sx={{ mb: 1 }}>
-            <Typography sx={{ fontSize: 11, fontWeight: 700, color: "text.secondary" }}>
+            <Typography sx={{ fontSize: 12, fontWeight: 700, color: "text.secondary" }}>
               Standard options considered first
             </Typography>
             {gap.standard_options_considered.map((o, i) => (
-              <Typography key={i} sx={{ fontSize: 12 }}>· {o}</Typography>
+              <Typography key={i} sx={{ fontSize: 12.5 }}>· {o}</Typography>
             ))}
           </Box>
         )}
         {gap.impacts.length > 0 && (
           <Box sx={{ mb: 1 }}>
-            <Typography sx={{ fontSize: 11, fontWeight: 700, color: "text.secondary" }}>Material impact</Typography>
+            <Typography sx={{ fontSize: 12, fontWeight: 700, color: "text.secondary" }}>Material impact</Typography>
             {gap.impacts.map((im, i) => (
-              <Typography key={i} sx={{ fontSize: 12 }}>
+              <Typography key={i} sx={{ fontSize: 12.5 }}>
                 · <b>{im.area}</b> {im.score}/5 — {im.note}
               </Typography>
             ))}
@@ -761,7 +761,7 @@ function GapCard({ gap, types, dispositions, states, onDecide, decisions = [], r
         )}
         {gap.evidence.length > 0 && (
           <Box sx={{ mb: 1 }}>
-            <Typography sx={{ fontSize: 11, fontWeight: 700, color: "text.secondary" }}>Evidence</Typography>
+            <Typography sx={{ fontSize: 12, fontWeight: 700, color: "text.secondary" }}>Evidence</Typography>
             {gap.evidence.map((e, i) => (
               <EvidenceRow key={i} ev={e} chunk={chunks?.[e.chunk_id]} session={session} />
             ))}
@@ -769,9 +769,9 @@ function GapCard({ gap, types, dispositions, states, onDecide, decisions = [], r
         )}
         {gap.open_questions.length > 0 && (
           <Box>
-            <Typography sx={{ fontSize: 11, fontWeight: 700, color: "text.secondary" }}>Open</Typography>
+            <Typography sx={{ fontSize: 12, fontWeight: 700, color: "text.secondary" }}>Open</Typography>
             {gap.open_questions.map((q, i) => (
-              <Typography key={i} sx={{ fontSize: 12 }}>· {q}</Typography>
+              <Typography key={i} sx={{ fontSize: 12.5 }}>· {q}</Typography>
             ))}
           </Box>
         )}
@@ -783,8 +783,8 @@ function GapCard({ gap, types, dispositions, states, onDecide, decisions = [], r
 function Row({ label, value }: { label: string; value: string }) {
   if (!value) return null;
   return (
-    <Stack direction="row" spacing={1} sx={{ alignItems: "flex-start" }}>
-      <Typography sx={{ fontSize: 11, fontWeight: 700, color: "text.secondary", minWidth: 84, flexShrink: 0, pt: 0.15 }}>
+    <Stack direction="row" spacing={1.25} sx={{ alignItems: "flex-start" }}>
+      <Typography sx={{ fontSize: 12, fontWeight: 700, color: "text.secondary", minWidth: 84, flexShrink: 0, pt: 0.15 }}>
         {label}
       </Typography>
       <Typography sx={{ fontSize: 12.5 }}>{value}</Typography>
@@ -1107,34 +1107,35 @@ export default function RolloutPage({ active }: Props) {
 
   return (
     <Box sx={{ height: "100%", overflow: "auto" }}>
-      <Box sx={{ maxWidth: 1320, mx: "auto", px: { xs: 2, md: 3 }, py: 3 }}>
+      <Box sx={{ maxWidth: 1320, mx: "auto", px: { xs: 2, md: 3 }, py: 4 }}>
 
         {/* ------------------------------------------------------- the header */}
-        <Stack direction="row" spacing={1.5} sx={{ alignItems: "center", mb: 0.5, flexWrap: "wrap", gap: 1 }}>
-          <Box sx={{ width: 30, height: 30, borderRadius: 2, display: "grid", placeItems: "center",
+        <Stack direction="row" spacing={1.5} sx={{ alignItems: "center", mb: 1.25, flexWrap: "wrap", gap: 1 }}>
+          <Box sx={{ width: 36, height: 36, borderRadius: 2, display: "grid", placeItems: "center",
                      bgcolor: alpha(theme.palette.primary.main, 0.12), color: "primary.main" }}>
-            <Globe2 size={17} />
+            <Globe2 size={19} />
           </Box>
           <Typography variant="h6" sx={{ fontWeight: 800, letterSpacing: "-.02em" }}>
             Rollout Agent
           </Typography>
           <Box sx={{ flex: 1 }} />
           <Button size="small" variant="text" startIcon={<History size={14} />}
-                  onClick={(e) => setHistoryAnchor(e.currentTarget)} sx={{ fontSize: 12 }}>
+                  onClick={(e) => setHistoryAnchor(e.currentTarget)} sx={{ fontSize: 12.5 }}>
             {history.length ? `${history.length} run${history.length === 1 ? "" : "s"}` : "History"}
           </Button>
           {runId && analysis && (
             <>
               <Button size="small" variant="outlined" startIcon={<Download size={14} />}
-                      href={rollout.exportUrl(runId, "md")} sx={{ fontSize: 12 }}>
+                      href={rollout.exportUrl(runId, "md")} sx={{ fontSize: 12.5 }}>
                 Workshop pack
               </Button>
               <Button size="small" variant="text" href={rollout.exportUrl(runId, "json")}
-                      sx={{ fontSize: 12 }}>JSON</Button>
+                      sx={{ fontSize: 12.5 }}>JSON</Button>
             </>
           )}
         </Stack>
-        <Typography sx={{ fontSize: 13, color: "text.secondary", mb: 2 }}>
+        <Typography sx={{ fontSize: 13.5, lineHeight: 1.65, color: "text.secondary",
+                           maxWidth: 860, mb: 3.5 }}>
           SAP Activate Fit-to-Standard. Reads one document set as the run's subject — a country's
           As-Is, or SAP Best Practice content to find where the template has drifted from standard
           — compares it against the Global Template, and turns the difference into a short list of
@@ -1151,7 +1152,7 @@ export default function RolloutPage({ active }: Props) {
                 <Typography sx={{ fontSize: 12.5, fontWeight: 600 }}>
                   {r.scope_label}{r.country ? ` · ${r.country}` : ""}
                 </Typography>
-                <Typography sx={{ fontSize: 11, color: "text.secondary" }}>
+                <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
                   {r.started_at?.slice(0, 16).replace("T", " ")} · {r.status}
                   {r.gt_alignment !== null ? ` · GT ${r.gt_alignment}%` : ""}
                   {r.deviations ? ` · ${r.deviations} deviations` : ""}
@@ -1162,7 +1163,7 @@ export default function RolloutPage({ active }: Props) {
         </Menu>
 
         {status && (!status.anthropic_key || status.error || !status.bpml.available) && (
-          <Alert severity="warning" sx={{ mb: 2, fontSize: 12.5 }}>
+          <Alert severity="warning" sx={{ mb: 3, fontSize: 12.5 }}>
             {!status.anthropic_key && <div>No <code>ANTHROPIC_API_KEY</code> is set, so no analysis can run.</div>}
             {!status.bpml.available && <div>The BPML sheet is not readable, so the Global Template hierarchy is unavailable.</div>}
             {status.error && <div>{status.error}</div>}
@@ -1170,7 +1171,7 @@ export default function RolloutPage({ active }: Props) {
         )}
 
         {/* --------------------------------------------------------- the setup */}
-        <Paper sx={{ p: 2, mb: 2.5 }}>
+        <Paper sx={{ p: 2.75, mb: 3 }}>
           <TextField
             fullWidth multiline maxRows={3} value={question}
             onChange={(e) => setQuestion(e.target.value)}
@@ -1194,7 +1195,7 @@ export default function RolloutPage({ active }: Props) {
             onAdd={addUploads} onRetag={retag} onRemove={removeUpload} onClear={clearUploads}
           />
 
-          <Divider sx={{ my: 1.75 }} />
+          <Divider sx={{ my: 2 }} />
 
           <Stack direction={{ xs: "column", md: "row" }} spacing={1.5}
                  sx={{ alignItems: { md: "center" }, mb: 1.5 }}>
@@ -1207,7 +1208,7 @@ export default function RolloutPage({ active }: Props) {
                 </MenuItem>
               ))}
             </Select>
-            <Typography sx={{ fontSize: 11.5, color: "text.secondary", flex: 1 }}>
+            <Typography sx={{ fontSize: 12.5, color: "text.secondary", flex: 1 }}>
               {subject.value === "country_as_is"
                 ? "How far the country's current process is from the Global Template, with"
                   + " localization as a lens."
@@ -1244,7 +1245,7 @@ export default function RolloutPage({ active }: Props) {
                          onChange={(e) => setCountry(e.target.value)} placeholder="India" />
             )}
             {scope ? (
-              <Stack direction="row" spacing={1} sx={{ alignItems: "center", px: 1.25, py: 0.75,
+              <Stack direction="row" spacing={1.25} sx={{ alignItems: "center", px: 1.25, py: 0.75,
                         borderRadius: 2, bgcolor: alpha(theme.palette.primary.main, 0.08) }}>
                 <Target size={14} color={theme.palette.primary.main} />
                 <Typography sx={{ fontSize: 13, fontWeight: 700 }}>{scope.code} {scope.name}</Typography>
@@ -1252,7 +1253,7 @@ export default function RolloutPage({ active }: Props) {
             ) : !scopeText.trim() ? (
               // Said here rather than left blank: an empty required-looking
               // field reads as something forgotten, not as a choice.
-              <Stack direction="row" spacing={1} sx={{ alignItems: "center", px: 1.25, py: 0.75,
+              <Stack direction="row" spacing={1.25} sx={{ alignItems: "center", px: 1.25, py: 0.75,
                         borderRadius: 2, bgcolor: alpha(theme.palette.text.primary, 0.05) }}>
                 <CircleHelp size={14} color={theme.palette.text.secondary} />
                 <Typography sx={{ fontSize: 12.5, color: "text.secondary" }}>
@@ -1278,7 +1279,7 @@ export default function RolloutPage({ active }: Props) {
           </Stack>
 
           {matches.length > 1 && (
-            <Stack direction="row" useFlexGap sx={{ flexWrap: "wrap", gap: 0.6, mt: 1 }}>
+            <Stack direction="row" useFlexGap sx={{ flexWrap: "wrap", gap: 0.75, mt: 1 }}>
               {matches.slice(0, 6).map((m) => (
                 <Chip key={m.code} size="small" label={`${m.code} ${m.name}`}
                       variant={scope?.code === m.code ? "filled" : "outlined"}
@@ -1308,10 +1309,10 @@ export default function RolloutPage({ active }: Props) {
           </Collapse>
 
           {plan && !plan.ready && (
-            <Alert severity="info" sx={{ mt: 1.5, py: 0.25, fontSize: 12 }}>{plan.blocker}</Alert>
+            <Alert severity="info" sx={{ mt: 1.5, py: 0.25, fontSize: 12.5 }}>{plan.blocker}</Alert>
           )}
           {plan?.ready && !running && !analysis && (
-            <Typography sx={{ fontSize: 11.5, color: "text.secondary", mt: 1.5 }}>
+            <Typography sx={{ fontSize: 12.5, color: "text.secondary", mt: 1.5 }}>
               Two passes — read the {subject.label}, then compare it — roughly {plan.estimated_minutes} minutes and
               ~{Math.round(plan.estimated_input_tokens / 1000)}k input tokens. Estimated, not measured.
               {!plan.sap_bp_available && " No SAP Best Practice source is attached, so Score B will be reported as not assessable rather than guessed."}
@@ -1323,21 +1324,21 @@ export default function RolloutPage({ active }: Props) {
 
         {/* ---------------------------------------------------------- progress */}
         {(running || stages.length > 0) && !analysis && (
-          <Paper sx={{ p: 2, mb: 2.5 }}>
+          <Paper sx={{ p: 2.75, mb: 3 }}>
             <SectionLabel icon={<ListChecks size={14} />}>Progress</SectionLabel>
-            <Stack spacing={0.75}>
+            <Stack spacing={1}>
               {["asis", "compare", "gates"].map((key) => {
                 const s = stages.find((x) => x.stage === key);
                 const label = key === "asis" ? `Read the ${subject.label}`
                   : key === "compare" ? "Compare against the Global Template" : "Quality gates";
                 return (
-                  <Stack key={key} direction="row" spacing={1} sx={{ alignItems: "center" }}>
+                  <Stack key={key} direction="row" spacing={1.25} sx={{ alignItems: "center" }}>
                     {s?.status === "done" ? <CheckCircle2 size={14} color={semantic.fit} />
                       : s?.status === "running" ? <CircularProgress size={12} />
                         : <Box sx={{ width: 14 }} />}
                     <Typography sx={{ fontSize: 12.5, fontWeight: s ? 600 : 400,
                                       color: s ? "text.primary" : "text.disabled" }}>{label}</Typography>
-                    {s?.detail && <Typography sx={{ fontSize: 11.5, color: "text.secondary" }}>— {s.detail}</Typography>}
+                    {s?.detail && <Typography sx={{ fontSize: 12.5, color: "text.secondary" }}>— {s.detail}</Typography>}
                   </Stack>
                 );
               })}
@@ -1347,7 +1348,7 @@ export default function RolloutPage({ active }: Props) {
                    sx={{ mt: 1.5, maxHeight: 220, overflowY: "auto", p: 1, borderRadius: 1.5,
                          bgcolor: alpha(theme.palette.text.primary, 0.035) }}>
                 {calls.map((c, i) => (
-                  <Stack key={i} direction="row" spacing={0.75}
+                  <Stack key={i} direction="row" spacing={1}
                          sx={{ alignItems: "baseline", fontFamily: "monospace" }}>
                     <Typography component="span" sx={{ fontSize: 10.5, color: "text.disabled",
                                                        minWidth: 22, textAlign: "right" }}>
@@ -1357,7 +1358,7 @@ export default function RolloutPage({ active }: Props) {
                       {c.tool}
                     </Typography>
                     <Typography component="span"
-                                sx={{ fontSize: 11, flex: 1,
+                                sx={{ fontSize: 12, flex: 1,
                                       color: c.error ? "error.main" : "text.secondary",
                                       wordBreak: "break-word" }}>
                       {c.summary || c.error}
@@ -1371,7 +1372,7 @@ export default function RolloutPage({ active }: Props) {
                         </Box>
                       ) : null}
                     </Typography>
-                    <Typography component="span" sx={{ fontSize: 10, color: "text.disabled" }}>
+                    <Typography component="span" sx={{ fontSize: 10.5, color: "text.disabled" }}>
                       {c.ms}ms
                     </Typography>
                   </Stack>
@@ -1380,9 +1381,9 @@ export default function RolloutPage({ active }: Props) {
                   // Between tool calls the agent is generating, which is most
                   // of the wall clock. A log that goes quiet for a minute with
                   // no line saying why reads as a hang.
-                  <Stack direction="row" spacing={0.75} sx={{ alignItems: "center", mt: calls.length ? 0.5 : 0 }}>
+                  <Stack direction="row" spacing={1} sx={{ alignItems: "center", mt: calls.length ? 0.5 : 0 }}>
                     <CircularProgress size={9} />
-                    <Typography sx={{ fontSize: 11, color: "text.disabled", fontStyle: "italic" }}>
+                    <Typography sx={{ fontSize: 12, color: "text.disabled", fontStyle: "italic" }}>
                       {runningStage === "gates" ? "checking the analysis…" : "the agent is thinking…"}
                     </Typography>
                   </Stack>
@@ -1394,9 +1395,9 @@ export default function RolloutPage({ active }: Props) {
 
         {/* ----------------------------------------------- §16.1 the fit header */}
         {scores && (
-          <Paper sx={{ p: 2, mb: 2.5 }}>
+          <Paper sx={{ p: 2.75, mb: 3 }}>
             <SectionLabel icon={<Scale size={14} />}
-              right={<Typography sx={{ fontSize: 11, color: "text.secondary" }}>
+              right={<Typography sx={{ fontSize: 12, color: "text.secondary" }}>
                 {counts?.fit_areas ?? 0} fit · {counts?.deviations ?? 0} deviations ·
                 {" "}{counts?.localization_confirmed ?? 0} confirmed localization
               </Typography>}>
@@ -1434,12 +1435,12 @@ export default function RolloutPage({ active }: Props) {
 
             <Stack direction="row" spacing={1.5} sx={{ mt: 1.5, alignItems: "center", flexWrap: "wrap", gap: 1 }}>
               <Chip size="small" color="error" label={`${counts?.workshop?.MUST_DISCUSS ?? 0} decisions`}
-                    sx={{ height: 24, fontSize: 11.5, fontWeight: 700 }} />
+                    sx={{ height: 24, fontSize: 12.5, fontWeight: 700 }} />
               <Chip size="small" color="warning" label={`${counts?.workshop?.CONFIRM ?? 0} to confirm`}
-                    sx={{ height: 24, fontSize: 11.5 }} />
+                    sx={{ height: 24, fontSize: 12.5 }} />
               <Chip size="small" label={`${counts?.workshop?.NO_WORKSHOP_TIME ?? 0} need no floor time`}
-                    sx={{ height: 24, fontSize: 11.5 }} />
-              <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
+                    sx={{ height: 24, fontSize: 12.5 }} />
+              <Typography sx={{ fontSize: 12.5, color: "text.secondary" }}>
                 ≈{counts?.workshop_minutes ?? 0} min of focused discussion
               </Typography>
             </Stack>
@@ -1455,19 +1456,19 @@ export default function RolloutPage({ active }: Props) {
 
         {/* -------------------------------------------------------- the results */}
         {analysis && scores && (
-          <Paper sx={{ mb: 3 }}>
+          <Paper sx={{ mb: 3.5 }}>
             {/* Who is deciding, at the point of deciding. It lives in the run
                 options too, but that panel is collapsed by default -- which is
                 how a session's worth of verdicts ended up filed under no name
                 at all. */}
             {runId && (
-              <Stack direction="row" spacing={1}
+              <Stack direction="row" spacing={1.25}
                      sx={{ px: 2, pt: 1.75, alignItems: "center", flexWrap: "wrap", gap: 1 }}>
                 <TextField size="small" placeholder="Your name" value={reviewer}
                            onChange={(e) => setReviewer(e.target.value)}
                            error={!reviewer.trim() && decisions.length === 0}
                            sx={{ width: 220, "& .MuiInputBase-input": { fontSize: 12.5 } }} />
-                <Typography sx={{ fontSize: 11.5, color: reviewer.trim() ? "text.secondary" : "error.main" }}>
+                <Typography sx={{ fontSize: 12.5, color: reviewer.trim() ? "text.secondary" : "error.main" }}>
                   {reviewer.trim()
                     ? `Accept, defer and reject are recorded against ${reviewer.trim()}.`
                     : "Name yourself to accept, defer or reject a gap — a verdict nobody owns is not a decision."}
@@ -1501,7 +1502,7 @@ export default function RolloutPage({ active }: Props) {
               {/* ------------------------------------------------ workshop scope */}
               {tab === 0 && (
                 <Stack spacing={1.5}>
-                  <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
+                  <Typography sx={{ fontSize: 12.5, color: "text.secondary" }}>
                     Legal and localization blockers first, then controls and financial impact, then the
                     rest by materiality. Every item carries an explicit decision, not a discussion topic.
                   </Typography>
@@ -1509,7 +1510,7 @@ export default function RolloutPage({ active }: Props) {
                     const gap = analysis.deviations.find((d) => d.gap_id === item.gap_id);
                     return gap ? (
                       <Box key={item.gap_id}>
-                        <Typography sx={{ fontSize: 11.5, fontWeight: 700, color: "text.secondary", mb: 0.4 }}>
+                        <Typography sx={{ fontSize: 12.5, fontWeight: 700, color: "text.secondary", mb: 0.4 }}>
                           {item.position}. ~{item.minutes} min
                         </Typography>
                         <GapCard gap={gap} types={types} dispositions={dispositions} states={states}
@@ -1529,10 +1530,10 @@ export default function RolloutPage({ active }: Props) {
                   )}
                   {(confirm.length > 0 || analysis.fit_areas.length > 0) && (
                     <>
-                      <Divider sx={{ my: 1 }} />
+                      <Divider sx={{ my: 1.5 }} />
                       <SectionLabel icon={<CheckCircle2 size={14} />}>Batch-confirm, no discussion</SectionLabel>
                       {analysis.fit_areas.map((f, i) => (
-                        <Stack key={i} direction="row" spacing={1} sx={{ alignItems: "flex-start" }}>
+                        <Stack key={i} direction="row" spacing={1.25} sx={{ alignItems: "flex-start" }}>
                           <CheckCircle2 size={13} color={semantic.fit} style={{ marginTop: 3, flexShrink: 0 }} />
                           <Typography sx={{ fontSize: 12.5 }}>
                             {f.statement}
@@ -1545,7 +1546,7 @@ export default function RolloutPage({ active }: Props) {
                         </Stack>
                       ))}
                       {confirm.map((d) => (
-                        <Stack key={d.gap_id} direction="row" spacing={1} sx={{ alignItems: "flex-start", mt: 0.5 }}>
+                        <Stack key={d.gap_id} direction="row" spacing={1.25} sx={{ alignItems: "flex-start", mt: 0.85 }}>
                           <AlertTriangle size={13} color={semantic.minor} style={{ marginTop: 3, flexShrink: 0 }} />
                           <Typography sx={{ fontSize: 12.5 }}>
                             <b>{d.gap_id}</b> — {d.exact_difference}
@@ -1555,7 +1556,7 @@ export default function RolloutPage({ active }: Props) {
                     </>
                   )}
                   {noTime.length > 0 && (
-                    <Typography sx={{ fontSize: 11.5, color: "text.secondary" }}>
+                    <Typography sx={{ fontSize: 12.5, color: "text.secondary" }}>
                       {noTime.length} further difference{noTime.length === 1 ? " needs" : "s need"} no
                       workshop time; see the Deviations tab.
                     </Typography>
@@ -1565,7 +1566,7 @@ export default function RolloutPage({ active }: Props) {
 
               {/* --------------------------------------- the deviation register */}
               {tab === 1 && (
-                <Stack spacing={1.25}>
+                <Stack spacing={1.5}>
                   {analysis.deviations.map((d) => (
                     <Box key={d.gap_id} id={`gap-${d.gap_id}`}
                          sx={{ scrollMarginTop: 80, borderRadius: 2,
@@ -1591,7 +1592,7 @@ export default function RolloutPage({ active }: Props) {
               {/* ------------------------------------------ localization advisory */}
               {tab === 2 && (
                 <Stack spacing={1.5}>
-                  <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
+                  <Typography sx={{ fontSize: 12.5, color: "text.secondary" }}>
                     {subject.localization
                       ? "Only findings that interact with this process. A requirement is confirmed"
                         + " statutory only where an explicit source says so — country-specific is"
@@ -1602,15 +1603,15 @@ export default function RolloutPage({ active }: Props) {
                         + " Country As-Is run."}
                   </Typography>
                   {analysis.localization.map((item, i) => (
-                    <Paper key={i} variant="outlined" sx={{ p: 1.75 }}>
-                      <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
+                    <Paper key={i} variant="outlined" sx={{ p: 2 }}>
+                      <Stack direction="row" spacing={1.25} sx={{ alignItems: "center" }}>
                         <Globe2 size={14} color={theme.palette.info.main} />
                         <Typography sx={{ fontSize: 13.5, fontWeight: 700 }}>{item.topic}</Typography>
                         <Chip size="small" label={item.status}
                               color={item.status === "Confirmed" ? "info" : item.status === "Candidate" ? "warning" : "default"}
                               sx={{ height: 20, fontSize: 10.5 }} />
                       </Stack>
-                      <Stack spacing={0.4} sx={{ mt: 1 }}>
+                      <Stack spacing={0.75} sx={{ mt: 1 }}>
                         <Row label="Relevance" value={item.relevance} />
                         <Row label="Requirement" value={item.requirement} />
                         <Row label="SAP" value={item.sap_capability} />
@@ -1635,18 +1636,18 @@ export default function RolloutPage({ active }: Props) {
                 <Stack spacing={2}>
                   <Box>
                     <SectionLabel icon={<Scale size={14} />}>Alignment by dimension</SectionLabel>
-                    <Stack spacing={1}>
+                    <Stack spacing={1.25}>
                       {scores.dimensions.map((row) => (
                         <AlignmentRow key={row.dimension}
                                       deviations={analysis.deviations.filter(
                                         (d) => d.dimension === row.dimension)}
                                       chunks={sources?.chunks} session={session}
                                       onGap={(ref) => { setTab(1); setHighlightGap(ref); }}>
-                          <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
+                          <Stack direction="row" spacing={1.25} sx={{ alignItems: "center" }}>
                             <Typography sx={{ fontSize: 12.5, fontWeight: 600, minWidth: 220 }}>
                               {row.label}
                             </Typography>
-                            <Typography sx={{ fontSize: 11, color: "text.secondary", minWidth: 34 }}>
+                            <Typography sx={{ fontSize: 12, color: "text.secondary", minWidth: 34 }}>
                               {row.weight}%
                             </Typography>
                             <Box sx={{ flex: 1, height: 7, borderRadius: 4, bgcolor: "divider", overflow: "hidden" }}>
@@ -1654,12 +1655,12 @@ export default function RolloutPage({ active }: Props) {
                                          bgcolor: (row.percent ?? 0) >= 75 ? semantic.fit
                                            : (row.percent ?? 0) >= 50 ? semantic.minor : semantic.material }} />
                             </Box>
-                            <Typography sx={{ fontSize: 12, fontWeight: 700, minWidth: 54, textAlign: "right" }}>
+                            <Typography sx={{ fontSize: 12.5, fontWeight: 700, minWidth: 54, textAlign: "right" }}>
                               {row.rating === null ? "—" : `${row.rating}/4`}
                             </Typography>
                           </Stack>
                           {row.note && (
-                            <Typography sx={{ fontSize: 11, color: "text.secondary", ml: "228px" }}>{row.note}</Typography>
+                            <Typography sx={{ fontSize: 12, color: "text.secondary", ml: "228px" }}>{row.note}</Typography>
                           )}
                         </AlignmentRow>
                       ))}
@@ -1668,15 +1669,15 @@ export default function RolloutPage({ active }: Props) {
 
                   <Box>
                     <SectionLabel icon={<Layers size={14} />}>Deviation heatmap</SectionLabel>
-                    <Stack spacing={0.5}>
+                    <Stack spacing={0.85}>
                       {scores.heatmap.map((row) => (
-                        <Stack key={row.dimension} direction="row" spacing={1.25}
+                        <Stack key={row.dimension} direction="row" spacing={1.5}
                                onClick={row.deviations ? () => {
                                  const first = analysis.deviations.find(
                                    (d) => d.dimension === row.dimension);
                                  if (first) { setTab(1); setHighlightGap(first.gap_id); }
                                } : undefined}
-                               sx={{ alignItems: "center", py: 0.5, borderBottom: 1,
+                               sx={{ alignItems: "center", py: 1, borderBottom: 1,
                                      borderColor: "divider",
                                      cursor: row.deviations ? "pointer" : "default",
                                      "&:hover": row.deviations ? { bgcolor: "action.hover" } : {} }}>
@@ -1685,13 +1686,13 @@ export default function RolloutPage({ active }: Props) {
                             : row.focus === "Medium" ? semantic.minor
                               : row.focus === "Low" ? semantic.fit : semantic.unknown}
                                title={`${row.focus} focus`} />
-                          <Typography sx={{ fontSize: 11.5, color: "text.secondary", minWidth: 150 }}>
+                          <Typography sx={{ fontSize: 12.5, color: "text.secondary", minWidth: 150 }}>
                             {row.deviations} deviation{row.deviations === 1 ? "" : "s"}
                             {row.must_discuss ? ` · ${row.must_discuss} to decide` : ""}
                           </Typography>
                           {row.localization > 0 && (
                             <Chip size="small" icon={<Globe2 size={10} />} label={`${row.localization} localization`}
-                                  sx={{ height: 19, fontSize: 10, bgcolor: alpha(theme.palette.info.main, 0.12), color: "info.main" }} />
+                                  sx={{ height: 19, fontSize: 10.5, bgcolor: alpha(theme.palette.info.main, 0.12), color: "info.main" }} />
                           )}
                           <Box sx={{ flex: 1 }} />
                           <Typography sx={{ fontSize: 10.5, color: "text.secondary", fontFamily: "monospace" }}>
@@ -1710,14 +1711,14 @@ export default function RolloutPage({ active }: Props) {
 
               {/* ------------------------------------------- backlog candidates */}
               {tab === 4 && (
-                <Stack spacing={1.25}>
-                  <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
+                <Stack spacing={1.5}>
+                  <Typography sx={{ fontSize: 12.5, color: "text.secondary" }}>
                     Candidates only. A hypothesis does not become project scope until the workshop
                     validates it — each one names the gap it came from.
                   </Typography>
                   {analysis.backlog.map((item, i) => (
-                    <Paper key={i} variant="outlined" sx={{ p: 1.75 }}>
-                      <Stack direction="row" spacing={1} sx={{ alignItems: "center", flexWrap: "wrap", gap: 0.5 }}>
+                    <Paper key={i} variant="outlined" sx={{ p: 2 }}>
+                      <Stack direction="row" spacing={1.25} sx={{ alignItems: "center", flexWrap: "wrap", gap: 0.75 }}>
                         <Typography sx={{ fontSize: 13.5, fontWeight: 700 }}>{item.title}</Typography>
                         <Chip size="small" label={item.priority} sx={{ height: 20, fontSize: 10.5 }} />
                         <Chip size="small" variant="outlined" label={item.build_type} sx={{ height: 20, fontSize: 10.5 }} />
@@ -1732,14 +1733,14 @@ export default function RolloutPage({ active }: Props) {
                       </Stack>
                       <Typography sx={{ fontSize: 12.5, mt: 0.75 }}>{item.requirement}</Typography>
                       {item.business_value && (
-                        <Typography sx={{ fontSize: 11.5, color: "text.secondary", mt: 0.4 }}>
+                        <Typography sx={{ fontSize: 12.5, color: "text.secondary", mt: 0.75 }}>
                           {item.business_value}
                         </Typography>
                       )}
                       {item.acceptance_criteria.length > 0 && (
                         <Box sx={{ mt: 0.75 }}>
                           {item.acceptance_criteria.map((c, n) => (
-                            <Typography key={n} sx={{ fontSize: 11.5 }}>· {c}</Typography>
+                            <Typography key={n} sx={{ fontSize: 12.5 }}>· {c}</Typography>
                           ))}
                         </Box>
                       )}
@@ -1752,7 +1753,7 @@ export default function RolloutPage({ active }: Props) {
                   )}
                   {analysis.open_questions.length > 0 && (
                     <>
-                      <Divider sx={{ my: 1 }} />
+                      <Divider sx={{ my: 1.5 }} />
                       <SectionLabel icon={<CircleHelp size={14} />}>Evidence requests</SectionLabel>
                       {analysis.open_questions.map((q, i) => (
                         <Typography key={i} sx={{ fontSize: 12.5 }}>· {q}</Typography>
@@ -1764,21 +1765,21 @@ export default function RolloutPage({ active }: Props) {
 
               {/* ------------------------------------------------ the As-Is model */}
               {tab === 5 && asis && (
-                <Stack spacing={1.25}>
-                  <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
+                <Stack spacing={1.5}>
+                  <Typography sx={{ fontSize: 12.5, color: "text.secondary" }}>
                     {asis.process_name}
                   </Typography>
                   {asis.steps.map((s) => (
-                    <Paper key={s.step_id} variant="outlined" sx={{ p: 1.5 }}>
-                      <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
-                        <Typography sx={{ fontSize: 11.5, fontFamily: "monospace", color: "text.secondary" }}>
+                    <Paper key={s.step_id} variant="outlined" sx={{ p: 2 }}>
+                      <Stack direction="row" spacing={1.25} sx={{ alignItems: "center" }}>
+                        <Typography sx={{ fontSize: 12.5, fontFamily: "monospace", color: "text.secondary" }}>
                           {s.step_id}
                         </Typography>
                         <Typography sx={{ fontSize: 13, fontWeight: 700 }}>{s.name}</Typography>
                         <Box sx={{ flex: 1 }} />
-                        <Chip size="small" label={s.confidence} sx={{ height: 19, fontSize: 10 }} />
+                        <Chip size="small" label={s.confidence} sx={{ height: 19, fontSize: 10.5 }} />
                       </Stack>
-                      <Stack spacing={0.3} sx={{ mt: 0.75 }}>
+                      <Stack spacing={0.6} sx={{ mt: 0.75 }}>
                         <Row label="Actor" value={s.actor} />
                         <Row label="System" value={s.system} />
                         <Row label="Rule" value={s.business_rule} />
@@ -1794,7 +1795,7 @@ export default function RolloutPage({ active }: Props) {
                     <>
                       <SectionLabel icon={<ShieldCheck size={14} />}>Terminology normalised</SectionLabel>
                       {asis.normalisation_notes.map((n, i) => (
-                        <Typography key={i} sx={{ fontSize: 12 }}>· {n}</Typography>
+                        <Typography key={i} sx={{ fontSize: 12.5 }}>· {n}</Typography>
                       ))}
                     </>
                   )}
@@ -1804,7 +1805,7 @@ export default function RolloutPage({ active }: Props) {
                         Evidence gaps in the {subject.label}
                       </SectionLabel>
                       {asis.evidence_gaps.map((g, i) => (
-                        <Typography key={i} sx={{ fontSize: 12 }}>· {g}</Typography>
+                        <Typography key={i} sx={{ fontSize: 12.5 }}>· {g}</Typography>
                       ))}
                     </>
                   )}
@@ -1813,27 +1814,27 @@ export default function RolloutPage({ active }: Props) {
 
               {/* -------------------------------------------------- quality gates */}
               {tab === 6 && (
-                <Stack spacing={1}>
-                  <Stack direction="row" spacing={1.25} sx={{ alignItems: "center", flexWrap: "wrap", gap: 0.5 }}>
+                <Stack spacing={1.25}>
+                  <Stack direction="row" spacing={1.5} sx={{ alignItems: "center", flexWrap: "wrap", gap: 0.75 }}>
                     <Chip size="small" color={gates?.hard ? "error" : "success"}
-                          label={`${gates?.hard ?? 0} hard`} sx={{ height: 22, fontSize: 11.5, fontWeight: 700 }} />
-                    <Chip size="small" label={`${gates?.soft ?? 0} soft`} sx={{ height: 22, fontSize: 11.5 }} />
-                    <Typography sx={{ fontSize: 11.5, color: "text.secondary" }}>
+                          label={`${gates?.hard ?? 0} hard`} sx={{ height: 22, fontSize: 12.5, fontWeight: 700 }} />
+                    <Chip size="small" label={`${gates?.soft ?? 0} soft`} sx={{ height: 22, fontSize: 12.5 }} />
+                    <Typography sx={{ fontSize: 12.5, color: "text.secondary" }}>
                       Hard issues were repaired: bad evidence dropped, unevidenced statutory claims
                       demoted, extensions without standard options turned back into decisions.
                     </Typography>
                   </Stack>
                   {(gates?.items ?? []).map((issue, i) => (
-                    <Stack key={i} direction="row" spacing={1} sx={{ alignItems: "flex-start" }}>
+                    <Stack key={i} direction="row" spacing={1.25} sx={{ alignItems: "flex-start" }}>
                       <Chip size="small" label={issue.gate} color={issue.severity === "hard" ? "error" : "default"}
-                            sx={{ height: 19, fontSize: 10, minWidth: 40 }} />
-                      <Typography sx={{ fontSize: 12 }}>
+                            sx={{ height: 19, fontSize: 10.5, minWidth: 40 }} />
+                      <Typography sx={{ fontSize: 12.5 }}>
                         {issue.gap_id && <b>{issue.gap_id} — </b>}{issue.detail}
                       </Typography>
                     </Stack>
                   ))}
                   {(gates?.not_checked ?? []).length > 0 && (
-                    <Typography sx={{ fontSize: 11.5, color: "text.secondary", mt: 1 }}>
+                    <Typography sx={{ fontSize: 12.5, color: "text.secondary", mt: 1 }}>
                       Not checked mechanically: {(gates?.not_checked ?? []).join("; ")}.
                     </Typography>
                   )}
@@ -1844,21 +1845,21 @@ export default function RolloutPage({ active }: Props) {
               {tab === 7 && (
                 <Stack spacing={1.5}>
                   {!sources ? (
-                    <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
+                    <Typography sx={{ fontSize: 12.5, color: "text.secondary" }}>
                       No source record for this run. The retrieval log is kept with a run from
                       this version on; a run made earlier shows its quotes but cannot show where
                       in a document they came from.
                     </Typography>
                   ) : (
                     <>
-                      <Stack direction="row" spacing={1} sx={{ alignItems: "center", flexWrap: "wrap", gap: 0.5 }}>
+                      <Stack direction="row" spacing={1.25} sx={{ alignItems: "center", flexWrap: "wrap", gap: 0.75 }}>
                         <Chip size="small" label={`${sources.documents.length} documents`}
-                              sx={{ height: 22, fontSize: 11.5, fontWeight: 700 }} />
+                              sx={{ height: 22, fontSize: 12.5, fontWeight: 700 }} />
                         <Chip size="small" label={`${sources.cited_total} chunks cited`}
-                              sx={{ height: 22, fontSize: 11.5 }} />
+                              sx={{ height: 22, fontSize: 12.5 }} />
                         <Chip size="small" label={`${sources.unused_total} read, not used`}
-                              sx={{ height: 22, fontSize: 11.5 }} />
-                        <Typography sx={{ fontSize: 11.5, color: "text.secondary" }}>
+                              sx={{ height: 22, fontSize: 12.5 }} />
+                        <Typography sx={{ fontSize: 12.5, color: "text.secondary" }}>
                           Everything the analysis rests on. The second number is the honest one:
                           it separates “the corpus does not say” from “the agent did not look”.
                         </Typography>
