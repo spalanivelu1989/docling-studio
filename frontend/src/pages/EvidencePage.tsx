@@ -24,7 +24,7 @@ import {
 } from "../data/evalQuestions";
 import { clearAdornment } from "../components/ClearAdornment";
 import DocumentInspectorDrawer from "../components/DocumentInspectorDrawer";
-import EvidenceTraceDrawer from "../components/EvidenceTraceDrawer";
+import AgentTraceDrawer from "../components/AgentTraceDrawer";
 
 /* ------------------------------------------------------------------- states */
 
@@ -1012,7 +1012,7 @@ export default function EvidencePage({ active }: { active: boolean }) {
       </Box>
 
       {/* ---------- citation traceability ---------- */}
-      <EvidenceTraceDrawer
+      <AgentTraceDrawer
         open={Boolean(traceCall)}
         onClose={() => setTraceCall(null)}
         call={traceCall}

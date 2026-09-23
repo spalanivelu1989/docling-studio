@@ -1,1 +1,0 @@
-import{S as e}from"./graphlib-Bd_3AdXU.js";var t=4;function n(n){return e(n,t)}export{n as t};

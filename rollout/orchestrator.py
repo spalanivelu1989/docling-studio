@@ -21,7 +21,7 @@ import uploads
 
 from fitgap import bpml, tools as ftools
 
-from . import agent, gates, scoring, sources as sources_index, store
+from . import agent, gates, scoring, sources as sources_index, store, tools
 from .schemas import SUBJECTS, RunRequest
 
 Event = tuple[str, dict]
@@ -186,13 +186,29 @@ def run(req: RunRequest) -> Iterator[Event]:
             "sap_bp_available": "sap_bp" in roles,
         }
 
+        # Every tool call, kept as it happens rather than at the end: a run
+        # whose stream is dropped -- the tab closed, the browser gone -- still
+        # leaves behind what it had found by then, which is usually the reason
+        # anyone reopens it.
+        calls_log: list[dict] = []
+
+        def recorded(events):
+            for name, payload in events:
+                if name == "tool_call":
+                    calls_log.append(payload)
+                    try:
+                        store.save_calls(conn, run_id, calls_log)
+                    except Exception:
+                        pass  # bookkeeping must never become the run's error
+                yield name, payload
+
         # --- pass one: understand the As-Is (§21 stage 2) -------------------
         yield "stage", {"stage": "asis", "status": "running",
                         "detail": "Reading the country As-Is documentation"}
         box: dict = {}
-        yield from _pass(lambda cb: agent.read_asis(req, scope, sess, cb), box, run,
+        yield from recorded(_pass(lambda cb: agent.read_asis(req, scope, sess, cb), box, run,
                          "read-as-is", lambda m: {"steps": len(m.steps),
-                                                  "evidence_gaps": len(m.evidence_gaps)})
+                                                  "evidence_gaps": len(m.evidence_gaps)}))
         if box.get("error"):
             raise box["error"]
         asis, asis_cost = box["result"]
@@ -213,11 +229,11 @@ def run(req: RunRequest) -> Iterator[Event]:
         yield "stage", {"stage": "compare", "status": "running",
                         "detail": "Comparing against the Global Template"}
         box = {}
-        yield from _pass(lambda cb: agent.compare(req, scope, asis, sess, cb), box, run,
+        yield from recorded(_pass(lambda cb: agent.compare(req, scope, asis, sess, cb), box, run,
                          "compare-to-template",
                          lambda a: {"deviations": len(a.deviations),
                                     "fit_areas": len(a.fit_areas),
-                                    "template_process": a.template_process[:120]})
+                                    "template_process": a.template_process[:120]}))
         if box.get("error"):
             raise box["error"]
         analysis, cmp_cost = box["result"]
@@ -366,8 +382,11 @@ def _headline(analysis, scores: dict, gates_summary: dict, scope_label: str) -> 
 
 
 def _call_event(stage: str, call) -> dict:
-    return {"stage": stage, "tool": call.name, "summary": call.summary,
-            "ms": call.ms, "error": call.error, "sources": call.sources}
+    return {"stage": stage, "tool": call.name,
+            "engine": tools.ENGINE_OF.get(call.name, "other"),
+            "arguments": call.arguments,
+            "summary": call.summary, "ms": call.ms, "error": call.error,
+            "sources": call.sources, "trace": call.trace}
 
 
 def _fingerprint(categories) -> str:

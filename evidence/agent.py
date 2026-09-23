@@ -26,7 +26,8 @@ import tracing  # noqa: E402
 from fitgap import tools as ftools  # noqa: E402
 from fitgap import verifier as fverify  # noqa: E402
 
-from . import independence, paths, provenance, scoring, trace  # noqa: E402
+from fitgap import trace  # noqa: E402
+from . import independence, paths, provenance, scoring  # noqa: E402
 from .schemas import Answer, Claim, Source  # noqa: E402
 
 MODEL = os.environ.get("EVIDENCE_MODEL") or os.environ.get("RAG_ANSWER_MODEL", "claude-opus-5")

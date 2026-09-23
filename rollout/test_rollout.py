@@ -675,6 +675,115 @@ def test_a_session_with_no_subject_still_defaults_to_the_country():
     assert asked["roles"] == ["as_is"]
 
 
+
+
+def _with_store(check):
+    """A throwaway database with the rollout schema in it.
+
+    The same shape as the Evidence Agent's helper. Rollout's tests had no
+    store coverage at all, which is part of why it went this long without
+    noticing it kept no investigation log."""
+    import uuid
+    from urllib.parse import urlsplit, urlunsplit
+    import psycopg
+    import rag
+    from rollout import store
+
+    original = rag.base_url
+    parts = urlsplit(original())
+    name = f"docling_test_ro_{uuid.uuid4().hex[:8]}"
+    admin = urlunsplit((parts.scheme, parts.netloc, "/postgres", "", ""))
+    with psycopg.connect(admin, autocommit=True) as c:
+        c.execute(f'CREATE DATABASE "{name}"')
+    rag.base_url = lambda: urlunsplit((parts.scheme, parts.netloc, f"/{name}", "", ""))
+    rag.close()
+    try:
+        conn = rag.connection(schema=False)
+        store.create_schema(conn)
+        check(store, conn)
+    finally:
+        rag.close()
+        rag.base_url = original
+        with psycopg.connect(admin, autocommit=True) as c:
+            c.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
+
+
+# --- the investigation trace ---------------------------------------------------
+
+def test_every_rollout_tool_is_assigned_an_engine():
+    """A tool with no engine falls to "other" and loses its colour and its
+    panel. The two lists are written separately, so they can drift."""
+    from rollout import tools as rtools
+
+    missing = [name for name in rtools.DISPATCH if name not in rtools.ENGINE_OF]
+    assert not missing, f"no engine for: {', '.join(missing)}"
+
+
+def test_read_sources_traces_carry_the_side_a_passage_came_from():
+    """A Rollout answer stands or falls on whether a quote came from the
+    country's As-Is or from the Global Template. A panel that does not say
+    cannot be used to check one."""
+    from fitgap import trace
+
+    t = trace.of("read_sources", {"query": "returns", "side": "as_is"}, {
+        "query": "returns", "side": "as_is",
+        "results": [{"chunk_id": "UPLOAD:1", "doc": "India As-Is", "heading_path": "",
+                     "side": "as_is", "side_label": "Country As-Is",
+                     "text": "the clerk raises a credit memo", "score": 0.03}]})
+    assert t["kind"] == "rag" and t["side"] == "as_is"
+    assert t["hits"][0]["side_label"] == "Country As-Is"
+    assert t["hits"][0]["text"]
+
+
+def test_compare_entities_traces_keep_the_shared_and_new_split():
+    """That split is the whole point of the call, so it travels on each node
+    rather than being left for the reader to infer."""
+    from fitgap import trace
+
+    t = trace.of("compare_entities", {}, {
+        "entities": [{"node_id": "system:SOVOS", "type": "system", "label": "SOVOS",
+                      "in_corpus": True, "corpus_mentions": 12},
+                     {"node_id": "proc:X-1-2", "type": "process", "label": "X-1-2",
+                      "in_corpus": False, "corpus_mentions": 0}],
+        "shared": 1, "new": 1})
+    assert t["kind"] == "graph" and t["shared"] == 1 and t["new"] == 1
+    flags = {n["label"]: n["in_corpus"] for n in t["nodes"]}
+    assert flags == {"SOVOS": True, "X-1-2": False}
+
+
+def test_a_rollout_call_event_carries_the_engine_and_the_trace():
+    from fitgap.tools import ToolCall
+    from rollout.orchestrator import _call_event
+
+    call = ToolCall(name="search_corpus", arguments={"query": "q"}, summary="4 chunks",
+                    ms=9, trace={"kind": "rag", "hits": []})
+    event = _call_event("compare", call)
+    assert event["engine"] == "rag"
+    assert event["arguments"] == {"query": "q"}
+    assert event["trace"]["kind"] == "rag"
+    assert event["stage"] == "compare"
+
+
+def test_the_log_survives_a_reopened_run():
+    """Rollout kept none of this: the log streamed to the browser and was gone
+    on reload, so a reopened run showed its conclusions with no working."""
+    def check(store, conn):
+        store.start_run(conn, {"id": "ro_log", "subject": "country_as_is", "scope_bpml": "4.5",
+                               "scope_label": "x", "country": "", "country_context": "",
+                               "sap_release": "", "gt_version": "", "question": "",
+                               "model": "m", "prompt_hash": "h", "categories": [],
+                               "uploads": {}, "corpus_fingerprint": ""})
+        calls = [{"stage": "compare", "tool": "search_corpus", "engine": "rag",
+                  "arguments": {"query": "q"}, "summary": "4 chunks", "ms": 9, "error": None,
+                  "sources": {}, "trace": {"kind": "rag", "hits": [{"text": "a passage"}]}}]
+        store.save_calls(conn, "ro_log", calls)
+        back = store.get_run(conn, "ro_log")["calls"]
+        assert len(back) == 1
+        assert back[0]["trace"]["hits"][0]["text"] == "a passage"
+        assert back[0]["engine"] == "rag"
+    _with_store(check)
+
+
 if __name__ == "__main__":
     fns = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]
     failed = 0

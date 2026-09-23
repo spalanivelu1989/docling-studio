@@ -352,6 +352,7 @@ def _run(system: str, user: str, stage: str, sess: tools.Session,
             fn = tools.DISPATCH.get(use.name)
             args = dict(use.input)
             from fitgap.tools import OBSERVATION_TYPE, ToolCall
+            from fitgap import trace
 
             # The observation records what the tool returned, not the truncated
             # copy handed to the model on the next turn; what the model read is
@@ -373,6 +374,10 @@ def _run(system: str, user: str, stage: str, sess: tools.Session,
                     summary=tools.summarise(use.name, args, result),
                     ms=int((time.time() - t0) * 1000), error=result.get("error"),
                     sources=tools.describe_sources(use.name, args, result, sess),
+                    # The summary says a search ran; the trace says which
+                    # passages came back and at what rank. Without it a reader
+                    # can see the shape of the run and not check any of it.
+                    trace=trace.of(use.name, args, result, sess),
                 )
                 observed.update(output=result,
                                 metadata={"summary": call.summary, "sources": call.sources,

@@ -13,7 +13,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   fitgap, rollout, runRollout, sessionUploads, uploadSessionDocuments,
-  type AsIsModel, type BpmlProcess, type Deviation, type LocalizationState,
+  type AgentToolCall, type AsIsModel, type BpmlProcess, type Deviation, type LocalizationState,
   type Materiality, type RolloutAnalysis, type RolloutDecision, type RolloutGates,
   type RolloutSourceChunk, type RolloutSourceDocument, type RolloutSources,
   type RolloutSubject,
@@ -22,6 +22,7 @@ import {
   type UploadSession,
 } from "../api";
 import { clearAdornment, clearOnEscape } from "../components/ClearAdornment";
+import AgentTraceDrawer from "../components/AgentTraceDrawer";
 
 /* ------------------------------------------------------------------ palette */
 
@@ -49,6 +50,15 @@ const MATERIALITY_HUE: Record<Materiality, "error" | "warning" | "info" | "succe
 const MANDATORY: LocalizationState[] = ["CONFIRMED_STATUTORY", "SAP_DELIVERED"];
 
 /* ------------------------------------------------------------------ pieces */
+
+/** One colour per engine, the same three the Evidence Agent's log uses, so a
+ *  reader moving between the two agents reads the same signal. */
+const ENGINE_COLOUR: Record<string, string> = {
+  rag: "primary.main",
+  graph: "info.main",
+  bpml: "success.main",
+  session: "text.secondary",
+};
 
 function SectionLabel({ icon, children, right }: { icon?: ReactNode; children: ReactNode; right?: ReactNode }) {
   return (
@@ -831,9 +841,10 @@ export default function RolloutPage({ active }: Props) {
   const [running, setRunning] = useState(false);
   const [runId, setRunId] = useState<string | null>(null);
   const [stages, setStages] = useState<{ stage: string; status: string; detail: string }[]>([]);
-  const [calls, setCalls] = useState<
-    { stage: string; tool: string; summary: string; ms: number; error: string | null;
-      sources?: Record<string, unknown> }[]>([]);
+  const [calls, setCalls] = useState<(AgentToolCall & { stage: string })[]>([]);
+  // Which call's evidence is open. The log says a call happened; this says what
+  // it brought back.
+  const [traceCall, setTraceCall] = useState<AgentToolCall | null>(null);
   const [asis, setAsis] = useState<AsIsModel | null>(null);
   const [analysis, setAnalysis] = useState<RolloutAnalysis | null>(null);
   const [scores, setScores] = useState<RolloutScores | null>(null);
@@ -1008,6 +1019,16 @@ export default function RolloutPage({ active }: Props) {
     }
   }
 
+  // Which retrieved passages the analysis ended up resting on. Rollout records
+  // this per chunk rather than per claim: `used_by` names the deviations and
+  // fit areas a chunk carried, so an empty one was retrieved and never used.
+  const citedChunks = useMemo(
+    () => Object.values(sources?.chunks ?? {})
+      .filter((c) => (c.used_by ?? []).length > 0)
+      .map((c) => c.chunk_id),
+    [sources],
+  );
+
   async function loadRun(id: string) {
     try {
       const run = await rollout.run(id);
@@ -1026,7 +1047,10 @@ export default function RolloutPage({ active }: Props) {
       setGates("issues" in run.gates ? (run.gates as RolloutGates) : null);
       setDecisions(run.decisions ?? []);
       setSources("chunks" in (run.sources ?? {}) ? (run.sources as RolloutSources) : null);
-      setStages([]); setCalls([]); setError(null); setTab(0);
+      // The log is part of the record now, so a reopened run shows its working
+      // rather than its conclusions alone.
+      setCalls(run.calls ?? []);
+      setStages([]); setError(null); setTab(0);
     } catch (e) {
       setError((e as Error).message);
     }
@@ -1349,14 +1373,47 @@ export default function RolloutPage({ active }: Props) {
               <Box ref={logRef}
                    sx={{ mt: 1.5, maxHeight: 220, overflowY: "auto", p: 1, borderRadius: 1.5,
                          bgcolor: alpha(theme.palette.text.primary, 0.035) }}>
+                {calls.some((c) => c.trace) ? (
+                  <Typography sx={{ fontSize: 10.5, color: "text.disabled", mb: 0.75 }}>
+                    Click a call to see what it returned.
+                  </Typography>
+                ) : !running && calls.length > 0 ? (
+                  <Typography sx={{ fontSize: 10.5, color: "text.disabled", mb: 0.75 }}>
+                    This run was recorded before the log kept what each call returned.
+                  </Typography>
+                ) : null}
                 {calls.map((c, i) => (
                   <Stack key={i} direction="row" spacing={1}
-                         sx={{ alignItems: "baseline", fontFamily: "monospace" }}>
+                         onClick={c.trace ? () => setTraceCall(c) : undefined}
+                         role={c.trace ? "button" : undefined}
+                         tabIndex={c.trace ? 0 : undefined}
+                         onKeyDown={c.trace ? (e) => {
+                           if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setTraceCall(c); }
+                         } : undefined}
+                         sx={{ alignItems: "baseline", fontFamily: "monospace",
+                               // Only a call that kept a trace opens anything. A
+                               // failed one stays a log line rather than a button
+                               // that opens an apology.
+                               cursor: c.trace ? "pointer" : "default",
+                               borderRadius: 0.75, px: 0.5, mx: -0.5, py: 0.15,
+                               transition: "background-color .12s",
+                               "&:hover": c.trace
+                                 ? { bgcolor: alpha(theme.palette.text.primary, 0.06) }
+                                 : undefined,
+                               "&:focus-visible": {
+                                 outline: `2px solid ${theme.palette.primary.main}`,
+                                 outlineOffset: 1,
+                               } }}>
                     <Typography component="span" sx={{ fontSize: 10.5, color: "text.disabled",
                                                        minWidth: 22, textAlign: "right" }}>
                       {i + 1}
                     </Typography>
-                    <Typography component="span" sx={{ fontSize: 10.5, color: "primary.main", minWidth: 62 }}>
+                    <Typography component="span"
+                                sx={{ fontSize: 10.5, minWidth: 62,
+                                      color: ENGINE_COLOUR[c.engine] ?? "primary.main",
+                                      textDecoration: c.trace ? "underline" : "none",
+                                      textDecorationStyle: "dotted",
+                                      textUnderlineOffset: 3 }}>
                       {c.tool}
                     </Typography>
                     <Typography component="span"
@@ -1883,6 +1940,19 @@ export default function RolloutPage({ active }: Props) {
           </Paper>
         )}
       </Box>
+
+      {/* What one call in the log returned. The Evidence Agent's panel, on the
+          Rollout Agent's calls -- the two share five of their tools, so the
+          reader should not meet a different panel depending on which agent
+          they happen to be reading. */}
+      <AgentTraceDrawer
+        open={Boolean(traceCall)}
+        onClose={() => setTraceCall(null)}
+        call={traceCall}
+        cited={citedChunks}
+        citedNodes={[]}
+        citedEdges={[]}
+      />
     </Box>
   );
 }

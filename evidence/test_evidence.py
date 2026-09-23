@@ -14,7 +14,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import knowledge_graph  # noqa: E402
 
-from evidence import independence, paths, provenance, scoring, trace  # noqa: E402
+from evidence import independence, paths, provenance, scoring  # noqa: E402
+from fitgap import trace  # noqa: E402
 from evidence.schemas import Answer, Claim, GraphFact, Source  # noqa: E402
 
 MD = "solvay-spark/pkg/markdown/"

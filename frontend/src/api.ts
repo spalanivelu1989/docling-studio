@@ -1042,6 +1042,10 @@ export interface EvidenceRagHit {
   keyword_rank: number | null;
   text: string;
   uploaded: boolean;
+  /** Which side of a three-way comparison this passage is evidence for. Only
+   *  the Rollout Agent's read_sources sets it; empty everywhere else. */
+  side: string;
+  side_label: string;
   provenance: string[];
   provenance_note: string;
 }
@@ -1049,6 +1053,8 @@ export interface EvidenceRagHit {
 export interface EvidenceRagTrace {
   kind: "rag";
   op: string;
+  /** The side read_sources was restricted to, when it was. */
+  side?: string;
   query: string;
   k: number | null;
   mode: string;
@@ -1070,6 +1076,11 @@ export interface EvidenceGraphNode {
   description: string;
   role: "seed" | "path" | "match" | "neighbour";
   hops: number;
+  /** Only compare_entities sets these: whether the corpus already knows this
+   *  entity, and in how many documents. null everywhere else, and the panel
+   *  leaves the badge off rather than claiming "new". */
+  in_corpus?: boolean | null;
+  corpus_mentions?: number | null;
 }
 
 export interface EvidenceGraphEdge {
@@ -1096,6 +1107,8 @@ export interface EvidenceGraphTrace {
     node_ids: string[];
   } | null;
   count: number | null;
+  shared?: number | null;
+  new?: number | null;
   type_filter: string;
   note: string;
   truncated: boolean;
@@ -1119,6 +1132,21 @@ export interface EvidenceBpmlTrace {
 }
 
 export type EvidenceTrace = EvidenceRagTrace | EvidenceGraphTrace | EvidenceBpmlTrace;
+
+/** What the trace drawer needs from a call, whichever agent made it. The
+ *  Evidence Agent labels its calls by engine and the Rollout Agent also by
+ *  stage, but the panel only ever reads the fields below. */
+export interface AgentToolCall {
+  tool: string;
+  engine: string;
+  arguments: Record<string, unknown>;
+  summary: string;
+  sources?: EvidenceToolSources;
+  ms: number;
+  error: string | null;
+  warning?: string | null;
+  trace?: EvidenceTrace | null;
+}
 
 export interface EvidenceToolCall {
   tool: string;
@@ -1513,6 +1541,9 @@ export interface RolloutSources {
 export interface RolloutRunDetail extends RolloutRunSummary {
   subject: string;
   sources: RolloutSources | Record<string, never>;
+  /** The investigation log, with the evidence each call returned. Empty for
+   *  runs recorded before the log was kept at all. */
+  calls?: (AgentToolCall & { stage: string })[];
   country_context: string; sap_release: string; gt_version: string; question: string;
   prompt_hash: string; corpus_fingerprint: string;
   input_tokens: number; output_tokens: number;
@@ -1538,7 +1569,7 @@ export interface RolloutHandlers {
     categories: string[]; uploads: Record<string, unknown>; sap_bp_available: boolean;
   }) => void;
   stage: (d: { stage: string; status: string; detail: string; tool_calls?: number; seconds?: number }) => void;
-  toolCall: (d: { stage: string; tool: string; summary: string; ms: number; error: string | null; sources?: Record<string, unknown> }) => void;
+  toolCall: (d: AgentToolCall & { stage: string }) => void;
   asis: (d: AsIsModel) => void;
   gate: (d: RolloutGates) => void;
   analysis: (d: RolloutAnalysis) => void;

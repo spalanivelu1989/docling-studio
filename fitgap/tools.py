@@ -66,6 +66,10 @@ class ToolCall:
     error: str | None = None
     # Which store the call read; see describe_sources.
     sources: dict = field(default_factory=dict)
+    # What the call returned, bounded and in a shape the page can render.
+    # See fitgap/trace.py. None for a failed call, and for the tools that
+    # return an inventory rather than evidence.
+    trace: dict | None = None
 
 
 @dataclass

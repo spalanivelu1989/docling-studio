@@ -77,6 +77,13 @@ def create_schema(conn=None) -> None:
         # them rather than as empty.
         conn.execute("ALTER TABLE rollout_runs ADD COLUMN IF NOT EXISTS"
                      " sources jsonb NOT NULL DEFAULT '{}'::jsonb")
+        # The investigation log, with the evidence each call returned. Rollout
+        # kept none of this: the log streamed to the browser and was gone on
+        # reload, so a reopened run showed its conclusions with no working at
+        # all. Runs recorded before this column have an empty list, and the
+        # page says so rather than showing an empty log.
+        conn.execute("ALTER TABLE rollout_runs ADD COLUMN IF NOT EXISTS"
+                     " calls jsonb NOT NULL DEFAULT '[]'::jsonb")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS rollout_decisions (
@@ -113,6 +120,17 @@ def start_run(conn, run: dict) -> None:
 
 def save_asis(conn, run_id: str, asis: dict) -> None:
     conn.execute("UPDATE rollout_runs SET asis = %s WHERE id = %s", (json.dumps(asis), run_id))
+    conn.commit()
+
+
+def save_calls(conn, run_id: str, calls: list[dict]) -> None:
+    """The log so far, rewritten in full after each call.
+
+    Whole-list rather than append-one for the reason the Evidence Agent's is:
+    a dropped connection should still leave the row holding everything that
+    happened up to the drop."""
+    conn.execute("UPDATE rollout_runs SET calls = %s WHERE id = %s",
+                 (json.dumps(calls, default=str), run_id))
     conn.commit()
 
 
@@ -173,7 +191,7 @@ _COLUMNS = ("id, subject, scope_bpml, scope_label, country, country_context,"
             " sap_release, gt_version,"
             " question, model, prompt_hash, categories, uploads, corpus_fingerprint,"
             " started_at, finished_at, status, input_tokens, output_tokens,"
-            " asis, analysis, scores, gates, sources")
+            " asis, analysis, scores, gates, sources, calls")
 
 
 # A run whose SSE stream was dropped -- the browser closed, the tab was
@@ -206,6 +224,7 @@ def _row(r) -> dict:
         "status": _status(r[16], r[14]), "input_tokens": r[17], "output_tokens": r[18],
         "asis": r[19] or {}, "analysis": r[20] or {}, "scores": r[21] or {}, "gates": r[22] or {},
         "sources": r[23] or {},
+        "calls": r[24] or [],
     }
 
 

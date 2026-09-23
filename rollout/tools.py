@@ -311,6 +311,19 @@ def definitions(stage: str) -> list[dict]:
     ]
 
 
+# Which engine answered, for the investigation log. read_sources is retrieval
+# -- the same hybrid ranking as search_corpus, over the session's attachments
+# rather than the corpus -- so it is filed under rag and its `sources` label
+# says which database. list_sources returns an inventory of what is attached,
+# which is not evidence and has no panel behind it.
+ENGINE_OF = {
+    "search_corpus": "rag", "get_chunk": "rag", "read_sources": "rag",
+    "graph_entity": "graph", "graph_neighbors": "graph", "compare_entities": "graph",
+    "get_scope": "bpml",
+    "list_sources": "session",
+}
+
+
 DISPATCH = {
     "list_sources": list_sources,
     "read_sources": read_sources,
