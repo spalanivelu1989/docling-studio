@@ -12,10 +12,11 @@
  *  that it stayed derived, and that every tab still reaches a branch of the
  *  render switch.
  */
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
+const SRC = join(dirname(fileURLToPath(import.meta.url)), "..", "src");
 const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "src", "App.tsx"), "utf8");
 
 const tabs = [...src.matchAll(/\{\s*value:\s*"([a-z-]+)"/g)].map((m) => m[1]);
@@ -110,6 +111,36 @@ if (product) {
     stale.length === 0,
     `still titled Docling: ${stale.join(", ")}`,
   );
+}
+
+// --- the old product name, anywhere the user can see it -------------------
+//
+// "Docling" alone is the conversion library and is correct wherever it names
+// it -- the Docling Engine entry in the tech list, the "converting with
+// Docling" status, the Docling Native rows in the MD Viewer's sample. It is
+// "Docling Studio", the name this app used to go by, that is never right
+// again. That is a precise enough rule to enforce, and it caught the sample
+// document the rename had walked straight past twice.
+
+{
+  const stale = [];
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir)) {
+      const full = join(dir, entry);
+      if (statSync(full).isDirectory()) walk(full);
+      else if (/\.(tsx?|html)$/.test(entry)) {
+        readFileSync(full, "utf8").split("\n").forEach((line, i) => {
+          // The comment in App.tsx quotes the old title to explain the bug.
+          if (line.trimStart().startsWith("//")) return;
+          if (/Docling Studio/.test(line)) stale.push(`${full.replace(SRC, "src")}:${i + 1}`);
+        });
+      }
+    }
+  };
+  walk(SRC);
+  check("the old product name appears nowhere the user can see it",
+        stale.length === 0,
+        `"Docling Studio" is this app's former name: ${stale.join(", ")}`);
 }
 
 console.log(`\n${tabs.length} tabs: ${tabs.join(", ")}`);

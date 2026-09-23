@@ -50,7 +50,7 @@ interface PaneState {
 const SAMPLE_LEFT = `# Product Specification v1.0
 
 ## Executive Summary
-Docling Studio is an open-source document conversion and extraction platform.
+Spark AI Spine is an open-source document conversion and extraction platform.
 It processes complex multi-page documents (PDF, PPTX, DOCX, XLSX, images) into rich, structured Markdown.
 
 ## Core Features
@@ -81,7 +81,7 @@ flowchart TD
 const SAMPLE_RIGHT = `# Product Specification v2.0 (Draft)
 
 ## Executive Summary
-Docling Studio is an open-source document conversion and extraction platform.
+Spark AI Spine is an open-source document conversion and extraction platform.
 Now featuring a built-in **Side-by-Side MD Viewer** for comparing revisions and extraction outputs!
 
 ## Core Features
