@@ -784,6 +784,50 @@ def test_the_log_survives_a_reopened_run():
     _with_store(check)
 
 
+
+def test_a_run_can_be_deleted_and_takes_its_decisions_with_it():
+    """A verdict must not outlive the analysis it was made against.
+
+    rollout_decisions declares ON DELETE CASCADE; this checks the declaration
+    is actually doing something, because a decision left behind would be
+    reported against a run nobody can open."""
+    def check(store, conn):
+        store.start_run(conn, {"id": "ro_del", "subject": "country_as_is", "scope_bpml": "4.5",
+                               "scope_label": "x", "country": "", "country_context": "",
+                               "sap_release": "", "gt_version": "", "question": "",
+                               "model": "m", "prompt_hash": "h", "categories": [],
+                               "uploads": {}, "corpus_fingerprint": ""})
+        store.save_decision(conn, "ro_del", "gap-1", "tester", "accept", "", "")
+        assert len(store.get_decisions(conn, "ro_del")) == 1
+
+        assert store.delete_run(conn, "ro_del") is True
+        assert store.get_run(conn, "ro_del") is None
+        assert store.get_decisions(conn, "ro_del") == []
+    _with_store(check)
+
+
+def test_deleting_a_run_that_is_not_there_reports_it():
+    """False, not an exception and not a silent success: the endpoint turns
+    this into a 404 rather than telling the browser it removed something."""
+    def check(store, conn):
+        assert store.delete_run(conn, "ro_never_existed") is False
+    _with_store(check)
+
+
+def test_deleting_one_run_leaves_the_others():
+    def check(store, conn):
+        for i in range(3):
+            store.start_run(conn, {"id": f"ro_keep{i}", "subject": "country_as_is",
+                                   "scope_bpml": "4.5", "scope_label": f"run {i}", "country": "",
+                                   "country_context": "", "sap_release": "", "gt_version": "",
+                                   "question": "", "model": "m", "prompt_hash": "h",
+                                   "categories": [], "uploads": {}, "corpus_fingerprint": ""})
+        store.delete_run(conn, "ro_keep1")
+        left = {r["id"] for r in store.list_runs(conn)}
+        assert left == {"ro_keep0", "ro_keep2"}, left
+    _with_store(check)
+
+
 if __name__ == "__main__":
     fns = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]
     failed = 0

@@ -1029,6 +1029,35 @@ export default function RolloutPage({ active }: Props) {
     [sources],
   );
 
+  // Deleting takes two presses. The first arms the button for five seconds and
+  // then disarms itself, so a mis-click in a menu costs nothing; the second
+  // removes the analysis and, by ON DELETE CASCADE, the decisions recorded
+  // against it, which is why it is not a single click.
+  const [armed, setArmed] = useState<string | null>(null);
+  const disarm = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => () => { if (disarm.current) clearTimeout(disarm.current); }, []);
+
+  async function remove(id: string) {
+    if (armed !== id) {
+      setArmed(id);
+      if (disarm.current) clearTimeout(disarm.current);
+      disarm.current = setTimeout(() => setArmed(null), 5000);
+      return;
+    }
+    if (disarm.current) clearTimeout(disarm.current);
+    setArmed(null);
+    try {
+      await rollout.deleteRun(id);
+      // A deleted run must not be left on screen as though it were still there.
+      if (runId === id) { setRunId(null); setCalls([]); setAsis(null); setAnalysis(null);
+                          setScores(null); setGates(null); setSources(null); setDecisions([]); }
+      setHistory(await rollout.runs());
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
   async function loadRun(id: string) {
     try {
       const run = await rollout.run(id);
@@ -1171,8 +1200,8 @@ export default function RolloutPage({ active }: Props) {
           {history.length === 0 && <MenuItem disabled sx={{ fontSize: 12.5 }}>No runs yet</MenuItem>}
           {history.map((r) => (
             <MenuItem key={r.id} onClick={() => { setHistoryAnchor(null); void loadRun(r.id); }}
-                      sx={{ fontSize: 12.5 }}>
-              <Box>
+                      sx={{ fontSize: 12.5, gap: 1.5, pr: 1 }}>
+              <Box sx={{ flex: 1, minWidth: 0 }}>
                 <Typography sx={{ fontSize: 12.5, fontWeight: 600 }}>
                   {r.scope_label}{r.country ? ` · ${r.country}` : ""}
                 </Typography>
@@ -1182,6 +1211,22 @@ export default function RolloutPage({ active }: Props) {
                   {r.deviations ? ` · ${r.deviations} deviations` : ""}
                 </Typography>
               </Box>
+              {/* Two presses, not a confirm dialog: a menu that opens a modal
+                  over itself is worse than the accident it prevents, and an
+                  analysis carries decisions somebody recorded against it. The
+                  arming disarms itself, so a stray first click is harmless. */}
+              <Tooltip title={armed === r.id
+                ? "Press again to delete this analysis and any decisions recorded against it"
+                : "Delete this analysis"}>
+                <IconButton
+                  size="small" aria-label={armed === r.id ? "Confirm delete" : "Delete analysis"}
+                  onClick={(e) => { e.stopPropagation(); void remove(r.id); }}
+                  sx={{ color: armed === r.id ? "error.main" : "text.disabled",
+                        "&:hover": { color: "error.main" } }}
+                >
+                  <Trash2 size={13} />
+                </IconButton>
+              </Tooltip>
             </MenuItem>
           ))}
         </Menu>

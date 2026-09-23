@@ -275,6 +275,16 @@ def save_decision(conn, run_id: str, gap_id: str, reviewer: str, verdict: str,
             "decided_at": row[1].isoformat()}
 
 
+def delete_run(conn, run_id: str) -> bool:
+    """Remove one run. Its decisions go with it: rollout_decisions declares
+    ON DELETE CASCADE, so a verdict cannot outlive the analysis it was made
+    against and be reported against nothing."""
+    removed = conn.execute(
+        "DELETE FROM rollout_runs WHERE id = %s RETURNING id", (run_id,)).fetchall()
+    conn.commit()
+    return bool(removed)
+
+
 def get_decisions(conn, run_id: str) -> list[dict]:
     rows = conn.execute(
         "SELECT id, gap_id, reviewer, verdict, disposition, comment, decided_at"

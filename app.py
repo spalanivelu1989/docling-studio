@@ -2097,6 +2097,19 @@ def rollout_get_run(run_id: str) -> dict:
     return run
 
 
+@app.delete("/api/rollout/runs/{run_id}")
+def rollout_run_delete(run_id: str) -> dict:
+    """Remove one analysis. The same shape as the Evidence Agent's, because a
+    person who has learned one history panel should not have to learn another."""
+    from rollout import store as ro_store
+
+    conn = ro_store.connect()
+    ro_store.create_schema(conn)
+    if not ro_store.delete_run(conn, run_id):
+        raise HTTPException(404, f"No rollout analysis {run_id}")
+    return {"status": "deleted", "id": run_id}
+
+
 @app.post("/api/rollout/runs/{run_id}/decisions")
 def rollout_decide(run_id: str, body: "RolloutDecision") -> dict:
     """Record a human decision on one gap. The agent proposes; this is where a

@@ -1611,6 +1611,9 @@ export const rollout = {
     }).then((r) => json<RolloutPreview>(r)),
   runs: () => fetch("/api/rollout/runs").then((r) => json<RolloutRunSummary[]>(r)),
   run: (id: string) => fetch(`/api/rollout/runs/${id}`).then((r) => json<RolloutRunDetail>(r)),
+  deleteRun: (id: string) =>
+    fetch(`/api/rollout/runs/${encodeURIComponent(id)}`, { method: "DELETE" })
+      .then((r) => json<{ status: string; id: string }>(r)),
   exportUrl: (id: string, format: "md" | "json") => `/api/rollout/runs/${id}/export?format=${format}`,
   /** Where a cited document can be read. Corpus documents are resolved by
    *  file name; an attachment is served from its session, as the Markdown the
