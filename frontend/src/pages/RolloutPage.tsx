@@ -327,7 +327,7 @@ function Sources({
       {error && <Typography sx={{ fontSize: 12.5, color: "error.main", mt: 0.75 }}>{error}</Typography>}
 
       {files.length > 0 && !hasSubject && alternative && (
-        <Alert severity="info" sx={{ mt: 1, py: 0.5, fontSize: 12.5 }}
+        <Alert severity="info" sx={{ mt: 2, py: 0.85, fontSize: 12.5 }}
                action={<Button size="small" onClick={() => onSubject(alternative.value)}
                                sx={{ fontSize: 12 }}>Analyse {alternative.label}</Button>}>
           You have attached <b>{alternative.label}</b> content and nothing tagged{" "}
@@ -336,7 +336,7 @@ function Sources({
       )}
 
       {files.length > 0 && !hasSubject && !alternative && (
-        <Alert severity="warning" sx={{ mt: 1, py: 0.5, fontSize: 12.5 }}>
+        <Alert severity="warning" sx={{ mt: 2, py: 0.85, fontSize: 12.5 }}>
           <b>The {subject.label} document is missing.</b>{" "}
           {grouped.map((g) => g.label).join(" and ")}
           {grouped.length === 1 ? " is a baseline" : " are baselines"} to compare
@@ -1197,8 +1197,8 @@ export default function RolloutPage({ active }: Props) {
 
           <Divider sx={{ my: 2 }} />
 
-          <Stack direction={{ xs: "column", md: "row" }} spacing={1.5}
-                 sx={{ alignItems: { md: "center" }, mb: 1.5 }}>
+          <Stack direction={{ xs: "column", md: "row" }} spacing={2}
+                 sx={{ alignItems: { md: "flex-start" }, mb: 3 }}>
             <Select size="small" value={subjectKey} disabled={running}
                     onChange={(e) => { setSubjectKey(e.target.value); setSubjectTouched(true); }}
                     sx={{ fontSize: 12.5, minWidth: 210 }}>
@@ -1208,21 +1208,23 @@ export default function RolloutPage({ active }: Props) {
                 </MenuItem>
               ))}
             </Select>
-            <Typography sx={{ fontSize: 12.5, color: "text.secondary", flex: 1 }}>
+            <Typography sx={{ fontSize: 12.5, lineHeight: 1.6, color: "text.secondary",
+                               flex: 1, maxWidth: 620, pt: { md: 0.85 } }}>
               {subject.value === "country_as_is"
                 ? "How far the country's current process is from the Global Template, with"
                   + " localization as a lens."
                 : "How far the Global Template has drifted from SAP's delivered standard."
                   + " No country, no localization — the findings are about the template."}
               {!subjectTouched && inferredSubject === subject.value && (
-                <Box component="span" sx={{ display: "block", color: "text.disabled", mt: 0.25 }}>
+                <Box component="span" sx={{ display: "block", color: "text.disabled", mt: 0.75 }}>
                   Chosen from what you attached — change it here if that is not what you meant.
                 </Box>
               )}
             </Typography>
           </Stack>
 
-          <Stack direction={{ xs: "column", md: "row" }} spacing={1.5} sx={{ alignItems: { md: "center" } }}>
+          <Stack direction={{ xs: "column", md: "row" }} useFlexGap
+                 sx={{ alignItems: { md: "center" }, flexWrap: "wrap", gap: 2, rowGap: 2.5 }}>
             <TextField
               size="small" label="Global Template process (optional)"
               placeholder="A BPML code or name — leave empty to let the agent find it"
@@ -1245,7 +1247,7 @@ export default function RolloutPage({ active }: Props) {
                          onChange={(e) => setCountry(e.target.value)} placeholder="India" />
             )}
             {scope ? (
-              <Stack direction="row" spacing={1.25} sx={{ alignItems: "center", px: 1.25, py: 0.75,
+              <Stack direction="row" spacing={1.25} sx={{ alignItems: "center", px: 1.75, py: 1.15,
                         borderRadius: 2, bgcolor: alpha(theme.palette.primary.main, 0.08) }}>
                 <Target size={14} color={theme.palette.primary.main} />
                 <Typography sx={{ fontSize: 13, fontWeight: 700 }}>{scope.code} {scope.name}</Typography>
@@ -1253,7 +1255,7 @@ export default function RolloutPage({ active }: Props) {
             ) : !scopeText.trim() ? (
               // Said here rather than left blank: an empty required-looking
               // field reads as something forgotten, not as a choice.
-              <Stack direction="row" spacing={1.25} sx={{ alignItems: "center", px: 1.25, py: 0.75,
+              <Stack direction="row" spacing={1.25} sx={{ alignItems: "center", px: 1.75, py: 1.15,
                         borderRadius: 2, bgcolor: alpha(theme.palette.text.primary, 0.05) }}>
                 <CircleHelp size={14} color={theme.palette.text.secondary} />
                 <Typography sx={{ fontSize: 12.5, color: "text.secondary" }}>
@@ -1279,18 +1281,18 @@ export default function RolloutPage({ active }: Props) {
           </Stack>
 
           {matches.length > 1 && (
-            <Stack direction="row" useFlexGap sx={{ flexWrap: "wrap", gap: 0.75, mt: 1 }}>
+            <Stack direction="row" useFlexGap sx={{ flexWrap: "wrap", gap: 0.85, mt: 2 }}>
               {matches.slice(0, 6).map((m) => (
                 <Chip key={m.code} size="small" label={`${m.code} ${m.name}`}
                       variant={scope?.code === m.code ? "filled" : "outlined"}
                       onClick={() => { setScope(m); setScopeText(m.code); }}
-                      sx={{ fontSize: 11, height: 23, maxWidth: 320 }} />
+                      sx={{ fontSize: 11.5, height: 26, maxWidth: 320 }} />
               ))}
             </Stack>
           )}
 
           <Collapse in={showOptions}>
-            <Stack direction={{ xs: "column", md: "row" }} spacing={2} sx={{ mt: 2, pt: 2, borderTop: 1, borderColor: "divider" }}>
+            <Stack direction={{ xs: "column", md: "row" }} spacing={2.5} sx={{ mt: 3, pt: 3, borderTop: 1, borderColor: "divider" }}>
               <TextField size="small" label="Country context" value={countryContext} multiline minRows={2}
                          onChange={(e) => setCountryContext(e.target.value)} sx={{ flex: "2 1 320px" }}
                          placeholder="Company codes, sales/purchasing organisations, legal entities, shared-service model, tax context" />
@@ -1309,7 +1311,7 @@ export default function RolloutPage({ active }: Props) {
           </Collapse>
 
           {plan && !plan.ready && (
-            <Alert severity="info" sx={{ mt: 1.5, py: 0.25, fontSize: 12.5 }}>{plan.blocker}</Alert>
+            <Alert severity="info" sx={{ mt: 2.5, py: 0.85, fontSize: 12.5 }}>{plan.blocker}</Alert>
           )}
           {plan?.ready && !running && !analysis && (
             <Typography sx={{ fontSize: 12.5, color: "text.secondary", mt: 1.5 }}>
@@ -1405,13 +1407,13 @@ export default function RolloutPage({ active }: Props) {
             </SectionLabel>
 
             {!scope && analysis?.template_process && (
-              <Alert severity="info" icon={<Target size={15} />} sx={{ mb: 1.5, py: 0.25, fontSize: 12.5 }}>
+              <Alert severity="info" icon={<Target size={15} />} sx={{ mb: 2.5, py: 0.85, fontSize: 12.5 }}>
                 No Global Template process was named, so the agent compared the {subject.label} against{" "}
                 <b>{analysis.template_process}</b>.
               </Alert>
             )}
 
-            <Stack direction="row" useFlexGap sx={{ flexWrap: "wrap", gap: 1.25 }}>
+            <Stack direction="row" useFlexGap sx={{ flexWrap: "wrap", gap: 2 }}>
               <ScoreTile label="Global Template" value={scores.gt_alignment} band={scores.gt_band} />
               <ScoreTile label="SAP Best Practice" value={scores.sap_bp_alignment} band={scores.sap_bp_band}
                          hint={scores.sap_bp_note || "No SAP Best Practice source"}
@@ -1428,12 +1430,12 @@ export default function RolloutPage({ active }: Props) {
             </Stack>
 
             {scores.pattern && (
-              <Alert severity="info" icon={<CircleHelp size={15} />} sx={{ mt: 1.5, py: 0.25, fontSize: 12.5 }}>
+              <Alert severity="info" icon={<CircleHelp size={15} />} sx={{ mt: 2.5, py: 0.85, fontSize: 12.5 }}>
                 {scores.pattern}
               </Alert>
             )}
 
-            <Stack direction="row" spacing={1.5} sx={{ mt: 1.5, alignItems: "center", flexWrap: "wrap", gap: 1 }}>
+            <Stack direction="row" spacing={1.5} sx={{ mt: 2.5, alignItems: "center", flexWrap: "wrap", gap: 1.25 }}>
               <Chip size="small" color="error" label={`${counts?.workshop?.MUST_DISCUSS ?? 0} decisions`}
                     sx={{ height: 24, fontSize: 12.5, fontWeight: 700 }} />
               <Chip size="small" color="warning" label={`${counts?.workshop?.CONFIRM ?? 0} to confirm`}
@@ -1445,11 +1447,12 @@ export default function RolloutPage({ active }: Props) {
               </Typography>
             </Stack>
 
-            <Typography sx={{ fontSize: 10.5, color: "text.secondary", mt: 1.25, fontStyle: "italic" }}>
+            <Typography sx={{ fontSize: 11, color: "text.secondary", mt: 2.5, fontStyle: "italic" }}>
               {scores.formula}
             </Typography>
             {analysis?.headline && (
-              <Typography sx={{ fontSize: 13, mt: 1.25 }}>{analysis.headline}</Typography>
+              <Typography sx={{ fontSize: 14, lineHeight: 1.6, mt: 2.5, pt: 2.5,
+                               borderTop: 1, borderColor: "divider" }}>{analysis.headline}</Typography>
             )}
           </Paper>
         )}
