@@ -1,4 +1,4 @@
-"""The knowledge graph build must be a pure function of the corpus.
+"""The knowledge graph build must be a pure function of ALL of its inputs.
 
 Run: python test_graph_determinism.py
 
@@ -88,6 +88,105 @@ def test_the_cached_graph_matches_a_fresh_build():
         "the cached graph holds the same nodes and edges in a different order, "
         "so every rebuild rewrites the file for no reason"
     )
+
+
+
+# --- every input is fingerprinted ----------------------------------------------
+#
+# "Pure function of the corpus" is not enough, because the corpus is not the
+# only input. The BPML workbook is read directly -- its Markdown conversion is
+# a stub saying "9096 rows x 50 columns; too wide to render as a table" -- so
+# it never appears in collect_files(). While the fingerprint covered only those
+# files you could correct the process hierarchy, rebuild, and be served the
+# graph built from the version you had just replaced, with no error anywhere.
+
+
+def _workbook_copy(tmp: Path):
+    """The builder pointed at a disposable copy of the workbook.
+
+    The real one is never written to: it is 2.1 MB of somebody's source data,
+    and a test that edits it is one interrupted run away from corrupting it."""
+    import shutil
+    import knowledge_graph as kg
+
+    shutil.copy(kg.BPML_XLSX, tmp)
+    original = kg.BPML_XLSX
+    kg.BPML_XLSX = tmp
+    kg._bpml_cache = kg._bpml_cache_key = None
+    return kg, original
+
+
+def _append_process(path: Path, label: str) -> None:
+    import openpyxl
+
+    wb = openpyxl.load_workbook(path)
+    ws = wb.worksheets[0]
+    row = [None] * 50
+    row[2] = label
+    row[48] = f"Value Chain > {label}"
+    ws.append(row)
+    wb.save(path)
+    wb.close()
+
+
+def test_editing_the_bpml_workbook_changes_the_fingerprint():
+    tmp = Path("/tmp/kg_fingerprint_test.xlsx")
+    kg, original = _workbook_copy(tmp)
+    try:
+        files = kg.collect_files()
+        before = kg._sources_fingerprint(files)
+        _append_process(tmp, "9.9 Added By A Test")
+        after = kg._sources_fingerprint(files)
+        assert before != after, (
+            "the workbook changed and the fingerprint did not, so a cached graph "
+            "built from the old hierarchy is served as though it were current"
+        )
+    finally:
+        kg.BPML_XLSX = original
+        kg._bpml_cache = kg._bpml_cache_key = None
+        tmp.unlink(missing_ok=True)
+
+
+def test_a_live_process_reloads_the_hierarchy_when_the_workbook_changes():
+    """The nastier half: force=True could not fix it.
+
+    load_bpml_hierarchy cached into a module global and never looked at its
+    source again, so a server running for days rebuilt every node from a
+    hierarchy read before the workbook was corrected."""
+    tmp = Path("/tmp/kg_cache_test.xlsx")
+    kg, original = _workbook_copy(tmp)
+    try:
+        before = kg.load_bpml_hierarchy()["name"]
+        assert "9.9" not in before, "the fixture code is already in the workbook"
+        _append_process(tmp, "9.9 Added By A Test")
+        after = kg.load_bpml_hierarchy()["name"]
+        assert "9.9" in after, (
+            "the hierarchy is still the one loaded before the workbook changed; "
+            "the module cache is not keyed on its source"
+        )
+        assert len(after) == len(before) + 1
+    finally:
+        kg.BPML_XLSX = original
+        kg._bpml_cache = kg._bpml_cache_key = None
+        tmp.unlink(missing_ok=True)
+
+
+def test_a_missing_workbook_is_a_different_fingerprint_from_a_present_one():
+    """Absent is a state too. Losing the workbook degrades the graph -- every
+    process loses its parent chain -- and that must not be served from a cache
+    built when it was there."""
+    tmp = Path("/tmp/kg_missing_test.xlsx")
+    kg, original = _workbook_copy(tmp)
+    try:
+        files = kg.collect_files()
+        present = kg._sources_fingerprint(files)
+        tmp.unlink()
+        absent = kg._sources_fingerprint(files)
+        assert present != absent
+    finally:
+        kg.BPML_XLSX = original
+        kg._bpml_cache = kg._bpml_cache_key = None
+        tmp.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

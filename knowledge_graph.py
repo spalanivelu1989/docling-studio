@@ -60,12 +60,38 @@ def source_folders() -> list[tuple[Path, str]]:
     return sorted(found.items(), key=lambda pair: (pair[1], str(pair[0])))
 
 
+def _content_signature(path: Path) -> str:
+    """sha256 of a file the graph reads from outside the corpus.
+
+    Content rather than size and mtime: `git checkout` and `cp` move mtime
+    without changing anything, and a rebuild of this graph is several seconds,
+    so a false positive is not free either. Measured at 0.7 ms for the 2.1 MB
+    workbook, against a cache-hit path that already parses 1.5 MB of JSON."""
+    import hashlib
+
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return ""  # absent is a state too, and a different one from present
+
+
 def _sources_fingerprint(files: list[tuple[Path, str, str]]) -> str:
-    """Identifies the set of files the graph was built from, so a cache built
-    before a category existed is rebuilt rather than served."""
+    """Identifies everything the graph was built from, so a cache built before
+    any of it changed is rebuilt rather than served.
+
+    Every input, not only the Markdown. The BPML workbook is read directly --
+    its own Markdown conversion is a stub saying "9096 rows x 50 columns; too
+    wide to render as a table" -- so it never appears in `files`, and while the
+    fingerprint covered only `files` you could correct the process hierarchy,
+    rebuild, and be served the graph built from the version you had just
+    replaced. Nothing reported an error; the hierarchy was simply the old one.
+
+    The L1-L4 register needs no special case: it lives in pkg/markdown and is
+    already one of the corpus files."""
     import hashlib
 
     parts = sorted(f"{rel}:{cat}:{path.stat().st_size}" for path, rel, cat in files)
+    parts.append(f"bpml:{_content_signature(BPML_XLSX)}")
     return hashlib.sha256("\n".join(parts).encode()).hexdigest()
 
 
@@ -317,7 +343,13 @@ STREAM_RE = {sid: re.compile(r"\b" + sid + r"\b", re.I) for sid in STREAMS}
 BPML_XLSX = BASE_DIR / "solvay-spark" / "pkg" / "BPML_ProcessesHierarchyExtended.xlsx"
 _BPML_NUM_RE = re.compile(r"^\s*(\d+(?:\.\d+)*)\s+(.*)$")
 _BPML_CODE_RE = re.compile(r"^\s*([A-Za-z][A-Za-z0-9]{0,3}-\d{2,3}(?:-\d{2,3})*)\s+(.*)$")
+# Keyed on the workbook's contents, not merely set once. A module-level cache
+# that never checks its source is stale for the life of the process: the server
+# runs for days, and `extract_graph(force=True)` rebuilt every node from a
+# hierarchy loaded before the workbook was corrected. force=True could not fix
+# it, which is what made it worth finding.
 _bpml_cache: dict[str, Any] | None = None
+_bpml_cache_key: str | None = None
 
 
 def load_bpml_hierarchy() -> dict[str, Any]:
@@ -329,8 +361,9 @@ def load_bpml_hierarchy() -> dict[str, Any]:
     itself a process takes its parent from the last numbered segment of its Root Path.
     Returns {"parent": {code: parent_code}, "name": {code: label}}.
     """
-    global _bpml_cache
-    if _bpml_cache is not None:
+    global _bpml_cache, _bpml_cache_key
+    key = _content_signature(BPML_XLSX)
+    if _bpml_cache is not None and _bpml_cache_key == key:
         return _bpml_cache
 
     parent: dict[str, str] = {}
@@ -384,6 +417,7 @@ def load_bpml_hierarchy() -> dict[str, Any]:
         logger.warning("Could not read BPML hierarchy from %s: %s", BPML_XLSX, e)
 
     _bpml_cache = {"parent": parent, "name": name}
+    _bpml_cache_key = key
     logger.info("BPML hierarchy: %d codes, %d with a parent", len(name), len(parent))
     return _bpml_cache
 
@@ -409,6 +443,7 @@ _REGISTER_ROW_RE = re.compile(
 _REGISTER_KEY_RE = re.compile(r"\|\s*(SPARK-\d+)\s*\|")
 REGISTER_VALUE_CHAIN = "lead to cash"
 _register_cache: dict[str, Any] | None = None
+_register_cache_key: str | None = None
 
 
 def load_process_register() -> dict[str, Any]:
@@ -419,8 +454,9 @@ def load_process_register() -> dict[str, Any]:
     `steps`, the Lead-to-Cash L4 activities only, since that is the design this
     graph covers. Each step carries its name and its `jira_key`.
     """
-    global _register_cache
-    if _register_cache is not None:
+    global _register_cache, _register_cache_key
+    key = _content_signature(REGISTER_MD)
+    if _register_cache is not None and _register_cache_key == key:
         return _register_cache
 
     keys: set[str] = set()
@@ -439,6 +475,7 @@ def load_process_register() -> dict[str, Any]:
         logger.warning("Could not read the process register at %s: %s", REGISTER_MD, e)
 
     _register_cache = {"keys": keys, "steps": steps}
+    _register_cache_key = key
     logger.info("Process register: %d keys, %d Lead-to-Cash steps", len(keys), len(steps))
     return _register_cache
 
