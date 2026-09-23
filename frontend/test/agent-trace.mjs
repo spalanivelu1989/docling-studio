@@ -77,6 +77,47 @@ for (const [agent, page] of Object.entries(pages)) {
   );
 }
 
+// --- the log has to outlive the run ------------------------------------------
+//
+// Rollout's log lived inside its Progress panel, which renders only while
+// `!analysis`. So the log vanished at the exact moment the run finished, and a
+// run reopened from history -- which always has an analysis -- never showed one
+// at all. Every trace was built, stored and streamed correctly, and none of it
+// was reachable. Nothing errors in that state; the panel is simply not there.
+
+{
+  const src = pages.Rollout;
+  // The log block, wherever it now lives.
+  const logAt = src.indexOf("{calls.map((c, i) => (");
+  check("Rollout renders a call log at all", logAt > 0, "the log block is gone");
+
+  if (logAt > 0) {
+    // Walk back to the nearest enclosing render guard and make sure it is not
+    // one that hides itself once the run has produced something.
+    const before = src.slice(0, logAt);
+    const guard = before.lastIndexOf("{(running || stages.length > 0) && !analysis && (");
+    const closed = guard > 0 && before.indexOf("</Paper>", guard) > 0;
+    check(
+      "the log is not inside a panel that hides once the analysis arrives",
+      guard < 0 || closed,
+      "the call log sits under `!analysis`, so it disappears the moment the run finishes",
+    );
+
+    check(
+      "a finished run still shows the log",
+      /\{\(calls\.length > 0 \|\| running \|\| \(runId && !running\)\) && \(/.test(src),
+      "the log panel's guard no longer covers a reopened run",
+    );
+
+    check(
+      "a run with no log says why",
+      /recorded before the log kept what each call returned/.test(src) &&
+        /calls\.length === 0 && !running/.test(src),
+      "a run stored before the log existed renders nothing at all, which reads as a missing feature",
+    );
+  }
+}
+
 const page = pages.Evidence;
 
 // --- the cross-link to the answer ---------------------------------------------

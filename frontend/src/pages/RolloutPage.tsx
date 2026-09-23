@@ -1369,85 +1369,109 @@ export default function RolloutPage({ active }: Props) {
                 );
               })}
             </Stack>
-            {(calls.length > 0 || running) && (
-              <Box ref={logRef}
-                   sx={{ mt: 1.5, maxHeight: 220, overflowY: "auto", p: 1, borderRadius: 1.5,
-                         bgcolor: alpha(theme.palette.text.primary, 0.035) }}>
-                {calls.some((c) => c.trace) ? (
-                  <Typography sx={{ fontSize: 10.5, color: "text.disabled", mb: 0.75 }}>
-                    Click a call to see what it returned.
+          </Paper>
+        )}
+
+        {/* --------------------------------------------------- the investigation */}
+        {/* Its own panel, not a corner of Progress. Progress renders only while
+            there is no analysis yet, so the log used to vanish at the exact
+            moment the run finished -- and a run reopened from history, which
+            always has an analysis, never showed one at all. The log is the
+            working behind the answer; it outlives the run that produced it. */}
+        {(calls.length > 0 || running || (runId && !running)) && (
+          <Paper sx={{ p: 2.75, mb: 3 }}>
+            <SectionLabel icon={<ListChecks size={14} />}
+              right={calls.length ? (
+                <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
+                  {calls.length} call{calls.length === 1 ? "" : "s"}
+                </Typography>
+              ) : undefined}>
+              Investigation
+            </SectionLabel>
+            {calls.length === 0 && !running ? (
+              <Typography sx={{ fontSize: 12.5, color: "text.secondary" }}>
+                This run was recorded before the log kept what each call returned.
+                Run the analysis again to get a log you can open.
+              </Typography>
+            ) : (
+            <Box ref={logRef}
+                 sx={{ mt: 1.5, maxHeight: 220, overflowY: "auto", p: 1, borderRadius: 1.5,
+                       bgcolor: alpha(theme.palette.text.primary, 0.035) }}>
+              {calls.some((c) => c.trace) ? (
+                <Typography sx={{ fontSize: 10.5, color: "text.disabled", mb: 0.75 }}>
+                  Click a call to see what it returned.
+                </Typography>
+              ) : !running && calls.length > 0 ? (
+                <Typography sx={{ fontSize: 10.5, color: "text.disabled", mb: 0.75 }}>
+                  This run was recorded before the log kept what each call returned.
+                </Typography>
+              ) : null}
+              {calls.map((c, i) => (
+                <Stack key={i} direction="row" spacing={1}
+                       onClick={c.trace ? () => setTraceCall(c) : undefined}
+                       role={c.trace ? "button" : undefined}
+                       tabIndex={c.trace ? 0 : undefined}
+                       onKeyDown={c.trace ? (e) => {
+                         if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setTraceCall(c); }
+                       } : undefined}
+                       sx={{ alignItems: "baseline", fontFamily: "monospace",
+                             // Only a call that kept a trace opens anything. A
+                             // failed one stays a log line rather than a button
+                             // that opens an apology.
+                             cursor: c.trace ? "pointer" : "default",
+                             borderRadius: 0.75, px: 0.5, mx: -0.5, py: 0.15,
+                             transition: "background-color .12s",
+                             "&:hover": c.trace
+                               ? { bgcolor: alpha(theme.palette.text.primary, 0.06) }
+                               : undefined,
+                             "&:focus-visible": {
+                               outline: `2px solid ${theme.palette.primary.main}`,
+                               outlineOffset: 1,
+                             } }}>
+                  <Typography component="span" sx={{ fontSize: 10.5, color: "text.disabled",
+                                                     minWidth: 22, textAlign: "right" }}>
+                    {i + 1}
                   </Typography>
-                ) : !running && calls.length > 0 ? (
-                  <Typography sx={{ fontSize: 10.5, color: "text.disabled", mb: 0.75 }}>
-                    This run was recorded before the log kept what each call returned.
+                  <Typography component="span"
+                              sx={{ fontSize: 10.5, minWidth: 62,
+                                    color: ENGINE_COLOUR[c.engine] ?? "primary.main",
+                                    textDecoration: c.trace ? "underline" : "none",
+                                    textDecorationStyle: "dotted",
+                                    textUnderlineOffset: 3 }}>
+                    {c.tool}
                   </Typography>
-                ) : null}
-                {calls.map((c, i) => (
-                  <Stack key={i} direction="row" spacing={1}
-                         onClick={c.trace ? () => setTraceCall(c) : undefined}
-                         role={c.trace ? "button" : undefined}
-                         tabIndex={c.trace ? 0 : undefined}
-                         onKeyDown={c.trace ? (e) => {
-                           if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setTraceCall(c); }
-                         } : undefined}
-                         sx={{ alignItems: "baseline", fontFamily: "monospace",
-                               // Only a call that kept a trace opens anything. A
-                               // failed one stays a log line rather than a button
-                               // that opens an apology.
-                               cursor: c.trace ? "pointer" : "default",
-                               borderRadius: 0.75, px: 0.5, mx: -0.5, py: 0.15,
-                               transition: "background-color .12s",
-                               "&:hover": c.trace
-                                 ? { bgcolor: alpha(theme.palette.text.primary, 0.06) }
-                                 : undefined,
-                               "&:focus-visible": {
-                                 outline: `2px solid ${theme.palette.primary.main}`,
-                                 outlineOffset: 1,
-                               } }}>
-                    <Typography component="span" sx={{ fontSize: 10.5, color: "text.disabled",
-                                                       minWidth: 22, textAlign: "right" }}>
-                      {i + 1}
-                    </Typography>
-                    <Typography component="span"
-                                sx={{ fontSize: 10.5, minWidth: 62,
-                                      color: ENGINE_COLOUR[c.engine] ?? "primary.main",
-                                      textDecoration: c.trace ? "underline" : "none",
-                                      textDecorationStyle: "dotted",
-                                      textUnderlineOffset: 3 }}>
-                      {c.tool}
-                    </Typography>
-                    <Typography component="span"
-                                sx={{ fontSize: 12, flex: 1,
-                                      color: c.error ? "error.main" : "text.secondary",
-                                      wordBreak: "break-word" }}>
-                      {c.summary || c.error}
-                      {/* Which store the call read. The corpus is one table
-                          with a category per row and the attachment is in a
-                          database of its own, so "searched" without saying
-                          where is not an answer. */}
-                      {c.sources?.label ? (
-                        <Box component="span" sx={{ color: "text.disabled" }}>
-                          {"  ·  "}{String(c.sources.label)}
-                        </Box>
-                      ) : null}
-                    </Typography>
-                    <Typography component="span" sx={{ fontSize: 10.5, color: "text.disabled" }}>
-                      {c.ms}ms
-                    </Typography>
-                  </Stack>
-                ))}
-                {running && (
-                  // Between tool calls the agent is generating, which is most
-                  // of the wall clock. A log that goes quiet for a minute with
-                  // no line saying why reads as a hang.
-                  <Stack direction="row" spacing={1} sx={{ alignItems: "center", mt: calls.length ? 0.5 : 0 }}>
-                    <CircularProgress size={9} />
-                    <Typography sx={{ fontSize: 12, color: "text.disabled", fontStyle: "italic" }}>
-                      {runningStage === "gates" ? "checking the analysis…" : "the agent is thinking…"}
-                    </Typography>
-                  </Stack>
-                )}
-              </Box>
+                  <Typography component="span"
+                              sx={{ fontSize: 12, flex: 1,
+                                    color: c.error ? "error.main" : "text.secondary",
+                                    wordBreak: "break-word" }}>
+                    {c.summary || c.error}
+                    {/* Which store the call read. The corpus is one table
+                        with a category per row and the attachment is in a
+                        database of its own, so "searched" without saying
+                        where is not an answer. */}
+                    {c.sources?.label ? (
+                      <Box component="span" sx={{ color: "text.disabled" }}>
+                        {"  ·  "}{String(c.sources.label)}
+                      </Box>
+                    ) : null}
+                  </Typography>
+                  <Typography component="span" sx={{ fontSize: 10.5, color: "text.disabled" }}>
+                    {c.ms}ms
+                  </Typography>
+                </Stack>
+              ))}
+              {running && (
+                // Between tool calls the agent is generating, which is most
+                // of the wall clock. A log that goes quiet for a minute with
+                // no line saying why reads as a hang.
+                <Stack direction="row" spacing={1} sx={{ alignItems: "center", mt: calls.length ? 0.5 : 0 }}>
+                  <CircularProgress size={9} />
+                  <Typography sx={{ fontSize: 12, color: "text.disabled", fontStyle: "italic" }}>
+                    {runningStage === "gates" ? "checking the analysis…" : "the agent is thinking…"}
+                  </Typography>
+                </Stack>
+              )}
+        </Box>
             )}
           </Paper>
         )}
