@@ -81,16 +81,59 @@ The venv is disposable; the memories are not. They live in embedded Postgres
 under `~/.pg0/instances/hindsight/`, which is nothing to do with where you put
 the venv, so rebuilding the environment does not lose the bank.
 
-Then start it. This configuration keeps **everything on the machine** — Ollama
-for the language model, in-process embeddings, embedded Postgres:
+Then start it with `./hindsight.sh` from the repository root. That script holds
+the configuration and reads `ANTHROPIC_API_KEY` from `.env`.
+
+## Which model, and why it matters more than it looks
+
+One model does everything: it reads each investigation note, extracts facts,
+consolidates them into observations, and answers `reflect()`. There is no
+separate summarisation model. It decides two things:
+
+* **Cost.** Every retain is an LLM call, and consolidation re-reads facts as
+  the bank grows. A full investigation note is around 3 KB.
+* **Where the findings go.** That note holds what an investigation concluded
+  about Solvay programme documents. `anthropic` or `openai` sends it off this
+  machine; `ollama` does not.
+
+**Always set the model.** The provider defaults are `claude-haiku-4-5` for
+anthropic and `gemma3:12b` for ollama, and a model that is not there fails
+every write *silently* — retain is asynchronous, so the API accepts it, the
+agent moves on, and nothing is ever learned. That is exactly what happened
+here: a server started with only `HINDSIGHT_API_LLM_PROVIDER=ollama` defaulted
+to a `gemma3:12b` that was never pulled, and one investigation's conclusions
+were lost before anyone noticed.
+
+### Claude has to go through LiteLLM
+
+`hindsight.sh` reaches Claude with `HINDSIGHT_API_LLM_PROVIDER=litellm` and
+`HINDSIGHT_API_LLM_MODEL=anthropic/claude-opus-5`. The two more obvious routes
+are both dead ends, and both fail in ways worth recognising:
+
+| Route | What happens |
+| --- | --- |
+| `HINDSIGHT_API_LLM_PROVIDER=anthropic` | `TypeError: Invalid timeout argument; httpx.Timeout is from the httpx package, but this SDK uses httpx2`. Hindsight builds an `httpx.Timeout`; every `anthropic` 1.x release is on httpx2, so there is no version to pin back to. |
+| `openai` provider against `https://api.anthropic.com/v1/` | Chat works. Fact extraction asks for `response_format {"type": "json_object"}` and the endpoint answers **400 — "Input should be 'json_schema'"**. |
+
+LiteLLM speaks Anthropic's native API and translates the request Hindsight
+actually sends. Verified end to end: a probe extracted in 10 seconds.
+
+### Staying local instead
+
+```bash
+HINDSIGHT_MODEL=qwen3.5 ./hindsight.sh   # won't work — that is a litellm name
+```
+
+For Ollama, edit the three `HINDSIGHT_API_LLM_*` lines in `hindsight.sh`:
 
 ```bash
 export HINDSIGHT_API_LLM_PROVIDER=ollama
 export HINDSIGHT_API_LLM_BASE_URL=http://localhost:11434/v1
-export HINDSIGHT_API_LLM_MODEL=qwen3.5
-export HINDSIGHT_API_EMBEDDINGS_PROVIDER=local
-hindsight-venv/bin/hindsight-api --host 127.0.0.1 --port 8888
+export HINDSIGHT_API_LLM_MODEL=qwen3.5      # must be pulled: ollama pull qwen3.5
 ```
+
+Slower — minutes rather than seconds for a full note — and the facts it
+extracts are blunter. Nothing leaves the machine.
 
 Check it:
 
@@ -104,15 +147,6 @@ curl -s http://127.0.0.1:8888/version
 
 That is all the setup there is. Restart the app and the memory toggle on the
 Evidence page becomes available.
-
-> **The LLM provider decides where your documents go.** The retained note holds
-> what an investigation concluded about Solvay programme documents, and the
-> memory server sends it to whatever model is configured to extract facts from
-> it. `ollama` keeps that on this machine. Point it at OpenAI, Anthropic or
-> Hindsight Cloud and the findings leave it. That is a decision about client
-> material, not a performance setting.
-
----
 
 ## Using it
 
@@ -161,7 +195,7 @@ did before any of this existed.
 | Toggle greyed, "HINDSIGHT_URL is empty" | Memory is switched off on purpose. |
 | Toggle greyed under holdout | Working as intended — see the table at the top. |
 | Panel says "Nothing was remembered about this question" | The bank has nothing relevant yet. The first run on a topic always says this. |
-| Bank count does not move after a run | Extraction is still running. Minutes, on Ollama. |
+| Bank count does not move after a run | Extraction is still running (seconds on Claude, minutes on Ollama) — or it failed. Check: `list_operations` on the bank returns each one's `error_message`, and a wrong model name shows up there and nowhere else. |
 | `cannot bind 127.0.0.1:8888: [Errno 48] Address already in use` | A Hindsight server is already running. `lsof -nP -iTCP:8888 -sTCP:LISTEN` says which process; it may well be one you want, since they all share the same bank. Stop it, or start this one on another port with `--port` and set `HINDSIGHT_URL` to match. |
 | `Unclosed client session` on shutdown | The app did not call `memory.close()`. It does, from the lifespan. |
 
