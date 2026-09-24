@@ -2051,11 +2051,12 @@ def rollout_status() -> dict:
     """What the Rollout Agent can see before the first run: the BPML sheet it
     reads the Global Template from, the corpus categories, the model, and what
     an analyst may attach."""
-    from rollout import agent as ro_agent, store as ro_store
+    from rollout import agent as ro_agent, pdf as ro_pdf, store as ro_store
     from rollout.schemas import (DEVIATION_TYPES, DISPOSITIONS, DIMENSIONS, SUBJECTS,
                                  LOCALIZATION_STATES, RATING_MEANING)
     from fitgap import bpml as fg_bpml
 
+    _pdf_ok, _pdf_why = ro_pdf.available()
     fg_uploads = _uploads()
     info: dict = {
         "bpml": fg_bpml.stats(),
@@ -2065,6 +2066,10 @@ def rollout_status() -> dict:
         "anthropic_key": bool(os.environ.get("ANTHROPIC_API_KEY")),
         "runs": 0,
         "decisions": 0,
+        # Whether this machine can render the pack as a PDF. Probed here so
+        # the page offers the format it can actually produce, rather than a
+        # button that fails at the download.
+        "pdf": {"available": _pdf_ok, "detail": _pdf_why},
         "error": None,
         # The controlled vocabularies, so the page renders the same labels the
         # validator enforces instead of a second copy that can drift.
@@ -2195,7 +2200,11 @@ def rollout_decide(run_id: str, body: "RolloutDecision") -> dict:
 
 @app.get("/api/rollout/runs/{run_id}/export")
 def rollout_export(run_id: str, format: str = "md"):
-    """The analysis as Markdown or JSON, for a workshop pack."""
+    """The analysis as a workshop pack: PDF, Markdown or JSON.
+
+    All three are the same document. The PDF is rendered from the Markdown
+    rather than from the run, so a section added to one cannot go missing from
+    the other."""
     from rollout import store as ro_store
     from rollout.export import to_markdown
 
@@ -2204,6 +2213,24 @@ def rollout_export(run_id: str, format: str = "md"):
     run = ro_store.get_run(conn, run_id)
     if not run:
         raise HTTPException(404, "Run not found")
+    if format == "pdf":
+        from rollout import pdf as ro_pdf
+
+        ok, why = ro_pdf.available()
+        if not ok:
+            # 503 rather than 500: the analysis is fine and every other format
+            # still works. The message says what to install.
+            raise HTTPException(503, f"This server cannot render PDFs. {why}")
+        try:
+            blob = ro_pdf.render(run, to_markdown(run))
+        except Exception as exc:
+            raise HTTPException(500, f"PDF rendering failed: {type(exc).__name__}: {exc}") from None
+        return Response(
+            content=blob,
+            media_type="application/pdf",
+            headers={"Content-Disposition":
+                     f'attachment; filename="{ro_pdf.filename(run)}"'},
+        )
     if format == "json":
         return StreamingResponse(
             iter([json.dumps(run, indent=2, default=str)]),

@@ -6,7 +6,7 @@ import {
 import { alpha, useTheme } from "@mui/material/styles";
 import { AnimatePresence, motion } from "framer-motion";
 import {
-  AlertTriangle, CheckCircle2, ChevronDown, CircleHelp, Download, FileText, Gavel, Globe2,
+  AlertTriangle, CheckCircle2, ChevronDown, CircleHelp, Download, FileDown, FileText, Gavel, Globe2,
   History, Layers, ListChecks, Paperclip, Scale, Search, ShieldCheck, Sparkles, Square,
   Target, Trash2, Upload, X,
 } from "lucide-react";
@@ -810,6 +810,10 @@ export default function RolloutPage({ active }: Props) {
   const theme = useTheme();
   const semantic = useSemantic();
   const [status, setStatus] = useState<RolloutStatus | null>(null);
+  // Older servers report no `pdf` block at all. Treat that as "yes" rather
+  // than hiding the button: the endpoint answers with its own 503 and the
+  // reason, which is better than a button that quietly is not there.
+  const pdfReady = status?.pdf?.available !== false;
 
   const [subjectKey, setSubjectKey] = useState("country_as_is");
   // Whether the analyst has chosen the subject themselves. Until they do it
@@ -1178,10 +1182,24 @@ export default function RolloutPage({ active }: Props) {
           </Button>
           {runId && analysis && (
             <>
-              <Button size="small" variant="outlined" startIcon={<Download size={14} />}
-                      href={rollout.exportUrl(runId, "md")} sx={{ fontSize: 12.5 }}>
-                Workshop pack
-              </Button>
+              <Tooltip title={pdfReady
+                ? "The whole analysis as a PDF — every section, every table, ready to print or send"
+                : `This server cannot render PDFs. ${status?.pdf?.detail ?? ""}`}>
+                <span>
+                  <Button size="small" variant="contained" disabled={!pdfReady}
+                          startIcon={<FileDown size={14} />}
+                          href={pdfReady ? rollout.exportUrl(runId, "pdf") : undefined}
+                          sx={{ fontSize: 12.5 }}>
+                    PDF
+                  </Button>
+                </span>
+              </Tooltip>
+              <Tooltip title="The same pack as Markdown, to paste into a wiki or Cloud ALM">
+                <Button size="small" variant="outlined" startIcon={<Download size={14} />}
+                        href={rollout.exportUrl(runId, "md")} sx={{ fontSize: 12.5 }}>
+                  Markdown
+                </Button>
+              </Tooltip>
               <Button size="small" variant="text" href={rollout.exportUrl(runId, "json")}
                       sx={{ fontSize: 12.5 }}>JSON</Button>
             </>

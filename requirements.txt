@@ -31,3 +31,11 @@ opentelemetry-instrumentation-threading
 # in its own environment. docs/agent-memory.md has the commands. With no server
 # running, memory reports itself unavailable and every agent works as before.
 hindsight-client
+
+# rollout/pdf.py: the Fit-to-Standard workshop pack as a PDF. HTML/CSS to PDF,
+# because the pack is mostly tables and WeasyPrint lays out real CSS tables
+# with repeating headers and sane page breaks. It needs pango, cairo and
+# gdk-pixbuf from the system (`brew install pango cairo gdk-pixbuf`); without
+# them the import fails, the page says so and offers Markdown instead. The
+# Markdown-to-HTML step uses markdown-it-py, already present via docling.
+weasyprint

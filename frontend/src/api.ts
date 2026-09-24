@@ -1533,6 +1533,10 @@ export interface RolloutGates {
 }
 
 export interface RolloutStatus {
+  /** Whether this server can render the workshop pack as a PDF. WeasyPrint
+   *  needs pango, cairo and gdk-pixbuf; when they are missing `detail` says
+   *  so and the page offers Markdown instead of a button that fails. */
+  pdf?: { available: boolean; detail: string };
   bpml: FitGapStatus["bpml"];
   model: string; prompt_hash: string;
   max_tool_calls: Record<string, number>;
@@ -1698,7 +1702,8 @@ export const rollout = {
   deleteRun: (id: string) =>
     fetch(`/api/rollout/runs/${encodeURIComponent(id)}`, { method: "DELETE" })
       .then((r) => json<{ status: string; id: string }>(r)),
-  exportUrl: (id: string, format: "md" | "json") => `/api/rollout/runs/${id}/export?format=${format}`,
+  exportUrl: (id: string, format: "md" | "json" | "pdf") =>
+    `/api/rollout/runs/${id}/export?format=${format}`,
   /** Where a cited document can be read. Corpus documents are resolved by
    *  file name; an attachment is served from its session, as the Markdown the
    *  agent actually read. */

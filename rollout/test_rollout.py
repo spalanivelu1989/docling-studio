@@ -828,6 +828,113 @@ def test_deleting_one_run_leaves_the_others():
     _with_store(check)
 
 
+# --- the PDF pack ---------------------------------------------------------------
+# The PDF is rendered from the Markdown, so what is tested here is the trip:
+# that the pack's own content survives it, that the parts Markdown cannot
+# express are added, and that a machine without the libraries says so instead
+# of producing half a file.
+
+
+def _pack_run():
+    """A run with the shapes a pack exercises: a table, a code span, an em-dash
+    for an absent number, and the headerless provenance block."""
+    return {
+        "id": "ro_pdftest01",
+        "country": "India",
+        "scope_label": "4.10.2 Process Returns",
+        "analysis": {"template_process": "4.10.2 Process Returns"},
+    }
+
+
+def test_the_pdf_is_a_pdf():
+    from rollout import pdf as ro_pdf
+
+    ok, why = ro_pdf.available()
+    if not ok:
+        print(f"       (skipped: {why[:70]})")
+        return
+    blob = ro_pdf.render(_pack_run(), "# Title\n\nBody.\n\n| a | b |\n|---|---|\n| 1 | 2 |\n")
+    assert blob.startswith(b"%PDF-"), "not a PDF"
+    assert b"%%EOF" in blob[-1024:], "truncated PDF"
+
+
+def test_the_pdf_carries_the_run_id_on_every_page():
+    """A pack is printed, split up and handed round. A loose page that cannot
+    say which analysis it came from is worse than no page.
+
+    The id is baked into the @page rule rather than carried by string-set,
+    because string-set only fires for an element that generates a box -- the
+    hidden div that first held it produced no box and no footer at all."""
+    from rollout import pdf as ro_pdf
+
+    css = ro_pdf.stylesheet("ro_pdftest01")
+    assert "ro_pdftest01" in css
+    assert "@bottom-left" in css
+    assert "string(runid)" not in css, "back on string-set, which silently renders nothing"
+
+
+def test_the_stylesheet_survives_its_own_formatting():
+    """The sheet is percent-formatted to bake the id in, and it is full of
+    literal percent signs. One unescaped `width: 100%` and every render raises
+    ValueError."""
+    from rollout import pdf as ro_pdf
+
+    css = ro_pdf.stylesheet("ro_x")
+    assert "width: 100%;" in css and "width: 34%;" in css
+    assert "%(" not in css
+
+
+def test_a_footer_cannot_be_escaped_out_of():
+    from rollout import pdf as ro_pdf
+
+    css = ro_pdf.stylesheet('evil"; } @page { size: A3; ')
+    assert 'evil\\"' in css, "a quote in the id was not escaped"
+    assert "size: A3" not in css.split("@bottom-left")[1].split("}")[0]
+
+
+def test_the_headerless_provenance_table_loses_its_empty_bar():
+    """`to_markdown` opens the pack with `| | |`, because Markdown has no
+    headerless table. Rendered, that row is a grey bar over nothing."""
+    from rollout import pdf as ro_pdf
+
+    html = ro_pdf._markdown_to_html("| | |\n|---|---|\n| Run | x |\n")
+    marked = ro_pdf._BLANK_HEAD.sub(
+        lambda m: m.group(0).replace("<thead>", '<thead class="empty">'), html)
+    assert 'thead class="empty"' in marked, "the empty header row was not found"
+    assert "thead.empty { display: none; }" in ro_pdf.stylesheet("")
+
+    # A real header must not be hidden with it.
+    real = ro_pdf._markdown_to_html("| Score | Value |\n|---|---|\n| GT | 52% |\n")
+    assert ro_pdf._BLANK_HEAD.search(real) is None, "a table with headings was blanked"
+
+
+def test_the_filename_says_what_the_pack_is():
+    from rollout import pdf as ro_pdf
+
+    assert ro_pdf.filename(_pack_run()) == \
+        "Fit-to-Standard - India - 4.10.2 Process Returns.pdf"
+    # A process name with a slash in it must not become a directory.
+    risky = {**_pack_run(), "scope_label": "4.1 Order / Return"}
+    name = ro_pdf.filename(risky)
+    assert "/" not in name and "\\" not in name, name
+    # Nothing to name it after still produces a file name.
+    assert ro_pdf.filename({"id": "ro_bare"}).endswith("ro_bare.pdf")
+
+
+def test_the_pdf_and_the_markdown_are_the_same_document():
+    """Rendered from the pack rather than from the run, so a section added to
+    one cannot go missing from the other."""
+    import inspect
+
+    from rollout import pdf as ro_pdf
+
+    src = inspect.getsource(ro_pdf.render)
+    # The CALL, not the import: `from .export import to_markdown` sitting in
+    # the function body satisfies a substring check while the body renders
+    # something else entirely.
+    assert "to_markdown(run)" in src, "the PDF builds its own content and will drift"
+
+
 if __name__ == "__main__":
     fns = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]
     failed = 0
