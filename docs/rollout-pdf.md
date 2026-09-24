@@ -1,6 +1,6 @@
 # The workshop pack as a PDF
 
-The Rollout Agent's analysis downloads as a PDF from the **PDF** button beside
+The Fit-Gap Copilot's analysis downloads as a PDF from the **PDF** button beside
 Markdown and JSON. It is the same document as the Markdown pack — rendered from
 `export.to_markdown`, not built separately, so a section added to one cannot go
 missing from the other.

@@ -35,7 +35,7 @@ import type {
 } from "../api";
 
 /** The evidence one investigation call contributed, opened from its row in the
- *  log. Shared by the Evidence Agent and the Rollout Agent: they call the same
+ *  log. Shared by the Evidence Agent and the Fit-Gap Copilot: they call the same
  *  five retrieval and graph tools, and a reader walking one agent's log should
  *  not meet a different panel from the other's.
  *

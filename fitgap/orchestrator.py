@@ -106,7 +106,7 @@ def run(req: RunRequest) -> Iterator[Event]:
         # One trace per run, not per step: a run is what the analyst starts
         # and waits for, and the steps are only meaningful next to their
         # siblings. The upload session, when there is one, is the Langfuse
-        # session -- the same id the Rollout Agent uses, so attaching a
+        # session -- the same id the Fit-Gap Copilot uses, so attaching a
         # document and analysing it from both engines reads as one thread of
         # work.
         run = tracing.start_run(

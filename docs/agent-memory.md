@@ -222,7 +222,7 @@ silently dropped.
 ## What is not done yet
 
 * **Only the Evidence Agent uses it.** The transport is in `fitgap/memory.py`
-  precisely so the Rollout Agent can, but it does not yet.
+  precisely so the Fit-Gap Copilot can, but it does not yet.
 * **No way to read or prune the bank from the UI.** A wrong memory can only be
   removed with the Hindsight client or its own UI. Worth having before this is
   trusted with a lot of runs.

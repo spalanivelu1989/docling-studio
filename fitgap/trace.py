@@ -1,6 +1,6 @@
 """What each engine actually returned, kept for the investigation log.
 
-Shared by the Evidence Agent and the Rollout Agent, which is why it lives
+Shared by the Evidence Agent and the Fit-Gap Copilot, which is why it lives
 beside the tools rather than inside either of them: they call the same five
 fitgap tools, and a reader walking one agent's log should not meet a
 different panel from the other's.

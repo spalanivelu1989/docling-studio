@@ -1,4 +1,4 @@
-"""Postgres persistence for Rollout Agent runs.
+"""Postgres persistence for Fit-Gap Copilot runs.
 
 These tables are not per-category, for the same reason the Fit/Gap register's
 are not -- a run reads every category it is pointed at and records one result --

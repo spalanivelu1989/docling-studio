@@ -221,7 +221,7 @@ at 200, 0.98 at 600 and above. It costs about 0.7 ms on a search that takes
 
 ### Documents attached to an agent session
 
-InsightLens and the Rollout Agent both take uploads of their own — a
+InsightLens and the Fit-Gap Copilot both take uploads of their own — a
 draft specification, a set of minutes, a country's As-Is SOP — and read them
 *beside* the corpus without them joining it. Drop a PDF, Word, Excel,
 PowerPoint, HTML, XML, `.csv` or plain `.txt` file into either page and it is
@@ -268,7 +268,7 @@ and `rag.search` run against it unchanged, with no second copy of the chunking,
 embedding or retrieval code to keep in step.
 
 An agent reaches an attachment through tools of its own, never through
-`search_corpus`: `search_uploads` (`read_sources` in the Rollout Agent, which
+`search_corpus`: `search_uploads` (`read_sources` in the Fit-Gap Copilot, which
 filters by role) for its text, and `upload_entities` for the
 systems, BPML codes and tickets it mentions, each marked according to whether
 the corpus already knows it. That marking is the point — a shared entity tells
@@ -290,7 +290,7 @@ FITGAP_UPLOAD_MAX_FILES=12     # documents per session
 # only database beside the corpus one.
 ```
 
-### The Rollout Agent
+### The Fit-Gap Copilot
 
 A second agent, on its own tab, does SAP Activate **Fit-to-Standard analysis
 for a country rollout**. An analyst attaches the country's As-Is process
@@ -731,7 +731,7 @@ When a user submits a query via the Knowledge Graph query bar or clicks an entit
 
 ## Tracing the agents (Langfuse)
 
-Off unless configured. The four things that call a model -- the Rollout Agent,
+Off unless configured. The four things that call a model -- the Fit-Gap Copilot,
 InsightLens, the Evidence Agent and `/ask` -- each record one
 [Langfuse](https://langfuse.com) trace per run: the retrieval it did, every
 tool call with what it returned, every model turn with its prompt and token
@@ -773,7 +773,7 @@ rollout-analysis                     agent      the whole run
 Two things worth knowing:
 
 - **The session is the upload session.** Attaching documents and then running
-  the Rollout Agent and InsightLens over them gives three traces in one
+  the Fit-Gap Copilot and InsightLens over them gives three traces in one
   Langfuse session, which is how they read as one piece of work. There is no
   `user_id`: this application has no accounts.
 - **What is masked.** API keys, database passwords, JWTs and email addresses

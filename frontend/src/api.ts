@@ -794,8 +794,8 @@ export async function runFitGap(body: FitGapRunBody, on: FitGapHandlers, signal:
 
 // --- documents attached to one agent session ----------------------------------
 //
-// Shared by InsightLens and the Rollout Agent. A document carries the
-// role it plays in the analysis, which is what lets the Rollout Agent run a
+// Shared by InsightLens and the Fit-Gap Copilot. A document carries the
+// role it plays in the analysis, which is what lets the Fit-Gap Copilot run a
 // three-way comparison rather than a two-document diff.
 
 export type UploadRole = "as_is" | "template" | "sap_bp" | "localization" | "other";
@@ -1043,7 +1043,7 @@ export interface EvidenceRagHit {
   text: string;
   uploaded: boolean;
   /** Which side of a three-way comparison this passage is evidence for. Only
-   *  the Rollout Agent's read_sources sets it; empty everywhere else. */
+   *  the Fit-Gap Copilot's read_sources sets it; empty everywhere else. */
   side: string;
   side_label: string;
   provenance: string[];
@@ -1134,7 +1134,7 @@ export interface EvidenceBpmlTrace {
 export type EvidenceTrace = EvidenceRagTrace | EvidenceGraphTrace | EvidenceBpmlTrace;
 
 /** What the trace drawer needs from a call, whichever agent made it. The
- *  Evidence Agent labels its calls by engine and the Rollout Agent also by
+ *  Evidence Agent labels its calls by engine and the Fit-Gap Copilot also by
  *  stage, but the panel only ever reads the fields below. */
 export interface AgentToolCall {
   tool: string;
@@ -1407,7 +1407,7 @@ export const evidence = {
       .then((r) => json<{ status: string; id: string }>(r)),
 };
 
-// --- the Rollout Agent --------------------------------------------------------
+// --- the Fit-Gap Copilot --------------------------------------------------------
 //
 // Fit-to-Standard analysis for a country rollout: the country's As-Is compared
 // against the Global Template and, where a source exists, SAP Best Practice.
@@ -1667,7 +1667,7 @@ export interface RolloutHandlers {
   error: (message: string) => void;
 }
 
-/** Run the Rollout Agent and dispatch its server-sent events. */
+/** Run the Fit-Gap Copilot and dispatch its server-sent events. */
 export async function runRollout(body: RolloutRunBody, on: RolloutHandlers, signal: AbortSignal) {
   const res = await fetch("/api/rollout/run", {
     method: "POST",

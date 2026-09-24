@@ -1,4 +1,4 @@
-"""The Rollout Agent's two passes.
+"""The Fit-Gap Copilot's two passes.
 
 Stage 2 of the specification (understand the As-Is) is a separate agent run
 from stages 4-7 (compare, classify, score). That is not an implementation

@@ -161,7 +161,7 @@ say so — the corpus merge works either way, but then `rag.py` keeps a reduced
 
 **(c) The session store does not merge, ever.** `docling_session` stays a separate
 database with a schema per upload session. That separation is the guarantee InsightLens
-and the Rollout Agent make to an analyst who drops a draft in: an uploaded document
+and the Fit-Gap Copilot make to an analyst who drops a draft in: an uploaded document
 cannot be reached by a corpus search, because it is not in the corpus database at all.
 Merging it would turn a structural guarantee into a `WHERE` clause. Don't.
 
@@ -297,7 +297,7 @@ than trusting the argument.
 `store.connect()` points at `docling` instead of `docling_fitgap` (decision (b)).
 Everything about uploads is untouched.
 
-### Rollout Agent — `/api/rollout/*`, `rollout/`
+### Fit-Gap Copilot — `/api/rollout/*`, `rollout/`
 
 *Today:* the same two-sided arrangement — corpus retrieval through `ftools`, attached
 documents through `uploads`, `_fingerprint(categories)` over the shards,
@@ -675,7 +675,7 @@ prints pass or fail.
 17. Add to Knowledge Base: the count matches `SELECT count(*) FROM rag_documents`;
     delete one document and watch the count fall by exactly one.
 18. InsightLens: one short run with an attachment.
-19. Rollout Agent: one run, and the score tiles populate.
+19. Fit-Gap Copilot: one run, and the score tiles populate.
 20. Evidence Agent: one question, and `describe_sources` names categories not databases.
 21. Knowledge graph: unchanged (it never read the database) — confirm the node count is
     identical.
@@ -910,7 +910,7 @@ not one anyone wanted to keep making. All of them came out:
 | Knowledge Graph | the multi-select, the refetch-on-scope-change, the remembered category set |
 | Evidence | the multi-select |
 | InsightLens | the "Corpus" select and its note about a narrowed run |
-| Rollout Agent | the "Template corpus" select (the reviewer field beside it stayed) |
+| Fit-Gap Copilot | the "Template corpus" select (the reviewer field beside it stayed) |
 | Convert | the destination picker and its default-picking fetch |
 | Batch Convert | the destination picker and `?category=` on the embed call |
 | Add to Knowledge Base | the "File under" picker |

@@ -1173,7 +1173,7 @@ export default function RolloutPage({ active }: Props) {
             <Globe2 size={19} />
           </Box>
           <Typography variant="h6" sx={{ fontWeight: 800, letterSpacing: "-.02em" }}>
-            Rollout Agent
+            Fit-Gap Copilot
           </Typography>
           <Box sx={{ flex: 1 }} />
           <Button size="small" variant="text" startIcon={<History size={14} />}
@@ -2029,7 +2029,7 @@ export default function RolloutPage({ active }: Props) {
       </Box>
 
       {/* What one call in the log returned. The Evidence Agent's panel, on the
-          Rollout Agent's calls -- the two share five of their tools, so the
+          Fit-Gap Copilot's calls -- the two share five of their tools, so the
           reader should not meet a different panel depending on which agent
           they happen to be reading. */}
       <AgentTraceDrawer

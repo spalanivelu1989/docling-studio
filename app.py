@@ -1663,7 +1663,7 @@ def fitgap_run(req: "FitGapRun") -> StreamingResponse:
 
 # --- documents attached to one agent session ----------------------------------
 #
-# Shared by InsightLens and the Rollout Agent, which is why these are
+# Shared by InsightLens and the Fit-Gap Copilot, which is why these are
 # /api/uploads rather than /api/fitgap/uploads. They never reach the corpus:
 # each is converted, chunked and embedded into a Postgres schema of its own
 # inside docling_session -- a different database from the one the corpus is in
@@ -1687,7 +1687,7 @@ def session_upload(
 
     `role` says what the documents are in the analysis -- a country's As-Is,
     the Global Template, SAP Best Practice content -- which is what lets the
-    Rollout Agent run a three-way comparison instead of a two-document one.
+    Fit-Gap Copilot run a three-way comparison instead of a two-document one.
 
     Streamed, because converting a deck takes far longer than embedding it and
     a single spinner would hide which stage is slow."""
@@ -1997,7 +1997,7 @@ def fitgap_review(entry_id: int, body: "FitGapReview") -> dict:
 # near-duplicate and hub-artefact judgement on top.
 
 
-# --- the Rollout Agent --------------------------------------------------------
+# --- the Fit-Gap Copilot --------------------------------------------------------
 #
 # Fit-to-Standard analysis for a country rollout: the country's As-Is,
 # attached to the session, compared against the Global Template in the corpus
@@ -2048,7 +2048,7 @@ def rollout_page() -> HTMLResponse:
 
 @app.get("/api/rollout/status")
 def rollout_status() -> dict:
-    """What the Rollout Agent can see before the first run: the BPML sheet it
+    """What the Fit-Gap Copilot can see before the first run: the BPML sheet it
     reads the Global Template from, the corpus categories, the model, and what
     an analyst may attach."""
     from rollout import agent as ro_agent, pdf as ro_pdf, store as ro_store
@@ -2465,7 +2465,7 @@ def _try(fn, *args) -> None:
 
 def _corpus_fingerprint(categories: list[str]) -> str:
     """What the run could have read, hashed the way InsightLens's and the
-    Rollout Agent's records hash it."""
+    Fit-Gap Copilot's records hash it."""
     import hashlib
 
     try:

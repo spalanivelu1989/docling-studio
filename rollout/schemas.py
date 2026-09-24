@@ -1,4 +1,4 @@
-"""Data contracts for the Rollout Agent.
+"""Data contracts for the Fit-Gap Copilot.
 
 Every controlled vocabulary here comes from the agent specification: the
 deviation taxonomy (§8.2), the dispositions (§9), the localization states

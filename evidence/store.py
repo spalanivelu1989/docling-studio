@@ -22,7 +22,7 @@ beside the corpus it read, holding three things:
 
 Nothing here is per-category, so there is no category column: a run reads
 whatever it was pointed at and records one result. The corpus fingerprint says
-what it could have read, the same way InsightLens's and the Rollout Agent's
+what it could have read, the same way InsightLens's and the Fit-Gap Copilot's
 records do.
 """
 

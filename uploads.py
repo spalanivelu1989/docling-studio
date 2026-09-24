@@ -7,7 +7,7 @@ what the project already decided, without that file becoming part of what
 everyone else searches.
 
 It sits beside rag.py rather than inside one agent's package because it is a
-store, not an agent: InsightLens and the Rollout Agent both own
+store, not an agent: InsightLens and the Fit-Gap Copilot both own
 sessions in it, and each tags its documents with the role they play (see
 ROLES).
 
@@ -57,7 +57,7 @@ BASE = Path(__file__).resolve().parent
 UPLOAD_DIR = BASE / ".workdir" / "uploads"
 
 # What a document is in the analysis, which decides how an agent may use it.
-# The Rollout Agent's whole method is a three-way comparison, so it has to be
+# The Fit-Gap Copilot's whole method is a three-way comparison, so it has to be
 # able to tell a country's As-Is apart from the Global Template and from SAP
 # Best Practice content; InsightLens takes a plain attachment and
 # leaves the role at "other".
@@ -210,7 +210,7 @@ def create_schema(conn=None) -> None:
         )
         # Added with ALTER so a session store created before roles existed
         # gains the column instead of failing on every insert. Everything in
-        # it predates the Rollout Agent, so "other" is the honest default.
+        # it predates the Fit-Gap Copilot, so "other" is the honest default.
         conn.execute(
             "ALTER TABLE upload_files ADD COLUMN IF NOT EXISTS role text NOT NULL DEFAULT 'other'"
         )

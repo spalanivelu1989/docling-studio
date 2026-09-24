@@ -141,7 +141,7 @@ MARKDOWN_FOLDER = "markdown"
 # Codes that name a store rather than a corpus, and must never be accepted as a
 # document category.
 #
-# SESSION is the database holding InsightLens's and the Rollout Agent's
+# SESSION is the database holding InsightLens's and the Fit-Gap Copilot's
 # uploaded documents, one Postgres schema per session, and UPLOAD is the
 # category their chunks carry inside it. Keeping an attachment out of the corpus
 # is structural -- it is in another database entirely, and this list only stops
@@ -265,7 +265,7 @@ def sibling_database(name: str) -> str:
 
     There is exactly one of these, and uploads.py owns it. An analyst's
     attachment lives in a schema of its own in a database of its own, and that
-    separation is a guarantee InsightLens and the Rollout Agent make: a search
+    separation is a guarantee InsightLens and the Fit-Gap Copilot make: a search
     of the corpus cannot reach it, because it is not in the corpus database."""
     from urllib.parse import urlsplit, urlunsplit
 

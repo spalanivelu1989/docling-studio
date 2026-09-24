@@ -1,4 +1,4 @@
-"""The Rollout Agent's window onto its three sources.
+"""The Fit-Gap Copilot's window onto its three sources.
 
 Retrieval, the graph and the BPML sheet are InsightLens's (fitgap/tools.py)
 and are reused as they are -- same retrieval log, same holdout masking, same

@@ -1,4 +1,4 @@
-"""One Rollout Agent run, streamed as events.
+"""One Fit-Gap Copilot run, streamed as events.
 
 The run is two agent passes with a deterministic middle and end: read the
 As-Is, compare it, then run the quality gates and the arithmetic. Events are

@@ -143,43 +143,46 @@ if (product) {
         `"Docling Studio" is this app's former name: ${stale.join(", ")}`);
 }
 
-// --- the page's own former name -----------------------------------------------
+// --- two pages that have swapped names ----------------------------------------
 //
-// "Fit-Gap Copilot" became "InsightLens". Unlike the rename above, this one has
-// a lower-case twin that is CORRECT and must survive: the `copilot` engine key,
-// the "copilot" member of the Engine union, the fitgap-copilot trace tag. Those
-// are identifiers, not the product name, and renaming them means a database
-// migration and a break in the trace history.
+// The /fitgap page was the "Fit-Gap Copilot" and is now "InsightLens". The
+// /rollout page was the "Rollout Agent" and has taken the name the other one
+// gave up. So "Copilot" is not a banned word — it is a CORRECT word on the
+// wrong page, which is harder to catch by eye and worth a test.
 //
-// So the rule is case-sensitive, and it covers comments too — a comment that
-// still calls it the Copilot is how the next person learns the wrong name.
+// A blanket ban was right for one commit and is wrong now. These checks say
+// which name belongs where instead.
+//
+// The lower-case twins stay whatever the labels do: the `copilot` engine key,
+// the "copilot" member of the Engine union, the fitgap-copilot trace tag, the
+// rollout package and its routes. Those are identifiers, and renaming them
+// means a database migration and a break in the trace history.
 
 {
-  const stale = [];
-  const walk = (dir) => {
-    for (const entry of readdirSync(dir)) {
-      const full = join(dir, entry);
-      if (statSync(full).isDirectory()) walk(full);
-      else if (/\.(tsx?|html)$/.test(entry)) {
-        readFileSync(full, "utf8").split("\n").forEach((line, i) => {
-          if (/Copilot/.test(line)) stale.push(`${full.replace(SRC, "src")}:${i + 1}`);
-        });
-      }
-    }
-  };
-  walk(SRC);
-  check("nothing still calls the page the Copilot",
+  const page = readFileSync(join(SRC, "pages", "FitGapPage.tsx"), "utf8");
+  const stale = page.split("\n")
+    .map((line, i) => (/Copilot/.test(line) ? i + 1 : 0))
+    .filter(Boolean);
+  check("the InsightLens page never calls itself a Copilot",
         stale.length === 0,
-        `"Fit-Gap Copilot" is now "InsightLens": ${stale.join(", ")}`);
+        `that name now belongs to /rollout — FitGapPage.tsx:${stale.join(", ")}`);
 }
 
 {
-  // And the name is where the tab actually reads from, so the browser title,
-  // the tab strip and the page heading cannot drift apart.
-  const labelled = /\{ value: "fitgap", label: "InsightLens"/.test(src);
+  // The tab label is what document.title, the tab strip and the page heading
+  // all derive from, so it is the one string per page that must not drift.
   check("the fitgap tab is labelled InsightLens",
-        labelled,
-        "the tab label is what document.title and the tab strip both derive from");
+        /\{ value: "fitgap", label: "InsightLens"/.test(src),
+        "the /fitgap page is InsightLens");
+  check("the rollout tab is labelled Fit-Gap Copilot",
+        /\{ value: "rollout", label: "Fit-Gap Copilot"/.test(src),
+        "the /rollout page took that name over from /fitgap");
+  // Two pages have just swapped names. A typo during a swap is a duplicate,
+  // and a duplicate label means two tabs and two browser titles read the same.
+  const all = [...src.matchAll(/label:\s*"([^"]+)"/g)].map((m) => m[1]);
+  check("no two tabs share a label",
+        new Set(all).size === all.length,
+        `duplicate label among: ${all.join(", ")}`);
 }
 
 console.log(`\n${tabs.length} tabs: ${tabs.join(", ")}`);
