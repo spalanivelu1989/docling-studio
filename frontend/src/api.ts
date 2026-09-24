@@ -1396,6 +1396,27 @@ export const askHistory = {
       .then((r) => json<{ status: string; removed: number }>(r)),
 };
 
+/** One memory the bank leaned on while answering. */
+export interface ReflectFact {
+  id: string;
+  text: string;
+  /** world · observation · experience · opinion — Hindsight's own classes. */
+  type: string;
+}
+
+export interface MemoryReflection {
+  /** Markdown. */
+  text: string;
+  /** The memories the reflection actually read, rebuilt from its tool trace.
+   *  Hindsight's own `based_on` is always empty here: reflect is agentic and
+   *  fetches facts as it goes rather than being handed a set. */
+  based_on: ReflectFact[];
+  /** The searches it ran to find them, in order. */
+  searched: string[];
+  usage: { input_tokens?: number; output_tokens?: number; total_tokens?: number };
+  error: string;
+}
+
 export const evidence = {
   status: () => fetch("/api/evidence/status").then((r) => json<EvidenceStatus>(r)),
   runs: (limit = 50) =>
@@ -1405,6 +1426,14 @@ export const evidence = {
   deleteRun: (id: string) =>
     fetch(`/api/evidence/runs/${encodeURIComponent(id)}`, { method: "DELETE" })
       .then((r) => json<{ status: string; id: string }>(r)),
+  /** Ask the memory bank a question about itself. Slow on purpose -- it reads
+   *  the whole bank and writes an answer -- so no timeout is imposed here. */
+  reflect: (question: string) =>
+    fetch("/api/evidence/memory/reflect", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question }),
+    }).then((r) => json<MemoryReflection>(r)),
 };
 
 // --- the Fit-Gap Copilot --------------------------------------------------------

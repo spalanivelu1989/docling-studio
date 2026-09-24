@@ -48,11 +48,14 @@ Configuration, all optional:
                          client's own 300s default, which would stall a run
     HINDSIGHT_RECALL_TOKENS  default 1200, the ceiling on what one recall may
                          put into the agent's context
+    HINDSIGHT_REFLECT_TIMEOUT  seconds, default 120. Separate from the one
+                         above on purpose: see reflect().
 """
 
 from __future__ import annotations
 
 import os
+import threading
 import time
 from typing import Any
 
@@ -61,13 +64,41 @@ API_KEY = os.environ.get("HINDSIGHT_API_KEY") or None
 BANK = os.environ.get("HINDSIGHT_BANK", "spark-evidence").strip() or "spark-evidence"
 TIMEOUT = float(os.environ.get("HINDSIGHT_TIMEOUT", "8"))
 RECALL_TOKENS = int(os.environ.get("HINDSIGHT_RECALL_TOKENS", "1200"))
+# Reflect is a different kind of call and needs a different deadline. TIMEOUT
+# is 8s because recall and retain sit in front of an investigation and must
+# never hold one up. Reflect sits in front of a person who pressed a button,
+# reads the whole bank and writes an answer with an LLM -- on Opus that is
+# tens of seconds, and it timed out at 8 the first time it was tried.
+REFLECT_TIMEOUT = float(os.environ.get("HINDSIGHT_REFLECT_TIMEOUT", "120"))
 
 # How long an availability answer is trusted. The status endpoint is called on
 # every page load and a run asks again before it starts; without this, a server
 # that is down costs a connection refusal each time.
 _PROBE_TTL = 30.0
 
-_client: Any = None
+# One client per THREAD, not one per process.
+#
+# The client wraps an async library, and its session belongs to the event loop
+# that made it. Reuse it from another thread and every call fails with
+#
+#     RuntimeError: Timeout context manager should be used inside a task
+#
+# which `available()` faithfully reports as "the memory server is down". It is
+# not: the server is fine and the thread is wrong. FastAPI runs `def`
+# endpoints on a threadpool, so after the first request the status endpoint
+# answered `available: false` on every thread but one, the memory toggle went
+# grey, and the Ask memory button disabled itself -- with a healthy server on
+# the other end of the socket.
+#
+# It survived this long because a single-threaded probe is the one case that
+# works, which is also what every test and every manual check had been doing.
+_local = threading.local()
+
+# Every client handed out, so shutdown can close all of them and not just the
+# one belonging to whichever thread happened to call close().
+_all_clients: list[Any] = []
+_clients_lock = threading.Lock()
+
 _probe: tuple[float, bool, str] = (0.0, False, "")
 
 
@@ -76,18 +107,37 @@ def configured() -> bool:
     return bool(URL)
 
 
-def _get():
-    """The client, made once. None when the library is absent or URL is empty."""
-    global _client
+def _make(attr: str, timeout: float):
+    """This thread's client for `attr`, made on first use here. See _local."""
     if not configured():
         return None
-    if _client is None:
+    client = getattr(_local, attr, None)
+    if client is None:
         try:
             from hindsight_client import Hindsight
         except ImportError:
             return None
-        _client = Hindsight(base_url=URL, api_key=API_KEY, timeout=TIMEOUT)
-    return _client
+        client = Hindsight(base_url=URL, api_key=API_KEY, timeout=timeout)
+        setattr(_local, attr, client)
+        with _clients_lock:
+            _all_clients.append(client)
+    return client
+
+
+def _get():
+    """This thread's client, on the short deadline. Recall, retain, status."""
+    return _make("client", TIMEOUT)
+
+
+def _get_reflect():
+    """This thread's client, on the long deadline. Only reflect() uses it.
+
+    A second client rather than a second argument: the timeout belongs to the
+    client, so reflect cannot borrow the one above without also giving recall
+    and retain a two-minute deadline -- which is the thing TIMEOUT exists to
+    prevent.
+    """
+    return _make("reflect_client", REFLECT_TIMEOUT)
 
 
 def available(force: bool = False) -> tuple[bool, str]:
@@ -197,6 +247,120 @@ def retain(content: str, bank: str = "", context: str = "",
         return False
 
 
+def _facts_in(output: Any) -> list[dict]:
+    """Every memory a reflect tool call returned, whatever shape it came in.
+
+    The trace carries raw tool output, and the four tools (lookup, recall,
+    learn, expand) do not agree on a shape: some return a list, some an object
+    with `results`, some with `memories` or `facts`. Anything without text is
+    not a memory and is skipped rather than guessed at.
+    """
+    if output is None:
+        return []
+    if isinstance(output, dict):
+        rows = None
+        for key in ("results", "memories", "facts", "items"):
+            if isinstance(output.get(key), list):
+                rows = output[key]
+                break
+        if rows is None:
+            rows = [output] if output.get("text") else []
+    elif isinstance(output, list):
+        rows = output
+    else:
+        return []
+
+    out = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        text = str(row.get("text") or "").strip()
+        if not text:
+            continue
+        out.append({"id": str(row.get("id") or ""), "text": text,
+                    "type": str(row.get("fact_type") or row.get("type") or "")})
+    return out
+
+
+def reflect(query: str, bank: str = "", context: str = "",
+            max_tokens: int = 1400) -> dict:
+    """Ask the bank a question it has to think about. NOT for the agent.
+
+    recall() searches and returns rows. reflect() reads the bank and writes an
+    answer -- an LLM call on the server, over memories that were themselves
+    written by an LLM. Two differences follow from that, and both are why this
+    is deliberately not wired into an investigation:
+
+      * it is slow and it costs. On Opus a reflection re-reads the bank and
+        runs to tens of seconds and cents, per press. An investigation cannot
+        afford that in front of every question, and REFLECT_TIMEOUT rather
+        than TIMEOUT is how this call gets the room it needs.
+
+      * it is a summary of summaries, which is one more step away from a
+        verified quote than a memory already is. The structural guarantee
+        still holds -- nothing here is in `session.retrieved`, so none of it
+        can be cited -- but the safest place for prose the agent cannot check
+        is in front of a PERSON, who can, and not in a prompt.
+
+    So this exists for the questions no single run and no corpus document can
+    answer: what have we investigated, where did two runs disagree, what is
+    still open. Returns {text, based_on, usage, error}; `text` empty on any
+    failure, with `error` saying why, because a person pressed a button and is
+    owed a reason rather than a blank panel.
+    """
+    client = _get_reflect()
+    if client is None:
+        return {"text": "", "based_on": [], "usage": {}, "searched": [],
+                "error": "Memory is not configured on this server."}
+    if not query.strip():
+        return {"text": "", "based_on": [], "usage": {}, "searched": [],
+                "error": "Ask something."}
+    try:
+        # include_tool_calls, not include_facts. `based_on` is the obvious
+        # field and it is always empty here: Hindsight's reflect is AGENTIC --
+        # it runs a loop of searches rather than being handed a fixed set of
+        # facts -- and its own docstring says so, "based_on: Empty dict (agent
+        # retrieves facts dynamically)". Asking for facts returns an answer
+        # with no sources and no error, which reads as a server that forgot to
+        # send them. What it actually searched is in the trace.
+        response = client.reflect(bank_id=bank or BANK, query=query,
+                                  context=context or None, budget="low",
+                                  max_tokens=max_tokens,
+                                  include_tool_calls=True,
+                                  include_tool_call_output=True)
+    except Exception as exc:
+        return {"text": "", "based_on": [], "usage": {}, "searched": [],
+                "error": f"{type(exc).__name__}: {exc}"[:300]}
+
+    # Provenance, rebuilt from the trace: which searches it ran and what each
+    # returned. A briefing that cannot show its working is the one thing this
+    # panel must not be, given it is prose nobody downstream re-checks.
+    based_on, seen = [], set()
+    searched = []
+    trace = getattr(response, "trace", None)
+    for call in (getattr(trace, "tool_calls", None) or []):
+        params = getattr(call, "input", None) or {}
+        if isinstance(params, dict):
+            wanted = str(params.get("query") or params.get("q") or "").strip()
+            if wanted and wanted not in searched:
+                searched.append(wanted)
+        for fact in _facts_in(getattr(call, "output", None)):
+            key = fact["id"] or fact["text"]
+            if key in seen:
+                continue
+            seen.add(key)
+            based_on.append(fact)
+
+    usage = getattr(response, "usage", None)
+    if hasattr(usage, "model_dump"):
+        usage = usage.model_dump()
+    elif not isinstance(usage, dict):
+        usage = {}
+
+    return {"text": (getattr(response, "text", "") or "").strip(),
+            "based_on": based_on, "searched": searched, "usage": usage, "error": ""}
+
+
 def stats(bank: str = "") -> dict:
     """How much the bank holds, for the page. Zeroes when it cannot be read."""
     client = _get()
@@ -223,14 +387,24 @@ def describe() -> dict:
 
 
 def close() -> None:
-    """Release the client's HTTP session. Called from the app's shutdown.
+    """Release every client's HTTP session. Called from the app's shutdown.
 
     Without it aiohttp prints "Unclosed client session" on exit, which looks
     like a leak in this application rather than a socket nobody asked to keep.
+
+    Clients made on other threads are closed from this one, which aiohttp
+    grumbles about ("Task was destroyed but it is pending"). That is the
+    lesser of the two noises -- leaving them prints the unclosed-session
+    warning per client instead -- and closing a session from the thread that
+    owns it would mean keeping those threads alive to be asked, which is not
+    worth a tidier exit.
     """
-    global _client, _probe
-    client, _client, _probe = _client, None, (0.0, False, "")
-    if client is not None:
+    global _probe
+    with _clients_lock:
+        clients, _all_clients[:] = list(_all_clients), []
+    _local.__dict__.clear()
+    _probe = (0.0, False, "")
+    for client in clients:
         try:
             client.close()
         except Exception:

@@ -47,9 +47,28 @@ export HINDSIGHT_API_LLM_PROVIDER=litellm
 export HINDSIGHT_API_LLM_MODEL=${HINDSIGHT_MODEL:-anthropic/claude-opus-5}
 export HINDSIGHT_API_LLM_API_KEY="$ANTHROPIC_API_KEY"
 
+# Reflect gets its own, faster model. Not a cost decision -- a deadline one.
+#
+# Reflect is the one INTERACTIVE operation: a person is holding an HTTP request
+# open, and it runs an agentic loop of several sequential LLM calls. Hindsight
+# gives each of those calls 30 seconds, chosen against a healthy call answering
+# in 1-4s and a retry ladder of three attempts. Opus does not answer in 1-4s.
+# Every attempt hit the deadline, retried four times and failed:
+#
+#   LiteLLM tool call timed out after 30.0s on 4 attempts (scope=reflect_tool_call)
+#   [REFLECT] LLM error on iteration 3: TimeoutError (127023ms)
+#
+# Raising the deadline instead would have made a working reflect take minutes,
+# because the ladder multiplies it. The job is reading memories and answering a
+# question about them, which Sonnet does well and quickly. Retain keeps Opus,
+# where extraction quality decides what the bank believes forever.
+export HINDSIGHT_API_REFLECT_LLM_MODEL=${HINDSIGHT_REFLECT_MODEL:-anthropic/claude-sonnet-5}
+export HINDSIGHT_API_REFLECT_LLM_TIMEOUT=${HINDSIGHT_REFLECT_TIMEOUT:-60}
+
 # In-process, on this machine, and nothing to do with the Ollama bge-m3 the
 # corpus is indexed with.
 export HINDSIGHT_API_EMBEDDINGS_PROVIDER=local
 
 echo "Hindsight: $HINDSIGHT_API_LLM_PROVIDER / $HINDSIGHT_API_LLM_MODEL on 127.0.0.1:8888"
+echo "           reflect on $HINDSIGHT_API_REFLECT_LLM_MODEL (${HINDSIGHT_API_REFLECT_LLM_TIMEOUT}s per call)"
 exec ./hindsight-venv/bin/hindsight-api --host 127.0.0.1 --port 8888 --log-level info

@@ -243,5 +243,63 @@ check(
   );
 }
 
+// --- reflect: the third operation, and the one a person drives ------------
+//
+// recall and retain belong to a run. reflect reads the bank and WRITES AN
+// ANSWER, which is an LLM reading text an LLM wrote. That is one step further
+// from a verified quote than a memory already is, so it lives in a panel a
+// person reads and must never reach the agent -- the structural guarantee
+// (nothing reflected is in session.retrieved, so none of it can be cited)
+// holds either way, but prose nobody re-checks belongs in front of someone
+// who can.
+
+{
+  const drawer = read("src", "components", "MemoryReflectDrawer.tsx");
+  const evidence = read("src", "pages", "EvidencePage.tsx");
+
+  check(
+    "the reflect panel is mounted on the Evidence Agent",
+    /<MemoryReflectDrawer/.test(evidence) && /setReflectOpen\(true\)/.test(evidence),
+    "the panel exists but nothing opens it",
+  );
+
+  check(
+    "the button is off when there is nothing to ask",
+    /disabled=\{!mem\?\.available \|\| !mem\?\.memories\}/.test(evidence),
+    "Ask memory offers itself against a dead server or an empty bank, and fails on the press",
+  );
+
+  check(
+    "the answer is framed as not evidence",
+    /not evidence<\/b>/.test(drawer) && /cannot be cited|can be cited/.test(drawer),
+    "a briefing from memory that does not say so reads as a source list -- "
+      + "and this one is a summary of summaries",
+  );
+
+  check(
+    // The render gates, not the names. `result.based_on` appears inside the
+    // block it guards, so matching it anywhere passes while the block is
+    // switched off -- the same mistake as matching stopPropagation in a file
+    // rather than in the handler that needs it.
+    "the panel shows what the reflection read",
+    /\{!!result\.based_on\.length && \(/.test(drawer)
+      && /\{!!result\.searched\.length && \(/.test(drawer),
+    "a briefing that cannot show its working is the one thing this panel must not be",
+  );
+
+  check(
+    "the panel shows what the press cost",
+    /input_tokens/.test(drawer) && /output_tokens/.test(drawer),
+    "this is the one button in the app that spends real money per press, and the "
+      + "input side grows with the bank",
+  );
+
+  check(
+    "the reflection warns that it takes a while",
+    /30 to 60 seconds|seconds/.test(drawer),
+    "half a minute of nothing reads as a hang",
+  );
+}
+
 console.log(failed ? `\n${failed} check(s) failed` : "\nall checks passed");
 process.exit(failed ? 1 : 0);

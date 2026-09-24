@@ -7,6 +7,7 @@ import { alpha, useTheme } from "@mui/material/styles";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Ban, BookOpen, ChevronDown, ChevronUp, CircleAlert, CircleCheck, CircleHelp, Copy, Dices, Eye,
+  Lightbulb,
   FileText, FlaskConical, GitBranch, History as HistoryIcon, Network, Quote, Scale,
   Brain, ScanLine, Search, SendHorizontal, Sigma, Square, Target, Terminal,
   TriangleAlert,
@@ -30,6 +31,7 @@ import { clearAdornment } from "../components/ClearAdornment";
 import DocumentInspectorDrawer from "../components/DocumentInspectorDrawer";
 import AgentTraceDrawer from "../components/AgentTraceDrawer";
 import AgentLogDrawer from "../components/AgentLogDrawer";
+import MemoryReflectDrawer from "../components/MemoryReflectDrawer";
 import RunHistoryDrawer, { type HistoryCard } from "../components/RunHistoryDrawer";
 
 /* ------------------------------------------------------------------- states */
@@ -552,6 +554,7 @@ export default function EvidencePage({ active }: { active: boolean }) {
   });
   const [log, setLog] = useState<EvidenceLogEntry[]>([]);
   const [logOpen, setLogOpen] = useState(false);
+  const [reflectOpen, setReflectOpen] = useState(false);
   // Every investigation reads the whole corpus; the category a chunk is filed
   // under is still reported on each tool call, but it is no longer a control.
   const [running, setRunning] = useState(false);
@@ -952,6 +955,22 @@ export default function EvidencePage({ active }: { active: boolean }) {
                 </Stack>
               </Stack>
             </Tooltip>
+            <Tooltip title={!mem?.available
+              ? "The memory server is not reachable, so there is nothing to ask."
+              : !mem?.memories
+                ? "Nothing has been written to memory yet. Run an investigation with memory on."
+                : `Ask the ${mem.memories} memories what earlier investigations found — `
+                  + "what we have looked at, where two runs disagreed, what is still open. "
+                  + "Reads the whole bank, so it takes 30-60 seconds."}>
+              <span>
+                <Button variant="outlined" size="small"
+                        disabled={!mem?.available || !mem?.memories}
+                        startIcon={<Lightbulb size={15} />} onClick={() => setReflectOpen(true)}
+                        sx={{ minHeight: 32 }}>
+                  Ask memory
+                </Button>
+              </span>
+            </Tooltip>
             <Tooltip title={log.length === 0
               ? "The step-by-step log of a run: the context the agent is handed, what it reasons, "
                 + "every engine it queries, and what it writes back. Ask a question to fill it."
@@ -1299,7 +1318,12 @@ export default function EvidencePage({ active }: { active: boolean }) {
       </Box>
 
       {/* ---------- citation traceability ---------- */}
-      <AgentLogDrawer
+      <MemoryReflectDrawer
+          open={reflectOpen}
+          onClose={() => setReflectOpen(false)}
+          memories={mem?.memories ?? 0}
+        />
+        <AgentLogDrawer
         open={logOpen}
         onClose={() => setLogOpen(false)}
         log={log}

@@ -7,6 +7,7 @@ the corpus are read, since that is what these modules are judging).
 
 from __future__ import annotations
 
+import pathlib
 import sys
 from pathlib import Path
 
@@ -703,13 +704,15 @@ def test_a_memory_server_that_is_not_there_is_not_an_error():
     on a daemon that has nothing to do with it."""
     real = agent_memory.URL
     agent_memory.URL = "http://127.0.0.1:9"  # discard port: refuses immediately
-    agent_memory._client = None
+    agent_memory._local.__dict__.clear()
     agent_memory._probe = (0.0, False, "")
     try:
         ok, detail = agent_memory.available(force=True)
         assert ok is False and detail, "a dead server reported no reason"
         assert agent_memory.recall("anything") == []
-        assert agent_memory.retain("anything") is False
+        # The real one: this test is about what the transport does when the
+        # server refuses, which the suite-wide stub would hide.
+        assert _REAL_RETAIN("anything") is False
         assert agent_memory.stats() == {"memories": 0}
     finally:
         agent_memory.close()
@@ -721,7 +724,7 @@ def test_memory_switched_off_asks_nothing_of_the_network():
     start probing a host nobody asked for."""
     real = agent_memory.URL
     agent_memory.URL = ""
-    agent_memory._client = None
+    agent_memory._local.__dict__.clear()
     agent_memory._probe = (0.0, False, "")
     try:
         assert agent_memory.configured() is False
@@ -762,6 +765,220 @@ class _FakeAnthropic:
         return types.SimpleNamespace(content=[narration, use], usage=usage)
 
 
+# --- reflect ------------------------------------------------------------------
+#
+# reflect() is the one memory call a person triggers rather than a run, so its
+# failures are seen rather than swallowed. These drive it against a stub,
+# because the real thing is an LLM call over the whole bank: tens of seconds
+# and real money per press, which is not a test.
+
+
+def _stub_reflect(response=None, raises=None):
+    """Put a fake Hindsight in front of reflect(). Returns a restore callable.
+
+    On `_local`, not on the module: the clients are per-thread now, and a stub
+    set as a module attribute is simply never read.
+    """
+    from types import SimpleNamespace
+
+    real = getattr(agent_memory._local, "reflect_client", None)
+
+    def call(**_kw):
+        if raises is not None:
+            raise raises
+        return response
+
+    agent_memory._local.reflect_client = SimpleNamespace(reflect=call)
+
+    def restore():
+        if real is None:
+            agent_memory._local.__dict__.pop("reflect_client", None)
+        else:
+            agent_memory._local.reflect_client = real
+
+    return restore
+
+
+def _reflect_response(facts=(), text="An answer.", query="what did we find"):
+    """A reflect response shaped the way the server really sends one.
+
+    The provenance arrives in `trace.tool_calls[].output`, not in `based_on`.
+    That field exists, is the obvious one to read, and is always empty here:
+    Hindsight's reflect is agentic, so it fetches facts through tool calls
+    rather than being handed a set. Reading it returned an answer with no
+    sources and no error.
+    """
+    from types import SimpleNamespace
+
+    call = SimpleNamespace(
+        tool="recall",
+        input={"query": query},
+        output={"results": [{"id": f"m{i}", "text": f"  {t}  ", "fact_type": "world"}
+                            for i, t in enumerate(facts)]},
+    )
+    return SimpleNamespace(
+        text=f"  {text}  ",
+        based_on=SimpleNamespace(memories=[], mental_models=[], directives=[]),
+        trace=SimpleNamespace(tool_calls=[call] if facts or query else [], llm_calls=[]),
+        usage=SimpleNamespace(model_dump=lambda: {"input_tokens": 43175, "output_tokens": 2409}),
+    )
+
+
+def test_reflect_takes_its_provenance_from_the_trace():
+    """`based_on` is always empty; the facts are in the tool trace.
+
+    Hindsight's own docstring says so -- "based_on: Empty dict (agent
+    retrieves facts dynamically)" -- and reading it instead produced an
+    answer with no sources and no error, which looks exactly like a server
+    that forgot to send them.
+    """
+    restore = _stub_reflect(_reflect_response(["The spec references 19 tickets."]))
+    try:
+        out = agent_memory.reflect("anything")
+        assert out["error"] == "", out["error"]
+        assert out["text"] == "An answer."
+        assert out["based_on"] == [
+            {"id": "m0", "text": "The spec references 19 tickets.", "type": "world"}
+        ], out["based_on"]
+        assert out["searched"] == ["what did we find"], out["searched"]
+        assert out["usage"]["input_tokens"] == 43175
+    finally:
+        restore()
+
+
+def test_reflect_would_find_nothing_in_based_on():
+    """The shape of the bug, kept so the fix cannot be undone quietly.
+
+    A response with a populated `based_on` and an empty trace is what the
+    first version read. It must still come back with no sources, because that
+    is not where the server puts them.
+    """
+    from types import SimpleNamespace
+
+    response = _reflect_response(query="")
+    response.based_on = SimpleNamespace(
+        memories=[SimpleNamespace(id="m0", text="x", type="world")],
+        mental_models=[], directives=[])
+    restore = _stub_reflect(response)
+    try:
+        assert agent_memory.reflect("anything")["based_on"] == []
+    finally:
+        restore()
+
+
+def test_reflect_survives_every_shape_a_tool_returns():
+    """lookup, recall, learn and expand do not agree on an output shape."""
+    cases = {
+        "a bare list": [{"id": "a", "text": "one", "fact_type": "world"}],
+        "results": {"results": [{"id": "b", "text": "two", "type": "observation"}]},
+        "memories": {"memories": [{"id": "c", "text": "three"}]},
+        "facts": {"facts": [{"id": "d", "text": "four"}]},
+        "one fact": {"id": "e", "text": "five"},
+    }
+    for name, output in cases.items():
+        found = agent_memory._facts_in(output)
+        assert len(found) == 1, f"{name}: {found}"
+        assert found[0]["text"] in {"one", "two", "three", "four", "five"}
+    # And anything that is not a memory is skipped rather than guessed at.
+    for junk in (None, "a string", 7, {"results": [{"id": "f"}]}, {"nothing": 1}):
+        assert agent_memory._facts_in(junk) == [], junk
+
+
+def test_reflect_returns_a_reason_rather_than_a_blank_panel():
+    """A person pressed a button and is owed an explanation.
+
+    Unlike recall and retain, which fail silently on purpose because a run
+    must survive a memory server that has gone away.
+    """
+    restore = _stub_reflect(raises=TimeoutError())
+    try:
+        out = agent_memory.reflect("anything")
+        assert out["text"] == ""
+        assert out["error"].startswith("TimeoutError"), out["error"]
+    finally:
+        restore()
+
+
+def test_each_thread_gets_its_own_memory_client():
+    """The client belongs to the thread that made it.
+
+    It wraps an async library whose session is bound to an event loop, so a
+    client reused from another thread fails every call with
+
+        RuntimeError: Timeout context manager should be used inside a task
+
+    which available() reports, accurately and uselessly, as the server being
+    down. FastAPI runs `def` endpoints on a threadpool: the status endpoint
+    answered `available: false` on every thread but one, the memory toggle
+    went grey and Ask memory disabled itself, against a healthy server.
+
+    It hid because one thread is the case that works, and a probe, a test and
+    a manual check are all one thread.
+
+    This asserts the identity rather than driving a call across threads. The
+    behavioural version passed against a deliberately shared client -- whether
+    the reuse actually breaks depends on what the loop was doing at the time
+    -- and a test that only sometimes notices is worse than the rule written
+    down.
+    """
+    import threading
+
+    mine = agent_memory._get()
+    if mine is None:
+        return  # hindsight-client is not installed; nothing to be wrong about
+
+    seen: dict[str, object] = {}
+
+    def grab():
+        seen["client"] = agent_memory._get()
+        seen["reflect"] = agent_memory._get_reflect()
+
+    thread = threading.Thread(target=grab)
+    thread.start()
+    thread.join()
+
+    assert seen["client"] is not None
+    assert seen["client"] is not mine, (
+        "two threads share one client; every call on the second one fails "
+        "and reads as the memory server being down"
+    )
+    # The same thread asking twice must not build a new one each time.
+    assert agent_memory._get() is mine
+    # The long-deadline client is per-thread for the same reason.
+    assert seen["reflect"] is not agent_memory._get_reflect()
+
+
+def test_reflect_refuses_an_empty_question():
+    restore = _stub_reflect(_reflect_response())
+    try:
+        assert agent_memory.reflect("   ")["error"]
+    finally:
+        restore()
+
+
+def test_reflect_has_a_longer_deadline_than_the_run_path():
+    """Not a style point -- it is why reflect works at all.
+
+    TIMEOUT is 8s because recall and retain sit in front of an investigation.
+    Reflect sits in front of a person, reads the whole bank and runs an
+    agentic loop; at 8s it times out every time, which is exactly what
+    happened the first time it was called.
+    """
+    assert agent_memory.REFLECT_TIMEOUT > agent_memory.TIMEOUT * 5
+
+
+def test_reflect_never_reaches_the_agent():
+    """Memory orients and cannot ground, and reflect is a summary of summaries.
+
+    The structural guarantee still holds -- nothing recalled or reflected is
+    in session.retrieved, so none of it can be cited -- but prose the agent
+    cannot check belongs in front of a person who can. If an investigation
+    ever starts calling reflect(), this is the check that says so.
+    """
+    source = (pathlib.Path(__file__).parent / "agent.py").read_text()
+    assert "reflect" not in source, "the agent is calling reflect(); see fitgap/memory.py"
+
+
 def _drive(question, **kw):
     """Run the agent against the fake model, collecting every event."""
     import sys as _sys
@@ -780,17 +997,58 @@ def _drive(question, **kw):
             _sys.modules.pop("anthropic", None)
 
 
+# ═══ THE SUITE MUST NOT WRITE TO THE REAL MEMORY BANK ═══
+#
+# It did. `retain` was stubbed per-test, by the tests that were about
+# retaining, and one that was not -- the log-ordering test -- drove a run with
+# memory=True and wrote for real. Every run of this file put two more facts
+# about a fabricated "Zeta interface" into the bank the application uses. They
+# consolidated, they came back in recalls, and they were indistinguishable
+# from findings, because by the time you see them that is exactly what they
+# are: things an Evidence Agent run concluded and wrote down.
+#
+# Deleting them did not help, because the next test run put them straight
+# back. Eleven documents' worth accumulated before anyone looked.
+#
+# So the swap is global and happens at import. A test that wants to see what
+# was written asks _capture_retain(); a test that does not care cannot write
+# by accident. recall() is deliberately left real: it only reads, and letting
+# it talk to a live server is the only thing here that exercises the
+# transport.
+_retained: list[dict] = []
+# Kept so the two tests that are about the transport itself can reach past the
+# stub. Nothing else may use it.
+_REAL_RETAIN = agent_memory.retain
+
+
+def _no_write_retain(content, **kw):
+    _retained.append({"content": content, **kw})
+    return True
+
+
+agent_memory.retain = _no_write_retain
+
+
 def _capture_retain():
-    """Swap out the retain call and hand back the list it writes into."""
-    written: list[dict] = []
-    real = agent_memory.retain
+    """The list retains are recorded into, cleared. See the block above.
 
-    def fake(content, **kw):
-        written.append({"content": content, **kw})
-        return True
+    The returned callable used to put the real `retain` back and now does
+    nothing, on purpose: restoring it is what let one test write to the bank.
+    """
+    _retained.clear()
+    return _retained, (lambda: None)
 
-    agent_memory.retain = fake
-    return written, (lambda: setattr(agent_memory, "retain", real))
+
+def test_the_suite_cannot_write_to_the_real_memory_bank():
+    """The guard above, checked -- not the tests that rely on it.
+
+    Every run of this file used to add two facts about a fabricated interface
+    to the real bank, from a test that was not about memory at all.
+    """
+    assert agent_memory.retain is _no_write_retain, (
+        "something restored the real retain; this suite writes to the bank the "
+        "application reads"
+    )
 
 
 def test_a_run_writes_down_what_it_concluded():

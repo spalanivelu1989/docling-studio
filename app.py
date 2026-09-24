@@ -2516,6 +2516,40 @@ def evidence_run_delete(run_id: str) -> dict:
     return {"status": "deleted", "id": run_id}
 
 
+class MemoryReflection(BaseModel):
+    question: str = Field(min_length=3, max_length=500)
+
+
+@app.post("/api/evidence/memory/reflect")
+def evidence_memory_reflect(body: MemoryReflection) -> dict:
+    """Ask the memory bank a question about itself.
+
+    Not part of an investigation, and deliberately reachable only from a
+    button a person presses. `recall` searches memories and hands rows to the
+    agent; this reads the bank and writes an answer, which is an LLM call over
+    text an LLM already wrote. It is the right shape for the questions nothing
+    else in this application can answer -- what have we looked at, where did
+    two runs disagree, what is still open -- and the wrong shape for anything
+    that has to be true, which is why it does not go near a prompt.
+
+    Slow by nature: tens of seconds on Opus, against the bank's whole content.
+    The client gives it its own long deadline; see fitgap/memory.py.
+    """
+    from fitgap import memory as agent_memory
+
+    ok, detail = agent_memory.available()
+    if not ok:
+        raise HTTPException(503, detail or "The memory server is not reachable.")
+    result = agent_memory.reflect(
+        body.question,
+        context="The Evidence Agent's memory of its own investigations of the "
+                "Solvay SPARK L2C corpus. Answer only from those memories.",
+    )
+    if result.get("error"):
+        raise HTTPException(502, result["error"])
+    return result
+
+
 # --- Ask RAG history ----------------------------------------------------------
 # Same shape as the Evidence Agent's, and deliberately so: a person who has
 # learned one history panel should not have to learn a second.

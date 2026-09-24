@@ -44,8 +44,13 @@ panel, above the investigation and outside it, labelled `not evidence`.
 [Hindsight](https://github.com/vectorize-io/hindsight) (MIT, by Vectorize) is an
 agent memory service. It stores facts, consolidates them into observations, and
 searches with four strategies at once — semantic, BM25, an entity graph and a
-temporal arm. Three operations: `retain`, `recall`, `reflect`. This integration
-uses the first two.
+temporal arm. Three operations, and this integration now uses all three:
+
+| | What it does | Who triggers it |
+| --- | --- | --- |
+| `retain` | Writes what a run established. Hindsight's own LLM splits the note into typed facts — world, observation, experience, opinion. | Every investigation, after `finalise()` |
+| `recall` | Searches those facts and puts the top ones in front of the agent before its first tool call. | Every investigation, before the question |
+| `reflect` | Reads the bank and **writes an answer** from it. | A person, from **Ask memory** on the Evidence Agent |
 
 It is a **separate HTTP server**. This repo ships only the client.
 
@@ -179,6 +184,82 @@ Read by `fitgap/memory.py`, all optional:
 | `HINDSIGHT_BANK` | `spark-evidence` | The memory bank. A second bank is how you keep two corpora apart. |
 | `HINDSIGHT_TIMEOUT` | `8` | Seconds. Deliberately far below the client's own 300s default, which would let a sick memory server stall an investigation. |
 | `HINDSIGHT_RECALL_TOKENS` | `1200` | The ceiling on what one recall may put into the agent's context. |
+| `HINDSIGHT_REFLECT_TIMEOUT` | `120` | Seconds, for `reflect` only. It gets its own client because the timeout is a property of the client, and giving recall and retain a two-minute deadline is the thing `HINDSIGHT_TIMEOUT` exists to prevent. |
+
+And on the server side, set by `hindsight.sh`:
+
+| Variable | Default here | Notes |
+| --- | --- | --- |
+| `HINDSIGHT_API_REFLECT_LLM_MODEL` | `anthropic/claude-sonnet-5` | Reflect only. See below — this is a deadline decision, not a cost one. |
+| `HINDSIGHT_API_REFLECT_LLM_TIMEOUT` | `60` | Hindsight's own per-tool-call deadline inside a reflection. Its default is 30. |
+
+---
+
+## Reflect: asking the memory instead of the corpus
+
+`recall` retrieves. `reflect` **answers**: it runs an agentic loop of searches
+over the bank and writes a briefing from what it finds. The **Ask memory**
+button on the Evidence Agent is the only way to trigger it.
+
+It is there, and deliberately not in an investigation, for two reasons.
+
+**It answers what nothing else can.** No corpus document says which interfaces
+have been investigated, or where two runs disagreed with each other. That only
+exists across the bank. A real reflection over this corpus found a genuine
+contradiction — two documents naming different billing block codes (80 vs Z4)
+for the same control point — which no single run had reported as a conflict.
+
+**It is a summary of summaries.** A memory is already an LLM's reading of a
+run; a reflection is an LLM's reading of those. The structural guarantee still
+holds — nothing reflected is in `session.retrieved`, so none of it can become a
+citation — but prose the agent cannot check belongs in front of a person who
+can. `test_reflect_never_reaches_the_agent` fails if `evidence/agent.py` ever
+mentions it.
+
+### It needs its own model, and that is not about cost
+
+Reflect on Opus does not work. Every attempt failed like this:
+
+```
+LiteLLM tool call exceeded timeout=30.0s (scope=reflect_tool_call), retrying...
+LiteLLM tool call timed out after 30.0s on 4 attempts
+[REFLECT] LLM error on iteration 3: TimeoutError (127023ms)
+```
+
+The 30 seconds is Hindsight's own per-call deadline inside a reflection, and
+its comment says how it was chosen: against calls "answering in 1-4s", times a
+retry ladder of three. Opus does not answer in 1–4s. Raising the deadline makes
+a *working* reflection take minutes, because the ladder multiplies it.
+
+So reflect runs on Sonnet and retain keeps Opus, which is the right split
+anyway: extraction decides what the bank believes forever, and reflect is
+reading and summarising. On Sonnet a reflection answers in **35–50 seconds**.
+
+### Provenance comes from the trace, not from `based_on`
+
+`ReflectResponse.based_on` is the obvious field, it is documented as "evidence
+used to generate the response", and **it is always empty here**. Hindsight's
+own docstring says why: *"based_on: Empty dict (agent retrieves facts
+dynamically)"*. Agentic reflect fetches facts through tool calls rather than
+being handed a set.
+
+Reading it returned an answer with no sources and no error, which looks exactly
+like a server that forgot to send them. The panel asks for
+`include_tool_calls` instead and rebuilds provenance from the trace: the
+searches it ran, and every memory they returned. A real reflection showed three
+searches and 20 memories.
+
+The four tools (`lookup`, `recall`, `learn`, `expand`) do not agree on an
+output shape — some return a list, some an object with `results`, `memories` or
+`facts` — so `_facts_in()` handles all of them and skips anything without text
+rather than guessing.
+
+### What it costs
+
+Reflect reads the whole bank, so the input side grows as the bank does. Over 35
+memories a reflection ran **36,000–64,000 input tokens** and 1,700–3,300 out.
+The panel prints both under the answer, because this is the one button in the
+application that spends real money per press.
 
 ---
 
@@ -260,5 +341,12 @@ silently dropped.
 * **No way to read or prune the bank from the UI.** A wrong memory can only be
   removed with the Hindsight client or its own UI. Worth having before this is
   trusted with a lot of runs.
-* **`reflect` is unused.** It is the operation that reasons over memory rather
-  than retrieving from it, and the obvious next thing to try.
+* **Mental models are unused.** `create_mental_model` is a *standing* reflect:
+  precomputed against a source query, refreshed on a trigger, readable at zero
+  latency. That is the shape that would let a dense synthesis sit in front of
+  an investigation without putting an LLM call on the hot path — which is the
+  one thing `reflect` cannot do. `list_mental_models` returns 0 today.
+* **Directives are unused.** Standing instructions applied during retain and
+  reflect. Tempting for "never keep a claim without a source document", but
+  that rule is already enforced in `worth_remembering()`, client-side, where it
+  cannot be reworded by a model.
