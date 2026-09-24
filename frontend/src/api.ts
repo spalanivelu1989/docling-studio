@@ -1162,6 +1162,34 @@ export interface EvidenceToolCall {
   trace?: EvidenceTrace | null;
 }
 
+/** What the agent recalled before it started, and whether it was allowed to.
+ *  Memory ORIENTS a run and can never ground one: nothing recalled here is in
+ *  `session.retrieved`, so a quote taken from it fails verification and its
+ *  claim is dropped. The panel says so, because a reader who sees a memory
+ *  beside the evidence must not mistake it for evidence. */
+export interface EvidenceMemory {
+  /** The toggle was on for this run. */
+  enabled: boolean;
+  /** Memory was actually read. False under holdout even when enabled. */
+  used: boolean;
+  /** Why it was not read, when it was asked for. */
+  suppressed_by_holdout: boolean;
+  recalled: number;
+  memories: { id: string; text: string; type: string; score: number | null }[];
+}
+
+/** Whether the Hindsight memory server is reachable, and how much it holds. */
+export interface MemoryStatus {
+  /** HINDSIGHT_URL is set. Empty means memory is switched off deliberately. */
+  configured: boolean;
+  /** The server answered. When false, `detail` says why. */
+  available: boolean;
+  detail: string;
+  url: string;
+  bank: string;
+  memories?: number;
+}
+
 export interface EvidenceStatus {
   model: string;
   prompt_hash: string;
@@ -1177,6 +1205,7 @@ export interface EvidenceStatus {
   graph: { total_nodes: number; total_edges: number } | null;
   /** How many investigations are on record. */
   history?: { runs: number; answered: number; database?: string; error?: string };
+  memory?: MemoryStatus;
   error: string | null;
 }
 
@@ -1198,6 +1227,8 @@ export interface EvidenceRunSummary {
   sources: number;
   tool_calls: number;
   categories: string[];
+  /** `{}` for a run recorded before memory existed. */
+  memory?: EvidenceMemory | Record<string, never>;
   /** The first 180 characters of the answer. */
   summary: string;
 }
@@ -1219,6 +1250,8 @@ export interface EvidenceHandlers {
   /** The id the investigation is being recorded under, sent before any work
    *  starts so the page can link to it even if the run is abandoned. */
   run?: (r: { id: string; not_saved?: string }) => void;
+  /** Sent once, before the first tool call, whether or not memory was on. */
+  memory?: (m: EvidenceMemory) => void;
   toolCall: (c: EvidenceToolCall) => void;
   answer: (a: EvidenceAnswer) => void;
   error: (message: string) => void;
@@ -1229,7 +1262,7 @@ export interface EvidenceHandlers {
  *  re-run (and re-bill) the whole investigation. */
 export async function askEvidence(
   /** An empty `categories` reads every one of them. */
-  body: { question: string; holdout?: boolean; categories?: string[] },
+  body: { question: string; holdout?: boolean; categories?: string[]; memory?: boolean },
   on: EvidenceHandlers,
   signal: AbortSignal,
 ) {
@@ -1260,6 +1293,7 @@ export async function askEvidence(
       if (!data) continue;
       const payload = JSON.parse(data);
       if (event === "run") on.run?.(payload);
+      else if (event === "memory") on.memory?.(payload);
       else if (event === "tool_call") on.toolCall(payload);
       else if (event === "answer") on.answer(payload);
       else if (event === "error") on.error(payload.message);

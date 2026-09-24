@@ -8,13 +8,14 @@ import { AnimatePresence, motion } from "framer-motion";
 import {
   Ban, BookOpen, ChevronDown, ChevronUp, CircleAlert, CircleCheck, CircleHelp, Copy, Dices, Eye,
   FileText, FlaskConical, GitBranch, History as HistoryIcon, Network, Quote, Scale,
-  ScanLine, Search, SendHorizontal, Sigma, Square, Target, Trash2, TriangleAlert,
+  Brain, ScanLine, Search, SendHorizontal, Sigma, Square, Target, Trash2, TriangleAlert,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactElement } from "react";
 import {
   api, askEvidence, evidence,
   type EvidenceToolSources,
   type AnswerState, type EvidenceAnswer, type EvidenceClaim, type EvidenceSource,
+  type EvidenceMemory,
   type EvidenceRunSummary, type EvidenceStatus, type EvidenceToolCall, type ScoreTerm,
   type EvidenceRagHit,
   type Source, type Stance,
@@ -22,6 +23,7 @@ import {
 import {
   CATEGORY_LABEL, EVAL_QUESTIONS, EVAL_QUESTIONS_BY_GROUP, HALVES, type EvalQuestion,
 } from "../data/evalQuestions";
+import { surface } from "../theme";
 import { clearAdornment } from "../components/ClearAdornment";
 import DocumentInspectorDrawer from "../components/DocumentInspectorDrawer";
 import AgentTraceDrawer from "../components/AgentTraceDrawer";
@@ -362,6 +364,13 @@ function ClaimCard({ claim, index, onInspect, busyChunk }: {
   );
 }
 
+/** How many notes a recorded run started from. Runs from before memory existed
+ *  carry `{}`, which is neither on nor off — just older than the feature. */
+function memoryNotes(run: { memory?: EvidenceMemory | Record<string, never> }): number {
+  const m = run.memory;
+  return m && "recalled" in m && m.used ? m.recalled : 0;
+}
+
 /* --------------------------------------------------------------------- page */
 
 export default function EvidencePage({ active }: { active: boolean }) {
@@ -370,6 +379,11 @@ export default function EvidencePage({ active }: { active: boolean }) {
   const [question, setQuestion] = useState("");
   const [picked, setPicked] = useState<EvalQuestion | null>(null);
   const [holdout, setHoldout] = useState(false);
+  // Memory is off unless asked for. It changes what the agent is told before
+  // it starts, so a run with it on is not the same experiment as one without,
+  // and the row records which it was.
+  const [useMemory, setUseMemory] = useState(false);
+  const [memory, setMemory] = useState<EvidenceMemory | null>(null);
   // Every investigation reads the whole corpus; the category a chunk is filed
   // under is still reported on each tool call, but it is no longer a control.
   const [running, setRunning] = useState(false);
@@ -510,6 +524,22 @@ export default function EvidencePage({ active }: { active: boolean }) {
     loadHistory();
   }, [active, loadHistory]);
 
+  // The toggle is offered only when there is something to offer. A switch that
+  // silently does nothing is worse than one that is visibly unavailable and
+  // says why -- the server is a separate process and is usually not running.
+  const mem = status?.memory;
+  const memoryOff = holdout || !mem?.available;
+  const memoryTip = holdout
+    ? "Memory is off under holdout. Holdout measures the agent against a corpus it cannot look "
+      + "the answer up in, and an earlier run's answer arriving through memory would hand it back."
+    : !mem?.configured
+    ? "Memory is switched off: HINDSIGHT_URL is empty."
+    : !mem.available
+    ? `No memory server at ${mem.url} — ${mem.detail}. See docs/agent-memory.md.`
+    : `Read what earlier investigations concluded, and write down what this one does. `
+      + `${mem.memories ?? 0} memories in '${mem.bank}'. Memory steers the search; it is never `
+      + `evidence and can never be cited.`;
+
   const engineCounts = useMemo(() => {
     const c: Record<string, number> = {};
     for (const call of calls) c[call.engine] = (c[call.engine] ?? 0) + 1;
@@ -520,12 +550,13 @@ export default function EvidencePage({ active }: { active: boolean }) {
     const q = (text ?? question).trim();
     if (!q || running) return;
     setRunning(true); setCalls([]); setAnswer(null); setError(null);
-    setRunId(null); setViewing(null); setNotSaved(null);
+    setRunId(null); setViewing(null); setNotSaved(null); setMemory(null);
     const ctrl = new AbortController();
     controller.current = ctrl;
     try {
-      await askEvidence({ question: q, holdout, categories: [] }, {
+      await askEvidence({ question: q, holdout, categories: [], memory: useMemory }, {
         run: (r) => { setRunId(r.id); setNotSaved(r.not_saved ?? null); },
+        memory: setMemory,
         toolCall: (c) => setCalls((cs) => [...cs, c]),
         answer: setAnswer,
         error: setError,
@@ -552,6 +583,9 @@ export default function EvidencePage({ active }: { active: boolean }) {
       setQuestion(run.question);
       setPicked(EVAL_QUESTIONS.find((q) => q.question === run.question) ?? null);
       setHoldout(run.holdout);
+      const remembered = run.memory as EvidenceMemory | undefined;
+      setMemory(remembered && "enabled" in remembered ? remembered : null);
+      setUseMemory(!!remembered && "enabled" in remembered && remembered.enabled);
       setCalls(run.calls ?? []);
       setAnswer(run.answer);
       setRunId(run.id);
@@ -675,8 +709,20 @@ export default function EvidencePage({ active }: { active: boolean }) {
             </Tooltip>
             <Tooltip title="Hide the fit registers and blank FIT/GAP tokens, for an unbiased evaluation run">
               <Stack direction="row" spacing={0.5} sx={{ alignItems: "center" }}>
-                <Switch size="small" checked={holdout} onChange={(e) => setHoldout(e.target.checked)} />
+                <Switch size="small" checked={holdout}
+                        onChange={(e) => setHoldout(e.target.checked)} />
                 <Typography sx={{ fontSize: 12, color: "text.secondary" }}>holdout</Typography>
+              </Stack>
+            </Tooltip>
+            <Tooltip title={memoryTip}>
+              <Stack direction="row" spacing={0.5} sx={{ alignItems: "center",
+                                                        opacity: memoryOff ? 0.5 : 1 }}>
+                <Switch size="small" checked={useMemory && !memoryOff} disabled={memoryOff}
+                        onChange={(e) => setUseMemory(e.target.checked)} />
+                <Stack direction="row" spacing={0.4} sx={{ alignItems: "center" }}>
+                  <Brain size={13} />
+                  <Typography sx={{ fontSize: 12, color: "text.secondary" }}>memory</Typography>
+                </Stack>
               </Stack>
             </Tooltip>
             {running ? (
@@ -755,6 +801,13 @@ export default function EvidencePage({ active }: { active: boolean }) {
                         )}
                         {h.holdout && <Chip size="small" variant="outlined" label="holdout"
                                             sx={{ height: 16, fontSize: 9.5 }} />}
+                        {memoryNotes(h) > 0 && (
+                          <Tooltip title={`Started from ${plural(memoryNotes(h), "note")} recalled from earlier investigations`}>
+                            <Chip size="small" variant="outlined" icon={<Brain size={10} />}
+                                  label={memoryNotes(h)}
+                                  sx={{ height: 16, fontSize: 9.5, "& .MuiChip-icon": { ml: 0.4 } }} />
+                          </Tooltip>
+                        )}
                         <Typography sx={{ fontSize: 10.5, color: "text.disabled" }}>
                           {plural(h.tool_calls, "call")}
                           {h.claims ? ` · ${plural(h.claims, "claim")}` : ""}
@@ -782,6 +835,56 @@ export default function EvidencePage({ active }: { active: boolean }) {
             Showing a recorded investigation from {when(history.find((h) => h.id === viewing)?.started_at ?? null)}
             {" "}(<code>{viewing}</code>). Nothing was re-run.
           </Alert>
+        )}
+
+        {/* what the agent was told before it started */}
+        {memory && (memory.used || memory.suppressed_by_holdout) && (
+          <Paper sx={{ p: 1.75, mb: 2.5 }}>
+            <Stack direction="row" spacing={1} sx={{ alignItems: "center", mb: memory.recalled ? 1.25 : 0 }}>
+              <Brain size={15} color={theme.palette.text.secondary} />
+              <Typography variant="overline" color="text.secondary" sx={{ lineHeight: 1 }}>
+                Memory · {memory.suppressed_by_holdout ? "not read" : plural(memory.recalled, "note")}
+              </Typography>
+              <Box sx={{ flex: 1 }} />
+              <Chip size="small" variant="outlined" label="not evidence"
+                    sx={{ height: 20, fontSize: 10.5, fontWeight: 700 }} />
+            </Stack>
+            {memory.suppressed_by_holdout ? (
+              <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
+                Memory was requested but not read: this is a holdout run. Holdout measures the
+                agent against a corpus it cannot look the answer up in, and an earlier run's
+                answer arriving through memory would hand it back.
+              </Typography>
+            ) : memory.recalled === 0 ? (
+              <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
+                Nothing was remembered about this question. The agent started from the corpus, as
+                it always did.
+              </Typography>
+            ) : (
+              <>
+                <Typography sx={{ fontSize: 11.5, color: "text.secondary", mb: 1 }}>
+                  Notes from earlier investigations, given to the agent before its first search.
+                  They steer where it looks. They are <b>not</b> evidence and cannot be cited: a
+                  quote that is not in a chunk retrieved in this run is discarded, so nothing here
+                  can reach an answer without being proved again from the corpus.
+                </Typography>
+                <Stack spacing={0.75}>
+                  {memory.memories.map((m, i) => (
+                    <Box key={m.id || i} sx={{ p: 1, borderRadius: 1.5, border: 1,
+                                               borderColor: "divider", bgcolor: surface(theme, 0.5) }}>
+                      <Stack direction="row" spacing={0.75} sx={{ alignItems: "baseline" }}>
+                        <Typography sx={{ fontSize: 10, fontWeight: 800, color: "text.disabled",
+                                          textTransform: "uppercase", letterSpacing: ".04em" }}>
+                          {m.type || "note"}
+                        </Typography>
+                        <Typography sx={{ fontSize: 12.5, lineHeight: 1.5 }}>{m.text}</Typography>
+                      </Stack>
+                    </Box>
+                  ))}
+                </Stack>
+              </>
+            )}
+          </Paper>
         )}
 
         {/* the investigation, live */}

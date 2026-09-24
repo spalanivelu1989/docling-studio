@@ -26,6 +26,7 @@ import tracing  # noqa: E402
 from fitgap import tools as ftools  # noqa: E402
 from fitgap import verifier as fverify  # noqa: E402
 
+from fitgap import memory as agent_memory  # noqa: E402
 from fitgap import trace  # noqa: E402
 from . import independence, paths, provenance, scoring  # noqa: E402
 from .schemas import Answer, Claim, Source  # noqa: E402
@@ -381,6 +382,61 @@ def tool_definitions() -> list[dict]:
     return defs
 
 
+# --- memory --------------------------------------------------------------------
+# What earlier runs worked out, and what this one is worth writing down. The
+# transport and the policy live in fitgap/memory.py; what an INVESTIGATION is
+# worth remembering is here, because it is a judgement about evidence.
+
+MEMORY_PREFACE = """\
+═══ WHAT EARLIER INVESTIGATIONS FOUND ═══
+
+These are notes from your own past runs over this corpus. They are NOT
+EVIDENCE. Nothing below is retrievable, and nothing below may be quoted or
+cited: a quote that is not in a chunk a tool returned to you in THIS run is
+discarded automatically and its claim falls to the floor.
+
+Use them for one thing only -- deciding where to look first. Then prove it from
+the corpus. If what you retrieve contradicts a note, the corpus wins; say so in
+your answer, and do not repeat the note.
+"""
+
+
+def memory_note(memories: list[dict]) -> str:
+    """The recalled memories, as the block that goes in front of the question."""
+    lines = [MEMORY_PREFACE]
+    for i, m in enumerate(memories, 1):
+        lines.append(f"{i}. {m['text'].strip()}")
+    return "\n".join(lines)
+
+
+def worth_remembering(answer: Answer) -> str:
+    """What this investigation established, in the words a later run needs.
+
+    Only claims that still carry a source survive: finalise() has already
+    dropped every quote that was not found in the chunk it named, so a claim
+    with no sources left is one whose evidence did not hold up. Writing that
+    into memory would be worse than forgetting it -- nothing downstream
+    re-checks a memory, so it would be believed forever.
+
+    An answer that found nothing is still worth keeping. "We looked for this
+    and the corpus does not address it" is exactly the note that stops the next
+    run spending its whole budget re-discovering the same absence.
+    """
+    kept = [c for c in answer.claims if c.sources]
+    lines = [f"Question: {answer.question}",
+             f"Answer ({answer.state}): {answer.answer}"]
+    if kept:
+        lines.append("Established:")
+        for c in kept:
+            docs = sorted({s.doc for s in c.sources if s.doc})
+            carried = f"; carried by {', '.join(docs)}" if docs else ""
+            lines.append(f"- {c.text} [confidence {c.score:.2f}{carried}]")
+    if answer.open_questions:
+        lines.append("Still open:")
+        lines.extend(f"- {q}" for q in answer.open_questions)
+    return "\n".join(lines)
+
+
 # --- the run -------------------------------------------------------------------
 
 _ID = re.compile(r"\b(?:SPARK-\d{4,6}|[A-Z]-\d{2,3}(?:-\d{2,3})+|\d+(?:\.\d+){2,})\b")
@@ -388,12 +444,19 @@ _ID = re.compile(r"\b(?:SPARK-\d{4,6}|[A-Z]-\d{2,3}(?:-\d{2,3})+|\d+(?:\.\d+){2,
 
 def run(question: str, holdout: bool = False,
         on_event: Callable[[str, dict], None] | None = None,
-        categories: list[str] | None = None) -> Iterator[tuple[str, dict]]:
-    """Answer one question. Yields ('tool_call'|'thinking'|'answer'|'error', payload).
+        categories: list[str] | None = None,
+        memory: bool = False) -> Iterator[tuple[str, dict]]:
+    """Answer one question. Yields ('tool_call'|'memory'|'answer'|'error', payload).
 
     `categories` restricts which document categories the run may read. It is
     enforced in the session rather than left to the model, and the model is
-    told about it so it does not report a gap that is really the filter."""
+    told about it so it does not report a gap that is really the filter.
+
+    `memory` lets the run read what earlier runs concluded, and writes down what
+    this one concludes. It is ignored under holdout: holdout hides the fit
+    registers to measure the agent against a corpus it cannot look the answer up
+    in, and a previous run's answer arriving through memory would hand it back.
+    """
     import anthropic
 
     started = time.time()
@@ -416,6 +479,24 @@ def run(question: str, holdout: bool = False,
             "question. Everything else is out of reach, so say what these documents do "
             "and do not show rather than treating the rest of the corpus as missing.]"
         )
+    # Memory goes in front of the question rather than into a tool, for two
+    # reasons. The tool budget is 14 calls and every one spent on memory is one
+    # not spent on evidence -- and memory cannot be cited, so it can never repay
+    # that call the way a retrieval can. And a note is only useful before the
+    # first search, which is exactly where a preface sits.
+    remembered: list[dict] = []
+    use_memory = agent_memory.allowed(memory, holdout)
+    if use_memory:
+        remembered = agent_memory.recall(question)
+        if remembered:
+            prompt = f"{memory_note(remembered)}\n\n═══ THE QUESTION ═══\n\n{prompt}"
+    event = {"enabled": bool(memory), "used": use_memory,
+             "suppressed_by_holdout": bool(memory) and holdout,
+             "recalled": len(remembered), "memories": remembered}
+    if on_event:
+        on_event("memory", event)
+    yield "memory", event
+
     messages: list[dict[str, Any]] = [{"role": "user", "content": prompt}]
     defs = tool_definitions()
 
@@ -526,6 +607,20 @@ def run(question: str, holdout: bool = False,
                 open_questions=["Re-run this question."])
 
         final = finalise(submitted, session, engines, calls, in_tokens, out_tokens, started)
+        if use_memory:
+            # After finalise, so only verified evidence can be written down, and
+            # best-effort, so a memory server that has gone away cannot turn an
+            # answer that exists into an error.
+            agent_memory.retain(
+                worth_remembering(final),
+                context=f"Evidence Agent investigation of the Solvay SPARK L2C corpus"
+                        f"{' (' + ', '.join(scope) + ' only)' if scope else ''}",
+                metadata={"state": final.state, "model": MODEL,
+                          "prompt_hash": prompt_hash(),
+                          "categories": ",".join(scope) or "all",
+                          "claims": str(len([c for c in final.claims if c.sources]))},
+                tags=["evidence", final.state] + [c.lower() for c in scope],
+            )
         run.end(output={"state": final.state, "answer": final.answer,
                         "claims": len(final.claims),
                         "open_questions": len(final.open_questions),

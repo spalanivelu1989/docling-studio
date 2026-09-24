@@ -14,7 +14,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import knowledge_graph  # noqa: E402
 
-from evidence import independence, paths, provenance, scoring  # noqa: E402
+from evidence import agent as ev_agent, independence, paths, provenance, scoring  # noqa: E402
+from fitgap import memory as agent_memory  # noqa: E402
 from fitgap import trace  # noqa: E402
 from evidence.schemas import Answer, Claim, GraphFact, Source  # noqa: E402
 
@@ -635,6 +636,206 @@ def test_a_broken_trace_never_breaks_the_run():
 
 def test_an_unknown_tool_contributes_nothing():
     assert trace.of("submit_answer", {}, {"ok": True}) is None
+
+
+# --- memory -------------------------------------------------------------------
+# Memory orients a run and must never ground one. These pin the two places that
+# is enforced: what may be written down, and when it may be read at all.
+
+
+def test_holdout_beats_the_memory_toggle():
+    """A holdout run that read memory would be scored on the memory. Both
+    directions: it must not read, and it must not write either."""
+    assert agent_memory.allowed(True, holdout=False) is True
+    assert agent_memory.allowed(True, holdout=True) is False
+    assert agent_memory.allowed(False, holdout=False) is False
+    assert agent_memory.allowed(False, holdout=True) is False
+
+
+def test_only_verified_claims_are_remembered():
+    """finalise() strips every quote it could not find in the chunk it named,
+    so a claim left with no sources is one whose evidence did not hold up.
+    Nothing re-checks a memory, so writing that down would be believing it for
+    ever."""
+    kept = Claim(text="The interface covers 19 tickets.", score=0.75,
+                 sources=[src(quote="19 SPARK tickets")])
+    dropped = Claim(text="It also covers M3.", score=0.4,
+                    sources=[src(quote="a quote that is not in the chunk")])
+    answer = Answer(question="Which tickets?", state="supported",
+                    answer="Nineteen.", claims=[kept, dropped])
+    # How finalise() leaves a claim whose every quote failed verification. It
+    # uses model_copy, which does not re-validate -- the schema refuses to
+    # BUILD a sourceless claim, so this state only ever arrives that way, and
+    # constructing it any other way would test something that cannot happen.
+    answer = answer.model_copy(update={
+        "claims": [kept, dropped.model_copy(update={"sources": []})]})
+
+    note = ev_agent.worth_remembering(answer)
+    assert "19 tickets" in note
+    assert "M3" not in note, "a claim whose quotes were all discarded was remembered"
+
+
+def test_an_absence_is_worth_remembering():
+    """'We looked and the corpus does not address this' is the note that stops
+    the next run spending its whole budget rediscovering the same absence."""
+    answer = Answer(question="Does it cover payroll?", state="not_in_corpus",
+                    answer="Nothing in the corpus addresses payroll.",
+                    open_questions=["Ask the process lead whether payroll is in scope."])
+    note = ev_agent.worth_remembering(answer)
+    assert "not_in_corpus" in note
+    assert "payroll" in note
+    assert "Still open:" in note
+
+
+def test_the_memory_preface_says_it_is_not_evidence():
+    """The agent is told, in the same block, that none of this can be cited.
+    The machinery already enforces it; saying so stops the model wasting a
+    submission on a quote that will be discarded."""
+    note = ev_agent.memory_note([{"text": "The eCommerce spec covers 19 tickets."}])
+    assert "NOT" in note and "EVIDENCE" in note
+    assert "corpus wins" in note
+    assert "19 tickets" in note
+
+
+def test_a_memory_server_that_is_not_there_is_not_an_error():
+    """The server is a separate process and is usually not running. Every call
+    has to come back empty rather than raise, or an investigation would depend
+    on a daemon that has nothing to do with it."""
+    real = agent_memory.URL
+    agent_memory.URL = "http://127.0.0.1:9"  # discard port: refuses immediately
+    agent_memory._client = None
+    agent_memory._probe = (0.0, False, "")
+    try:
+        ok, detail = agent_memory.available(force=True)
+        assert ok is False and detail, "a dead server reported no reason"
+        assert agent_memory.recall("anything") == []
+        assert agent_memory.retain("anything") is False
+        assert agent_memory.stats() == {"memories": 0}
+    finally:
+        agent_memory.close()
+        agent_memory.URL = real
+
+
+def test_memory_switched_off_asks_nothing_of_the_network():
+    """An empty HINDSIGHT_URL means off. It must not fall back to a default and
+    start probing a host nobody asked for."""
+    real = agent_memory.URL
+    agent_memory.URL = ""
+    agent_memory._client = None
+    agent_memory._probe = (0.0, False, "")
+    try:
+        assert agent_memory.configured() is False
+        ok, detail = agent_memory.available(force=True)
+        assert ok is False and "switched off" in detail
+        assert agent_memory.recall("anything") == []
+    finally:
+        agent_memory.URL = real
+
+
+# --- the wiring ---------------------------------------------------------------
+# The two calls above are only useful if run() actually makes them. These drive
+# the real loop with a stubbed model, because the link that was never proved by
+# hand is "does the run write anything down at all".
+
+
+class _FakeAnthropic:
+    """A model that submits a fixed answer on its first turn and no tools."""
+
+    def __init__(self, *a, **k):
+        self.messages = self
+
+    def create(self, **kwargs):
+        import types
+
+        answer = {"question": "ignored", "state": "not_in_corpus",
+                  "answer": "Nothing in the corpus addresses the Zeta interface.",
+                  "claims": [],
+                  "open_questions": ["Ask whether Zeta is in programme scope."],
+                  "limits": []}
+        use = types.SimpleNamespace(type="tool_use", name="submit_answer",
+                                    id="tu_1", input=answer)
+        usage = types.SimpleNamespace(input_tokens=10, output_tokens=5,
+                                      cache_read_input_tokens=0,
+                                      cache_creation_input_tokens=0)
+        return types.SimpleNamespace(content=[use], usage=usage)
+
+
+def _drive(question, **kw):
+    """Run the agent against the fake model, collecting every event."""
+    import sys as _sys
+    import types
+
+    fake = types.ModuleType("anthropic")
+    fake.Anthropic = _FakeAnthropic
+    real = _sys.modules.get("anthropic")
+    _sys.modules["anthropic"] = fake
+    try:
+        return list(ev_agent.run(question, **kw))
+    finally:
+        if real is not None:
+            _sys.modules["anthropic"] = real
+        else:
+            _sys.modules.pop("anthropic", None)
+
+
+def _capture_retain():
+    """Swap out the retain call and hand back the list it writes into."""
+    written: list[dict] = []
+    real = agent_memory.retain
+
+    def fake(content, **kw):
+        written.append({"content": content, **kw})
+        return True
+
+    agent_memory.retain = fake
+    return written, (lambda: setattr(agent_memory, "retain", real))
+
+
+def test_a_run_writes_down_what_it_concluded():
+    written, restore = _capture_retain()
+    try:
+        events = _drive("Does the corpus cover the Zeta interface?", memory=True)
+    finally:
+        restore()
+
+    kinds = [e for e, _ in events]
+    assert kinds[0] == "memory", f"the memory event must come first, got {kinds[:2]}"
+    assert "answer" in kinds
+
+    assert len(written) == 1, f"the run wrote {len(written)} memories, expected 1"
+    note = written[0]["content"]
+    assert "Zeta" in note and "not_in_corpus" in note
+    assert "evidence" in written[0]["tags"]
+    assert written[0]["metadata"]["state"] == "not_in_corpus"
+
+
+def test_a_holdout_run_writes_nothing_down_and_says_so():
+    written, restore = _capture_retain()
+    try:
+        events = _drive("Does the corpus cover the Zeta interface?",
+                        memory=True, holdout=True)
+    finally:
+        restore()
+
+    event = next(data for kind, data in events if kind == "memory")
+    assert event["enabled"] is True
+    assert event["used"] is False
+    assert event["suppressed_by_holdout"] is True
+    assert event["recalled"] == 0
+    assert written == [], "a holdout run wrote its answer into memory"
+
+
+def test_a_run_with_the_toggle_off_leaves_memory_alone():
+    written, restore = _capture_retain()
+    try:
+        events = _drive("Does the corpus cover the Zeta interface?")
+    finally:
+        restore()
+
+    event = next(data for kind, data in events if kind == "memory")
+    assert event == {"enabled": False, "used": False, "suppressed_by_holdout": False,
+                     "recalled": 0, "memories": []}
+    assert written == []
 
 
 if __name__ == "__main__":

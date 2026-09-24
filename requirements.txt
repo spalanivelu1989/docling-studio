@@ -24,3 +24,10 @@ pydantic
 langfuse
 opentelemetry-instrumentation-anthropic
 opentelemetry-instrumentation-threading
+
+# fitgap/memory.py: long-term agent memory over Hindsight. The CLIENT only --
+# nine small packages and no conflicts. The SERVER (hindsight-api) pulls 115,
+# two of which downgrade Docling's transformers and tokenizers, so it belongs
+# in its own environment. docs/agent-memory.md has the commands. With no server
+# running, memory reports itself unavailable and every agent works as before.
+hindsight-client

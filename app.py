@@ -76,6 +76,12 @@ async def lifespan(_app: FastAPI):
     print(tracing.start())
     yield
     tracing.shutdown()
+    try:
+        from fitgap import memory as agent_memory
+
+        agent_memory.close()
+    except Exception:
+        pass
 
 
 app = FastAPI(title="Docling Extraction UI", lifespan=lifespan)
@@ -2231,6 +2237,16 @@ def evidence_status() -> dict:
         "error": None,
     }
     try:
+        # Whether the memory server is up, so the page can offer the toggle
+        # rather than let it fail on the first run. Probed with a short
+        # deadline and cached, so a server that is down costs nothing here.
+        from fitgap import memory as agent_memory
+
+        info["memory"] = agent_memory.describe()
+    except Exception as exc:
+        info["memory"] = {"configured": False, "available": False,
+                          "detail": f"{type(exc).__name__}: {exc}"}
+    try:
         # What the run may be pointed at, and how much is in each.
         info["categories"] = [
             {"code": code, "documents": docs, "chunks": chunks}
@@ -2267,6 +2283,9 @@ class EvidenceQuestion(BaseModel):
     holdout: bool = False
     # Empty means every category, matching the Ask and Knowledge Graph pages.
     categories: list[str] = Field(default_factory=list)
+    # Read what earlier runs concluded, and write down what this one does.
+    # Ignored under holdout -- see fitgap/memory.py for why.
+    memory: bool = False
 
 
 @app.post("/api/evidence/ask")
@@ -2313,11 +2332,14 @@ def evidence_ask(body: EvidenceQuestion) -> StreamingResponse:
 
         try:
             for event, data in ev_agent.run(
-                question, holdout=body.holdout, categories=categories
+                question, holdout=body.holdout, categories=categories,
+                memory=body.memory,
             ):
                 if conn is not None:
                     try:
-                        if event == "tool_call":
+                        if event == "memory":
+                            ev_store.save_memory(conn, run_id, data)
+                        elif event == "tool_call":
                             calls.append(data)
                             ev_store.save_calls(conn, run_id, calls)
                         elif event == "answer":

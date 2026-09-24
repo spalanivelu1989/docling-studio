@@ -77,6 +77,12 @@ def create_schema(conn=None) -> None:
         )
         conn.execute("CREATE INDEX IF NOT EXISTS evidence_runs_started_idx"
                      " ON evidence_runs (started_at DESC)")
+        # Added after the table existed. What the run remembered, and whether
+        # it was allowed to: a reopened answer that was steered by memory read
+        # something this corpus does not contain, and the row has to say so or
+        # the run cannot be reproduced.
+        conn.execute("ALTER TABLE evidence_runs ADD COLUMN IF NOT EXISTS"
+                     " memory jsonb NOT NULL DEFAULT '{}'::jsonb")
 
 
 def start_run(conn, run: dict) -> None:
@@ -99,6 +105,17 @@ def save_calls(conn, run_id: str, calls: list[dict]) -> None:
     because twelve calls of a few hundred bytes is not worth a second table."""
     conn.execute("UPDATE evidence_runs SET calls = %s WHERE id = %s",
                  (json.dumps(calls, default=str), run_id))
+    conn.commit()
+
+
+def save_memory(conn, run_id: str, memory: dict) -> None:
+    """What memory contributed, recorded before the first tool call.
+
+    Written on its own rather than folded into finish_run because a run that
+    is abandoned half way still read those memories, and the reason its
+    reasoning looks the way it does is in them."""
+    conn.execute("UPDATE evidence_runs SET memory = %s WHERE id = %s",
+                 (json.dumps(memory, default=str), run_id))
     conn.commit()
 
 
@@ -145,7 +162,7 @@ def _status(status: str, started_at) -> str:
 
 _COLUMNS = ("id, question, holdout, categories, model, prompt_hash, corpus_fingerprint,"
             " started_at, finished_at, status, state, input_tokens, output_tokens,"
-            " seconds, answer, calls, error")
+            " seconds, answer, calls, error, memory")
 
 
 def _row(r) -> dict:
@@ -157,6 +174,7 @@ def _row(r) -> dict:
         "status": _status(r[9], r[7]), "state": r[10],
         "input_tokens": r[11], "output_tokens": r[12], "seconds": r[13],
         "answer": r[14], "calls": r[15] or [], "error": r[16],
+        "memory": r[17] or {},
     }
 
 
@@ -170,7 +188,8 @@ def list_runs(conn, limit: int = 50) -> list[dict]:
     reopen it, without carrying every claim and quote of fifty runs."""
     rows = conn.execute(
         """SELECT id, question, holdout, status, state, started_at, finished_at,
-                  seconds, model, answer, jsonb_array_length(calls), categories
+                  seconds, model, answer, jsonb_array_length(calls), categories,
+                  memory
            FROM evidence_runs ORDER BY started_at DESC LIMIT %s""",
         (limit,),
     ).fetchall()
@@ -192,6 +211,7 @@ def list_runs(conn, limit: int = 50) -> list[dict]:
             # passages that call returned.
             "tool_calls": r[10] or 0,
             "categories": r[11] or [],
+            "memory": r[12] or {},
             # The one-line answer, so the strip is scannable without opening
             # anything. Truncated here rather than in the browser: there is no
             # reason to send 1,400 characters fifty times over.

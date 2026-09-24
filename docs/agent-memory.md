@@ -1,0 +1,171 @@
+# Agent memory
+
+The Evidence Agent starts every investigation from nothing. Ask it the same
+question twice and it pays twice: the same searches, the same traversals, the
+same fourteen tool calls, to reach the same answer over a corpus that did not
+change in between.
+
+Memory fixes that half of the problem. It does **not** fix the other half, and
+the distinction is the whole design, so read the next section before the
+commands.
+
+---
+
+## Memory orients. It never grounds.
+
+A claim in this system is carried by a quote, and every quote is checked
+against `session.retrieved` — the record of what the retrieval tools actually
+returned **in this run**. A quote that is not in there is discarded and its
+claim falls to the floor.
+
+Nothing recalled from memory is in `session.retrieved`. So a remembered fact
+**cannot be cited, no matter what the model does with it.** That is not a rule
+the prompt asks for; it is what the verifier already does, and memory was built
+to sit on the safe side of it.
+
+What memory is allowed to do is tell the agent where to look first. What it
+finds there still has to be proved from the corpus, and if the corpus
+disagrees, the corpus wins and the answer says so.
+
+Two rules follow, and both are enforced in code rather than in the prompt:
+
+| Rule | Where | Why |
+| --- | --- | --- |
+| Only **verified** claims are written down | `evidence/agent.py`, `worth_remembering()` | `finalise()` strips every quote it could not find in the chunk it named. A claim left with no sources is one whose evidence did not hold up — and nothing re-checks a memory, so writing it down would mean believing it for ever. |
+| **Holdout** beats the toggle, both ways | `fitgap/memory.py`, `allowed()` | Holdout measures the agent against a corpus with the fit registers hidden. Memory holds answers reached over the corpus *with* them, so a holdout run that reads memory measures the memory. It does not write either: an answer reached without half the corpus is not a finding about it. |
+
+The page says the same thing to the reader. Recalled notes appear in their own
+panel, above the investigation and outside it, labelled `not evidence`.
+
+---
+
+## What it is
+
+[Hindsight](https://github.com/vectorize-io/hindsight) (MIT, by Vectorize) is an
+agent memory service. It stores facts, consolidates them into observations, and
+searches with four strategies at once — semantic, BM25, an entity graph and a
+temporal arm. Three operations: `retain`, `recall`, `reflect`. This integration
+uses the first two.
+
+It is a **separate HTTP server**. This repo ships only the client.
+
+---
+
+## Why the server is not in this venv
+
+```
+uv pip install hindsight-client   →    9 packages, no conflicts
+uv pip install hindsight-api      →  115 packages, and:
+                                       transformers 5.17.0 → 5.15.1
+                                       tokenizers   0.23.2 → 0.22.2
+```
+
+Those two are Docling's. Installing the server here would downgrade the
+document converter's dependencies to satisfy the memory service, which is a bad
+trade in any direction. Give it its own environment.
+
+---
+
+## Setting it up
+
+Anywhere outside this repo:
+
+```bash
+uv venv --python 3.13 hindsight-venv
+uv pip install --python hindsight-venv/bin/python hindsight-api
+```
+
+Then start it. This configuration keeps **everything on the machine** — Ollama
+for the language model, in-process embeddings, embedded Postgres:
+
+```bash
+export HINDSIGHT_API_LLM_PROVIDER=ollama
+export HINDSIGHT_API_LLM_BASE_URL=http://localhost:11434/v1
+export HINDSIGHT_API_LLM_MODEL=qwen3.5
+export HINDSIGHT_API_EMBEDDINGS_PROVIDER=local
+hindsight-venv/bin/hindsight-api --host 127.0.0.1 --port 8888
+```
+
+Check it:
+
+```bash
+curl -s http://127.0.0.1:8888/version
+```
+
+```json
+{"api_version":"0.10.1","features":{"observations":true,"worker":true,...}}
+```
+
+That is all the setup there is. Restart the app and the memory toggle on the
+Evidence page becomes available.
+
+> **The LLM provider decides where your documents go.** The retained note holds
+> what an investigation concluded about Solvay programme documents, and the
+> memory server sends it to whatever model is configured to extract facts from
+> it. `ollama` keeps that on this machine. Point it at OpenAI, Anthropic or
+> Hindsight Cloud and the findings leave it. That is a decision about client
+> material, not a performance setting.
+
+---
+
+## Using it
+
+Turn on **memory** beside **holdout** on the Evidence page and ask a question.
+
+* Before the first search, the agent is handed what earlier runs concluded.
+  The page shows exactly what it was handed, in its own panel.
+* After the answer is verified, what this run established is written back —
+  the question, the state, each surviving claim with its score and the
+  documents that carried it, and the open questions.
+
+Writing back is asynchronous on the server. Fact extraction is a language-model
+job: on Ollama a full investigation note takes minutes to appear in the bank.
+The investigation does not wait for it.
+
+The toggle is unavailable, with the reason in its tooltip, when the server is
+not reachable or `HINDSIGHT_URL` is empty. A run recorded before memory existed
+shows no memory panel at all, rather than an empty one.
+
+---
+
+## Configuration
+
+Read by `fitgap/memory.py`, all optional:
+
+| Variable | Default | Notes |
+| --- | --- | --- |
+| `HINDSIGHT_URL` | `http://127.0.0.1:8888` | **Empty switches memory off entirely** — nothing is probed and the toggle never offers itself. |
+| `HINDSIGHT_API_KEY` | none | Bearer token, for a server that wants one. |
+| `HINDSIGHT_BANK` | `spark-evidence` | The memory bank. A second bank is how you keep two corpora apart. |
+| `HINDSIGHT_TIMEOUT` | `8` | Seconds. Deliberately far below the client's own 300s default, which would let a sick memory server stall an investigation. |
+| `HINDSIGHT_RECALL_TOKENS` | `1200` | The ceiling on what one recall may put into the agent's context. |
+
+---
+
+## When it goes wrong
+
+Every call is best-effort. The server is a separate process that is usually not
+running, so "not there" is the ordinary case, not an error: `recall` returns
+nothing, `retain` returns `False`, and the investigation proceeds exactly as it
+did before any of this existed.
+
+| Symptom | What it means |
+| --- | --- |
+| Toggle greyed, "No memory server at …" | The server is not running, or is on another port. |
+| Toggle greyed, "HINDSIGHT_URL is empty" | Memory is switched off on purpose. |
+| Toggle greyed under holdout | Working as intended — see the table at the top. |
+| Panel says "Nothing was remembered about this question" | The bank has nothing relevant yet. The first run on a topic always says this. |
+| Bank count does not move after a run | Extraction is still running. Minutes, on Ollama. |
+| `Unclosed client session` on shutdown | The app did not call `memory.close()`. It does, from the lifespan. |
+
+---
+
+## What is not done yet
+
+* **Only the Evidence Agent uses it.** The transport is in `fitgap/memory.py`
+  precisely so the Rollout Agent can, but it does not yet.
+* **No way to read or prune the bank from the UI.** A wrong memory can only be
+  removed with the Hindsight client or its own UI. Worth having before this is
+  trusted with a lot of runs.
+* **`reflect` is unused.** It is the operation that reasons over memory rather
+  than retrieving from it, and the obvious next thing to try.
