@@ -1,6 +1,6 @@
 import {
   Alert, Autocomplete, Box, Button, Chip, CircularProgress, Collapse, Divider, IconButton,
-  LinearProgress, ListSubheader, Paper, Stack, Switch,
+  LinearProgress, ListSubheader, Menu, MenuItem, Paper, Stack, Switch,
   TextField, Tooltip, Typography,
 } from "@mui/material";
 import { alpha, useTheme } from "@mui/material/styles";
@@ -409,7 +409,10 @@ export default function EvidencePage({ active }: { active: boolean }) {
   // so this survives a reload, a restart and a closed tab -- which is the
   // whole point: an answer nobody can go back to is one nobody can check.
   const [history, setHistory] = useState<EvidenceRunSummary[]>([]);
-  const [historyOpen, setHistoryOpen] = useState(false);
+  // Anchored to the header button rather than expanded in the page, the way
+  // the Fit-Gap Copilot does it: past runs are a thing you go and get, not a
+  // thing that sits between the question and the answer.
+  const [historyAnchor, setHistoryAnchor] = useState<null | HTMLElement>(null);
   const [runId, setRunId] = useState<string | null>(null);
   const [viewing, setViewing] = useState<string | null>(null);
   const [notSaved, setNotSaved] = useState<string | null>(null);
@@ -649,6 +652,20 @@ export default function EvidencePage({ active }: { active: boolean }) {
               One question, both engines. Every claim carries its sources and the arithmetic behind its score.
             </Typography>
           </Box>
+          <Tooltip title={history.length
+            ? "Reopen a past investigation — the question, every call in order, and the answer as it was verified"
+            : "Past investigations appear here once you have run one"}>
+            <span>
+              <Button size="small" variant="text" startIcon={<HistoryIcon size={14} />}
+                      disabled={history.length === 0}
+                      onClick={(e) => setHistoryAnchor(e.currentTarget)}
+                      sx={{ fontSize: 12.5, flex: "none" }}>
+                {history.length
+                  ? `${history.length} investigation${history.length === 1 ? "" : "s"}`
+                  : "History"}
+              </Button>
+            </span>
+          </Tooltip>
         </Stack>
 
         {blocked && (
@@ -782,92 +799,72 @@ export default function EvidencePage({ active }: { active: boolean }) {
           </Alert>
         )}
 
-        {/* previous investigations */}
-        {history.length > 0 && (
-          <Paper sx={{ mb: 2.5, overflow: "hidden" }}>
-            <Stack direction="row" spacing={1} sx={{ alignItems: "center", p: 1.5, cursor: "pointer" }}
-                   onClick={() => setHistoryOpen((o) => !o)}>
-              <HistoryIcon size={15} color={theme.palette.text.secondary} />
-              <Typography variant="overline" color="text.secondary" sx={{ lineHeight: 1 }}>
-                Previous investigations
-              </Typography>
-              <Chip size="small" label={history.length} sx={{ height: 18, fontSize: 10.5, fontWeight: 700 }} />
-              <Box sx={{ flex: 1 }} />
-              {!historyOpen && history[0] && (
-                <Typography sx={{ fontSize: 11.5, color: "text.secondary", maxWidth: 420,
-                                  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  latest: {history[0].question}
+        {/* previous investigations, on the header button */}
+        <Menu anchorEl={historyAnchor} open={!!historyAnchor}
+              onClose={() => setHistoryAnchor(null)}
+              anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+              transformOrigin={{ vertical: "top", horizontal: "right" }}
+              slotProps={{ paper: { sx: { width: { xs: "calc(100vw - 32px)", sm: 520 },
+                                          maxHeight: 520 } } }}>
+          {history.length === 0 && (
+            <MenuItem disabled sx={{ fontSize: 12.5 }}>No investigations yet</MenuItem>
+          )}
+          {history.map((h) => (
+            <MenuItem key={h.id} selected={viewing === h.id} disabled={running}
+                      onClick={() => { setHistoryAnchor(null); open(h.id); }}
+                      sx={{ alignItems: "flex-start", gap: 1.25, py: 1.15, pr: 1,
+                            whiteSpace: "normal" }}>
+              <Box sx={{ pt: 0.25, flex: "none" }}>
+                {h.state ? STATES[h.state as AnswerState].icon
+                         : <TriangleAlert size={15} color={theme.palette.warning.main} />}
+              </Box>
+              <Box sx={{ flex: 1, minWidth: 0 }}>
+                <Typography sx={{ fontSize: 13, fontWeight: 600, lineHeight: 1.35 }}>
+                  {h.question}
                 </Typography>
-              )}
-              {historyOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-            </Stack>
-            <Collapse in={historyOpen}>
-              <Divider />
-              <Stack divider={<Divider />}>
-                {history.map((h) => (
-                  <Stack key={h.id} direction="row" spacing={1.25}
-                         sx={{ alignItems: "flex-start", p: 1.25, cursor: running ? "default" : "pointer",
-                               bgcolor: viewing === h.id ? alpha(theme.palette.primary.main, 0.07) : undefined,
-                               "&:hover": { bgcolor: alpha(theme.palette.primary.main, 0.04) } }}
-                         onClick={() => open(h.id)}>
-                    <Box sx={{ pt: 0.25 }}>
-                      {h.state ? STATES[h.state as AnswerState].icon
-                               : <TriangleAlert size={15} color={theme.palette.warning.main} />}
-                    </Box>
-                    <Box sx={{ flex: 1, minWidth: 0 }}>
-                      <Typography sx={{ fontSize: 13, fontWeight: 600, lineHeight: 1.35 }}>
-                        {h.question}
-                      </Typography>
-                      {h.summary && (
-                        <Typography sx={{ fontSize: 11.5, color: "text.secondary", mt: 0.25,
-                                          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                          {h.summary}
-                        </Typography>
-                      )}
-                      <Stack direction="row" spacing={0.75} sx={{ alignItems: "center", mt: 0.5, flexWrap: "wrap" }}>
-                        <Typography sx={{ fontSize: 10.5, color: "text.disabled" }}>{when(h.started_at)}</Typography>
-                        {h.status !== "done" && (
-                          <Chip size="small" variant="outlined"
-                                color={h.status === "failed" ? "error" : "warning"}
-                                label={h.status} sx={{ height: 16, fontSize: 9.5 }} />
-                        )}
-                        {h.holdout && <Chip size="small" variant="outlined" label="holdout"
-                                            sx={{ height: 16, fontSize: 9.5 }} />}
-                        {memoryNotes(h) > 0 && (
-                          <Tooltip title={`Started from ${plural(memoryNotes(h), "note")} recalled from earlier investigations`}>
-                            <Chip size="small" variant="outlined" icon={<Brain size={10} />}
-                                  label={memoryNotes(h)}
-                                  sx={{ height: 16, fontSize: 9.5, "& .MuiChip-icon": { ml: 0.4 } }} />
-                          </Tooltip>
-                        )}
-                        <Typography sx={{ fontSize: 10.5, color: "text.disabled" }}>
-                          {plural(h.tool_calls, "call")}
-                          {h.claims ? ` · ${plural(h.claims, "claim")}` : ""}
-                          {h.sources ? ` · ${plural(h.sources, "source")}` : ""}
-                          {h.seconds ? ` · ${h.seconds.toFixed(1)}s` : ""}
-                        </Typography>
-                      </Stack>
-                    </Box>
-                    <Tooltip title="Delete this investigation">
-                      <IconButton size="small" onClick={(e) => { e.stopPropagation(); remove(h.id); }}
-                                  sx={{ color: "text.disabled", "&:hover": { color: "error.main" } }}>
-                        <Trash2 size={14} />
-                      </IconButton>
+                {h.summary && (
+                  <Typography sx={{ fontSize: 11.5, color: "text.secondary", mt: 0.25,
+                                    overflow: "hidden", textOverflow: "ellipsis",
+                                    whiteSpace: "nowrap" }}>
+                    {h.summary}
+                  </Typography>
+                )}
+                <Stack direction="row" spacing={0.75}
+                       sx={{ alignItems: "center", mt: 0.5, flexWrap: "wrap" }}>
+                  <Typography sx={{ fontSize: 10.5, color: "text.disabled" }}>{when(h.started_at)}</Typography>
+                  {h.status !== "done" && (
+                    <Chip size="small" variant="outlined"
+                          color={h.status === "failed" ? "error" : "warning"}
+                          label={h.status} sx={{ height: 16, fontSize: 9.5 }} />
+                  )}
+                  {h.holdout && <Chip size="small" variant="outlined" label="holdout"
+                                      sx={{ height: 16, fontSize: 9.5 }} />}
+                  {memoryNotes(h) > 0 && (
+                    <Tooltip title={`Started from ${plural(memoryNotes(h), "note")} recalled from earlier investigations`}>
+                      <Chip size="small" variant="outlined" icon={<Brain size={10} />}
+                            label={memoryNotes(h)}
+                            sx={{ height: 16, fontSize: 9.5, "& .MuiChip-icon": { ml: 0.4 } }} />
                     </Tooltip>
-                  </Stack>
-                ))}
-              </Stack>
-            </Collapse>
-          </Paper>
-        )}
-
-        {viewing && !running && (
-          <Alert severity="info" icon={<HistoryIcon size={16} />} sx={{ mb: 2 }}
-                 action={<Button size="small" onClick={() => run()}>Ask again</Button>}>
-            Showing a recorded investigation from {when(history.find((h) => h.id === viewing)?.started_at ?? null)}
-            {" "}(<code>{viewing}</code>). Nothing was re-run.
-          </Alert>
-        )}
+                  )}
+                  <Typography sx={{ fontSize: 10.5, color: "text.disabled" }}>
+                    {plural(h.tool_calls, "call")}
+                    {h.claims ? ` · ${plural(h.claims, "claim")}` : ""}
+                    {h.sources ? ` · ${plural(h.sources, "source")}` : ""}
+                    {h.seconds ? ` · ${h.seconds.toFixed(1)}s` : ""}
+                  </Typography>
+                </Stack>
+              </Box>
+              <Tooltip title="Delete this investigation">
+                <IconButton size="small" aria-label="Delete investigation"
+                            onClick={(e) => { e.stopPropagation(); remove(h.id); }}
+                            sx={{ flex: "none", color: "text.disabled",
+                                  "&:hover": { color: "error.main" } }}>
+                  <Trash2 size={14} />
+                </IconButton>
+              </Tooltip>
+            </MenuItem>
+          ))}
+        </Menu>
 
         {/* what the agent was told before it started */}
         {memory && (memory.used || memory.suppressed_by_holdout) && (
