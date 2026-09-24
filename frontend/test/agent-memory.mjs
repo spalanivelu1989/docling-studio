@@ -100,6 +100,33 @@ check(
 // --- it keeps saying what it is -----------------------------------------------
 
 check(
+  "the memory panel can be collapsed",
+  /onClick=\{\(\) => setMemoryOpen\(\(o\) => !o\)\}/.test(page)
+    && /<Collapse in=\{memoryOpen\}>/.test(page),
+  "six recalled notes push the investigation below the fold with no way to fold them",
+);
+
+check(
+  "collapsing it is remembered",
+  /localStorage\.setItem\("evidence\.memoryOpen"/.test(page)
+    && /localStorage\.getItem\("evidence\.memoryOpen"\)/.test(page),
+  "the panel reopens on every reload, so folding it away is worth nothing",
+);
+
+check(
+  "reading the preference cannot throw the page away",
+  /try \{ return localStorage\.getItem\("evidence\.memoryOpen"\) !== "0"; \} catch \{ return true; \}/
+    .test(page),
+  "localStorage throws in private mode; an unguarded read at render takes the page with it",
+);
+
+check(
+  "the not-evidence chip is outside the collapse",
+  page.indexOf('label="not evidence"') < page.indexOf("<Collapse in={memoryOpen}>"),
+  "folded away, the panel would sit above the retrieved passages saying nothing about what it is",
+);
+
+check(
   "the panel says memory is not evidence",
   /label="not evidence"/.test(page) && /not<\/b> evidence and cannot be cited/.test(page),
   "the panel shows recalled notes beside retrieved passages with nothing distinguishing them",

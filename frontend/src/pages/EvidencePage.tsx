@@ -388,6 +388,13 @@ export default function EvidencePage({ active }: { active: boolean }) {
   const [memory, setMemory] = useState<EvidenceMemory | null>(null);
   // The run as a sequence. The panels below show what happened; this shows it
   // in order, including the steps that have no panel of their own.
+  // Collapsed or not, remembered across reloads. Six recalled notes push the
+  // investigation below the fold, and somebody who has read them once should
+  // not have to scroll past them on every run. Per viewer, and never anything
+  // that matters if it comes back empty -- private mode throws on read.
+  const [memoryOpen, setMemoryOpen] = useState(() => {
+    try { return localStorage.getItem("evidence.memoryOpen") !== "0"; } catch { return true; }
+  });
   const [log, setLog] = useState<EvidenceLogEntry[]>([]);
   const [logOpen, setLogOpen] = useState(false);
   // Every investigation reads the whole corpus; the category a chunk is filed
@@ -545,6 +552,11 @@ export default function EvidencePage({ active }: { active: boolean }) {
     : `Read what earlier investigations concluded, and write down what this one does. `
       + `${mem.memories ?? 0} memories in '${mem.bank}'. Memory steers the search; it is never `
       + `evidence and can never be cited.`;
+
+  useEffect(() => {
+    try { localStorage.setItem("evidence.memoryOpen", memoryOpen ? "1" : "0"); }
+    catch { /* private mode: the preference is simply not kept */ }
+  }, [memoryOpen]);
 
   const engineCounts = useMemo(() => {
     const c: Record<string, number> = {};
@@ -859,51 +871,64 @@ export default function EvidencePage({ active }: { active: boolean }) {
 
         {/* what the agent was told before it started */}
         {memory && (memory.used || memory.suppressed_by_holdout) && (
-          <Paper sx={{ p: 1.75, mb: 2.5 }}>
-            <Stack direction="row" spacing={1} sx={{ alignItems: "center", mb: memory.recalled ? 1.25 : 0 }}>
+          <Paper sx={{ mb: 2.5, overflow: "hidden" }}>
+            <Stack direction="row" spacing={1}
+                   sx={{ alignItems: "center", p: 1.75, cursor: "pointer" }}
+                   onClick={() => setMemoryOpen((o) => !o)}
+                   role="button" aria-expanded={memoryOpen}
+                   aria-label={`${memoryOpen ? "Hide" : "Show"} the notes memory supplied`}>
               <Brain size={15} color={theme.palette.text.secondary} />
               <Typography variant="overline" color="text.secondary" sx={{ lineHeight: 1 }}>
                 Memory · {memory.suppressed_by_holdout ? "not read" : plural(memory.recalled, "note")}
               </Typography>
               <Box sx={{ flex: 1 }} />
+              {/* Collapsed, the panel still has to carry the warning: the
+                  reader is about to scroll past retrieved passages, and what
+                  memory supplied must never be mistaken for them. */}
               <Chip size="small" variant="outlined" label="not evidence"
                     sx={{ height: 20, fontSize: 10.5, fontWeight: 700 }} />
+              {memoryOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
             </Stack>
-            {memory.suppressed_by_holdout ? (
-              <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
-                Memory was requested but not read: this is a holdout run. Holdout measures the
-                agent against a corpus it cannot look the answer up in, and an earlier run's
-                answer arriving through memory would hand it back.
-              </Typography>
-            ) : memory.recalled === 0 ? (
-              <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
-                Nothing was remembered about this question. The agent started from the corpus, as
-                it always did.
-              </Typography>
-            ) : (
-              <>
-                <Typography sx={{ fontSize: 11.5, color: "text.secondary", mb: 1 }}>
-                  Notes from earlier investigations, given to the agent before its first search.
-                  They steer where it looks. They are <b>not</b> evidence and cannot be cited: a
-                  quote that is not in a chunk retrieved in this run is discarded, so nothing here
-                  can reach an answer without being proved again from the corpus.
-                </Typography>
-                <Stack spacing={0.75}>
-                  {memory.memories.map((m, i) => (
-                    <Box key={m.id || i} sx={{ p: 1, borderRadius: 1.5, border: 1,
-                                               borderColor: "divider", bgcolor: surface(theme, 0.5) }}>
-                      <Stack direction="row" spacing={0.75} sx={{ alignItems: "baseline" }}>
-                        <Typography sx={{ fontSize: 10, fontWeight: 800, color: "text.disabled",
-                                          textTransform: "uppercase", letterSpacing: ".04em" }}>
-                          {m.type || "note"}
-                        </Typography>
-                        <Typography sx={{ fontSize: 12.5, lineHeight: 1.5 }}>{m.text}</Typography>
-                      </Stack>
+            <Collapse in={memoryOpen}>
+              <Divider />
+              <Box sx={{ p: 1.75 }}>
+                {memory.suppressed_by_holdout ? (
+                  <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
+                    Memory was requested but not read: this is a holdout run. Holdout measures the
+                    agent against a corpus it cannot look the answer up in, and an earlier run's
+                    answer arriving through memory would hand it back.
+                  </Typography>
+                ) : memory.recalled === 0 ? (
+                  <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
+                    Nothing was remembered about this question. The agent started from the corpus, as
+                    it always did.
+                  </Typography>
+                ) : (
+                  <>
+                    <Typography sx={{ fontSize: 11.5, color: "text.secondary", mb: 1 }}>
+                      Notes from earlier investigations, given to the agent before its first search.
+                      They steer where it looks. They are <b>not</b> evidence and cannot be cited: a
+                      quote that is not in a chunk retrieved in this run is discarded, so nothing here
+                      can reach an answer without being proved again from the corpus.
+                    </Typography>
+                    <Stack spacing={0.75}>
+                      {memory.memories.map((m, i) => (
+                        <Box key={m.id || i} sx={{ p: 1, borderRadius: 1.5, border: 1,
+                                                   borderColor: "divider", bgcolor: surface(theme, 0.5) }}>
+                          <Stack direction="row" spacing={0.75} sx={{ alignItems: "baseline" }}>
+                            <Typography sx={{ fontSize: 10, fontWeight: 800, color: "text.disabled",
+                                              textTransform: "uppercase", letterSpacing: ".04em" }}>
+                              {m.type || "note"}
+                            </Typography>
+                            <Typography sx={{ fontSize: 12.5, lineHeight: 1.5 }}>{m.text}</Typography>
+                          </Stack>
                     </Box>
                   ))}
                 </Stack>
               </>
             )}
+              </Box>
+            </Collapse>
           </Paper>
         )}
 
