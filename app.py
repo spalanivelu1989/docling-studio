@@ -2315,6 +2315,47 @@ def evidence_ask(body: EvidenceQuestion) -> StreamingResponse:
     def events():
         conn = None
         calls: list[dict] = []
+        log: list[dict] = []
+
+        def record(kind: str, data: dict) -> dict:
+            """One line of the session log, in the order it happened.
+
+            The heavy half of a tool call -- the passages it returned -- stays
+            in `calls`; the log points at it by index so the console can open
+            the same trace drawer without carrying a second copy of every
+            chunk. Text is capped because a reasoning block is unbounded and a
+            log nobody can load is a log nobody reads."""
+            entry: dict = {"seq": len(log), "at": _now(), "kind": kind}
+            if kind == "tool_call":
+                entry.update({"tool": data.get("tool"), "engine": data.get("engine"),
+                              "summary": data.get("summary"), "ms": data.get("ms"),
+                              "error": data.get("error"), "warning": data.get("warning"),
+                              "arguments": data.get("arguments"),
+                              "call": len(calls) - 1})
+            elif kind == "thinking":
+                entry.update({"text": (data.get("text") or "")[:6000], "turn": data.get("turn")})
+            elif kind == "note":
+                entry.update({"note": data.get("kind"), "title": data.get("title"),
+                              "text": (data.get("text") or "")[:6000],
+                              "detail": data.get("detail") or {}})
+            elif kind == "memory":
+                entry.update({"used": data.get("used"), "recalled": data.get("recalled", 0),
+                              "suppressed_by_holdout": data.get("suppressed_by_holdout"),
+                              "memories": [m.get("text", "")[:600] for m in
+                                           (data.get("memories") or [])]})
+            elif kind == "answer":
+                entry.update({"state": data.get("state"),
+                              "claims": len(data.get("claims") or []),
+                              "text": (data.get("answer") or "")[:2000],
+                              "detail": {"tool_calls": data.get("tool_calls"),
+                                         "input_tokens": data.get("input_tokens"),
+                                         "output_tokens": data.get("output_tokens"),
+                                         "seconds": data.get("seconds")}})
+            elif kind == "error":
+                entry.update({"text": str(data.get("message", ""))[:2000]})
+            log.append(entry)
+            return entry
+
         try:
             conn = ev_store.connect()
             ev_store.create_schema(conn)
@@ -2331,24 +2372,39 @@ def evidence_ask(body: EvidenceQuestion) -> StreamingResponse:
             yield sse("run", {"id": run_id, "not_saved": f"{type(exc).__name__}: {exc}"})
 
         try:
+            asked = record("question", {})
+            asked.update({"text": question, "holdout": body.holdout,
+                          "scope": categories or ["all categories"],
+                          "memory": body.memory})
+            yield sse("log", asked)
+
             for event, data in ev_agent.run(
                 question, holdout=body.holdout, categories=categories,
                 memory=body.memory,
             ):
+                if event == "tool_call":
+                    calls.append(data)
+                entry = record(event, data)
                 if conn is not None:
                     try:
                         if event == "memory":
                             ev_store.save_memory(conn, run_id, data)
                         elif event == "tool_call":
-                            calls.append(data)
                             ev_store.save_calls(conn, run_id, calls)
                         elif event == "answer":
                             ev_store.finish_run(conn, run_id, data, calls)
                         elif event == "error":
                             ev_store.fail_run(conn, run_id, str(data.get("message", "")), calls)
+                        # Written after the event it describes, so a dropped
+                        # stream leaves a log that ends where the run stopped.
+                        ev_store.save_log(conn, run_id, log)
                     except Exception:
                         conn = None  # stop trying; the answer still streams
-                yield sse(event, data)
+                # The log line goes first: the console shows the call before
+                # the panel below it re-renders with the result.
+                yield sse("log", entry)
+                if event not in ("thinking", "note"):
+                    yield sse(event, data)
         except SystemExit as exc:
             if conn is not None:
                 _try(ev_store.fail_run, conn, run_id, str(exc), calls)
@@ -2363,6 +2419,12 @@ def evidence_ask(body: EvidenceQuestion) -> StreamingResponse:
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+def _now() -> str:
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
 
 
 def _try(fn, *args) -> None:

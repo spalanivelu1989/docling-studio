@@ -1178,6 +1178,49 @@ export interface EvidenceMemory {
   memories: { id: string; text: string; type: string; score: number | null }[];
 }
 
+/** One line of the session log: the run as a SEQUENCE, in the order it
+ *  happened. `calls` says what each tool returned; this says what the agent was
+ *  handed, what it reasoned, when it ran out of budget and what it wrote back —
+ *  all of which used to exist only for whoever was watching the stream.
+ *
+ *  A `tool_call` entry carries `call`, the index into `calls`, so the console
+ *  can open the same trace drawer without a second copy of every passage. */
+export interface EvidenceLogEntry {
+  seq: number;
+  /** ISO timestamp, millisecond precision. */
+  at: string;
+  kind: "question" | "memory" | "note" | "thinking" | "tool_call" | "answer" | "error";
+  text?: string;
+  /** tool_call */
+  tool?: string;
+  engine?: string;
+  summary?: string;
+  ms?: number;
+  error?: string | null;
+  warning?: string | null;
+  arguments?: Record<string, unknown>;
+  /** Index into EvidenceRunDetail.calls. -1 when the call was not recorded. */
+  call?: number;
+  /** note: which kind of note — prompt · budget · rejected · retained. */
+  note?: string;
+  title?: string;
+  detail?: Record<string, unknown>;
+  /** thinking */
+  turn?: number;
+  /** memory */
+  used?: boolean;
+  recalled?: number;
+  suppressed_by_holdout?: boolean;
+  memories?: string[];
+  /** question */
+  holdout?: boolean;
+  scope?: string[];
+  memory?: boolean;
+  /** answer */
+  state?: string;
+  claims?: number;
+}
+
 /** Whether the Hindsight memory server is reachable, and how much it holds. */
 export interface MemoryStatus {
   /** HINDSIGHT_URL is set. Empty means memory is switched off deliberately. */
@@ -1243,6 +1286,8 @@ export interface EvidenceRunDetail extends Omit<EvidenceRunSummary, "claims" | "
   output_tokens: number;
   answer: EvidenceAnswer | null;
   calls: EvidenceToolCall[];
+  /** Empty for a run recorded before the log existed. */
+  log?: EvidenceLogEntry[];
   error: string;
 }
 
@@ -1252,6 +1297,10 @@ export interface EvidenceHandlers {
   run?: (r: { id: string; not_saved?: string }) => void;
   /** Sent once, before the first tool call, whether or not memory was on. */
   memory?: (m: EvidenceMemory) => void;
+  /** Every step, in order — including the ones that have no panel of their
+   *  own: the assembled prompt, the reasoning between calls, the budget
+   *  notice, a rejected submission. */
+  log?: (e: EvidenceLogEntry) => void;
   toolCall: (c: EvidenceToolCall) => void;
   answer: (a: EvidenceAnswer) => void;
   error: (message: string) => void;
@@ -1293,6 +1342,7 @@ export async function askEvidence(
       if (!data) continue;
       const payload = JSON.parse(data);
       if (event === "run") on.run?.(payload);
+      else if (event === "log") on.log?.(payload);
       else if (event === "memory") on.memory?.(payload);
       else if (event === "tool_call") on.toolCall(payload);
       else if (event === "answer") on.answer(payload);

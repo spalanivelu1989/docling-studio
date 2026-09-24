@@ -83,6 +83,14 @@ def create_schema(conn=None) -> None:
         # the run cannot be reproduced.
         conn.execute("ALTER TABLE evidence_runs ADD COLUMN IF NOT EXISTS"
                      " memory jsonb NOT NULL DEFAULT '{}'::jsonb")
+        # Everything that happened, in order, with timestamps. `calls` holds
+        # what each tool RETURNED; this holds the run as a sequence -- the
+        # assembled prompt, the reasoning between calls, the budget notice, a
+        # rejected submission. Those were only ever visible to whoever was
+        # watching the stream, which meant a reopened investigation could show
+        # what the agent did and never why.
+        conn.execute("ALTER TABLE evidence_runs ADD COLUMN IF NOT EXISTS"
+                     " log jsonb NOT NULL DEFAULT '[]'::jsonb")
 
 
 def start_run(conn, run: dict) -> None:
@@ -116,6 +124,17 @@ def save_memory(conn, run_id: str, memory: dict) -> None:
     reasoning looks the way it does is in them."""
     conn.execute("UPDATE evidence_runs SET memory = %s WHERE id = %s",
                  (json.dumps(memory, default=str), run_id))
+    conn.commit()
+
+
+def save_log(conn, run_id: str, log: list[dict]) -> None:
+    """The session log, rewritten in full as it grows.
+
+    Whole-list for the same reason as save_calls: a dropped connection should
+    leave the row holding everything up to the drop. Entries are small -- the
+    heavy traces stay in `calls` and the log points at them by index."""
+    conn.execute("UPDATE evidence_runs SET log = %s WHERE id = %s",
+                 (json.dumps(log, default=str), run_id))
     conn.commit()
 
 
@@ -162,7 +181,7 @@ def _status(status: str, started_at) -> str:
 
 _COLUMNS = ("id, question, holdout, categories, model, prompt_hash, corpus_fingerprint,"
             " started_at, finished_at, status, state, input_tokens, output_tokens,"
-            " seconds, answer, calls, error, memory")
+            " seconds, answer, calls, error, memory, log")
 
 
 def _row(r) -> dict:
@@ -175,6 +194,7 @@ def _row(r) -> dict:
         "input_tokens": r[11], "output_tokens": r[12], "seconds": r[13],
         "answer": r[14], "calls": r[15] or [], "error": r[16],
         "memory": r[17] or {},
+        "log": r[18] or [],
     }
 
 

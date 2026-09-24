@@ -747,6 +747,8 @@ class _FakeAnthropic:
     def create(self, **kwargs):
         import types
 
+        narration = types.SimpleNamespace(type="text",
+                                          text="  Nothing left to check. Submitting.  ")
         answer = {"question": "ignored", "state": "not_in_corpus",
                   "answer": "Nothing in the corpus addresses the Zeta interface.",
                   "claims": [],
@@ -757,7 +759,7 @@ class _FakeAnthropic:
         usage = types.SimpleNamespace(input_tokens=10, output_tokens=5,
                                       cache_read_input_tokens=0,
                                       cache_creation_input_tokens=0)
-        return types.SimpleNamespace(content=[use], usage=usage)
+        return types.SimpleNamespace(content=[narration, use], usage=usage)
 
 
 def _drive(question, **kw):
@@ -838,6 +840,57 @@ def test_a_run_with_the_toggle_off_leaves_memory_alone():
     assert written == []
 
 
+# --- the session log ----------------------------------------------------------
+# The log is the run as a SEQUENCE. `calls` already said what each tool
+# returned; these pin the steps that had no record at all before.
+
+
+def test_the_run_narrates_before_it_calls_a_tool():
+    """The model writes a line beside its tool calls because the prompt asks
+    for it. Those blocks always went back into `messages` -- the model saw
+    them -- and were dropped everywhere else, so the page could show WHAT was
+    called and never WHY."""
+    events = _drive("Does the corpus cover the Zeta interface?")
+    thinking = [d for k, d in events if k == "thinking"]
+    assert thinking, "no reasoning was emitted; the text blocks are being discarded again"
+    assert thinking[0]["text"] == "Nothing left to check. Submitting.", "not stripped"
+    assert thinking[0]["turn"] == 0
+
+
+def test_the_prompt_the_agent_received_is_recorded_not_the_one_typed():
+    """Between the question and what the model reads sit a scope note and,
+    with memory on, a page of recalled notes. A reader who only sees the
+    question cannot tell why the agent went where it went."""
+    events = _drive("Does the corpus cover the Zeta interface?", categories=["PKG"])
+    prompt = next(d for k, d in events if k == "note" and d["kind"] == "prompt")
+    assert "Zeta" in prompt["text"]
+    assert "PKG" in prompt["text"], "the scope note the model was given is missing"
+    assert prompt["detail"]["scope"] == ["PKG"]
+    assert prompt["detail"]["characters"] == len(prompt["text"])
+
+
+def test_the_order_of_the_log_is_the_order_it_happened():
+    """A console that shows the tool call before the reasoning that led to it
+    is worse than no console."""
+    events = _drive("Does the corpus cover the Zeta interface?", memory=True)
+    kinds = [k for k, _ in events]
+    assert kinds.index("memory") < kinds.index("note"), "context assembled before memory was read"
+    assert kinds.index("note") < kinds.index("thinking"), "reasoning before the prompt existed"
+    assert kinds[-1] == "answer"
+
+
+def test_what_was_written_to_memory_is_in_the_log():
+    """Retaining is the one step that changes something outside this run. It
+    has to be visible, and it has to be the text that was actually sent."""
+    written, restore = _capture_retain()
+    try:
+        events = _drive("Does the corpus cover the Zeta interface?", memory=True)
+    finally:
+        restore()
+    note = next(d for k, d in events if k == "note" and d["kind"] == "retained")
+    assert note["text"] == written[0]["content"], "the log shows something other than what was sent"
+
+
 if __name__ == "__main__":
     import traceback
 
@@ -851,5 +904,9 @@ if __name__ == "__main__":
             failed += 1
             print(f"  FAIL {name}")
             traceback.print_exc()
+    # The memory tests open a real HTTP session when a server is up. Without
+    # this, aiohttp prints an unclosed-connector warning after the score line,
+    # which reads like a failure in the thing being tested.
+    agent_memory.close()
     print(f"\n{len(fns) - failed}/{len(fns)} passed")
     sys.exit(1 if failed else 0)

@@ -57,12 +57,18 @@ actually retrieved, each scored by a rule you apply — not a feeling.
    SPARK-22234, M-090-030, DM035). BM25 matches codes that meaning-based
    search misses.
 
-3. Read before claiming. Every quote must be copied character-for-character
+3. SAY WHAT YOU ARE DOING, in one sentence, before each tool call. Name what
+   you are looking for and why that tool. One line, no preamble: "The graph
+   should say which tickets this document covers, so enumerating from it." This
+   is for the person watching the investigation, not for your answer, and it
+   does not change what the answer may contain — a claim still needs a quote.
+
+4. Read before claiming. Every quote must be copied character-for-character
    from a chunk a tool returned to you IN THIS RUN. Quotes are checked
    automatically. An invented or paraphrased quote is discarded and its claim
    falls to the floor.
 
-4. Stop when the evidence stops. Do not extend a pattern across blank cells,
+5. Stop when the evidence stops. Do not extend a pattern across blank cells,
    do not complete a list the document leaves incomplete, do not correct a
    typo in an identifier — reproduce it as written and say it looks wrong.
 
@@ -497,10 +503,21 @@ def run(question: str, holdout: bool = False,
         on_event("memory", event)
     yield "memory", event
 
+    # The prompt as ASSEMBLED, not as typed. Between the question and what the
+    # model reads sit a scope note and, when memory is on, a page of notes from
+    # earlier runs. A reader who only sees the question cannot tell why the
+    # agent went where it went, so the log carries the real thing.
+    yield "note", {"kind": "prompt", "title": "Context handed to the agent",
+                   "text": prompt,
+                   "detail": {"question": question,
+                              "scope": list(scope) or ["all categories"],
+                              "memory_notes": len(remembered),
+                              "characters": len(prompt)}}
+
     messages: list[dict[str, Any]] = [{"role": "user", "content": prompt}]
     defs = tool_definitions()
 
-    calls = 0
+    calls = turns = 0
     in_tokens = out_tokens = last_in = 0
     engines: dict[str, int] = {}
     submitted: Answer | None = None
@@ -510,6 +527,15 @@ def run(question: str, holdout: bool = False,
             over = (calls >= MAX_TOOL_CALLS or last_in >= MAX_INPUT_TOKENS
                     or in_tokens >= MAX_TOTAL_INPUT_TOKENS)
             if over:
+                why = ("tool budget" if calls >= MAX_TOOL_CALLS else
+                       "one turn's input" if last_in >= MAX_INPUT_TOKENS else "total input")
+                yield "note", {"kind": "budget",
+                               "title": f"Stopped by the {why} limit",
+                               "text": (f"{calls} of {MAX_TOOL_CALLS} calls, {in_tokens:,} input "
+                                        f"tokens. The agent is told to answer from what it has "
+                                        f"already retrieved rather than guess."),
+                               "detail": {"calls": calls, "max_calls": MAX_TOOL_CALLS,
+                                          "input_tokens": in_tokens, "last_turn": last_in}}
                 messages.append({"role": "user", "content": (
                     "Your tool budget is exhausted. Call submit_answer now with what you can "
                     "support from the chunks you already retrieved. If that is nothing, use state "
@@ -525,6 +551,27 @@ def run(question: str, holdout: bool = False,
             in_tokens += last_in
             out_tokens += response.usage.output_tokens
             messages.append({"role": "assistant", "content": response.content})
+
+            # The model reasons out loud between tool calls. Those blocks went
+            # back into `messages` -- the model has always seen them -- and were
+            # dropped on the floor everywhere else, which is why the page could
+            # show WHAT was called and never WHY.
+            # The model's own account of what it is doing, which it writes
+            # beside its tool calls because rule 5 below asks it to.
+            #
+            # Not extended thinking: `thinking: enabled` is rejected outright by
+            # this model, and `adaptive` returns a block whose `thinking` field
+            # is empty and whose `signature` is encrypted -- there is no
+            # plaintext reasoning to show, whatever is asked for. A `thinking`
+            # block is still read here, so a model that does return one is
+            # shown rather than silently dropped.
+            for block in response.content:
+                text = (getattr(block, "thinking", "") if block.type == "thinking"
+                        else getattr(block, "text", "") if block.type == "text" else "")
+                if text and text.strip():
+                    yield "thinking", {"turn": turns, "kind": block.type,
+                                       "text": text.strip()}
+            turns += 1
 
             uses = [b for b in response.content if b.type == "tool_use"]
             if not uses:
@@ -549,6 +596,10 @@ def run(question: str, holdout: bool = False,
                                         "is_error": True,
                                         "content": "Rejected:\n" + _errors(exc)
                                                    + "\nCorrect it and call submit_answer again."})
+                        yield "note", {"kind": "rejected",
+                                       "title": "Answer rejected, sent back for correction",
+                                       "text": _errors(exc),
+                                       "detail": {"errors": len(exc.errors())}}
                         calls += 1
                     continue
 
@@ -611,8 +662,14 @@ def run(question: str, holdout: bool = False,
             # After finalise, so only verified evidence can be written down, and
             # best-effort, so a memory server that has gone away cannot turn an
             # answer that exists into an error.
+            written = worth_remembering(final)
+            yield "note", {"kind": "retained",
+                           "title": "Written back to memory",
+                           "text": written,
+                           "detail": {"claims": len([c for c in final.claims if c.sources]),
+                                      "state": final.state}}
             agent_memory.retain(
-                worth_remembering(final),
+                written,
                 context=f"Evidence Agent investigation of the Solvay SPARK L2C corpus"
                         f"{' (' + ', '.join(scope) + ' only)' if scope else ''}",
                 metadata={"state": final.state, "model": MODEL,

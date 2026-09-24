@@ -8,14 +8,15 @@ import { AnimatePresence, motion } from "framer-motion";
 import {
   Ban, BookOpen, ChevronDown, ChevronUp, CircleAlert, CircleCheck, CircleHelp, Copy, Dices, Eye,
   FileText, FlaskConical, GitBranch, History as HistoryIcon, Network, Quote, Scale,
-  Brain, ScanLine, Search, SendHorizontal, Sigma, Square, Target, Trash2, TriangleAlert,
+  Brain, ScanLine, Search, SendHorizontal, Sigma, Square, Target, Terminal, Trash2,
+  TriangleAlert,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactElement } from "react";
 import {
   api, askEvidence, evidence,
   type EvidenceToolSources,
   type AnswerState, type EvidenceAnswer, type EvidenceClaim, type EvidenceSource,
-  type EvidenceMemory,
+  type EvidenceLogEntry, type EvidenceMemory,
   type EvidenceRunSummary, type EvidenceStatus, type EvidenceToolCall, type ScoreTerm,
   type EvidenceRagHit,
   type Source, type Stance,
@@ -27,6 +28,7 @@ import { surface } from "../theme";
 import { clearAdornment } from "../components/ClearAdornment";
 import DocumentInspectorDrawer from "../components/DocumentInspectorDrawer";
 import AgentTraceDrawer from "../components/AgentTraceDrawer";
+import AgentLogDrawer from "../components/AgentLogDrawer";
 
 /* ------------------------------------------------------------------- states */
 
@@ -384,6 +386,10 @@ export default function EvidencePage({ active }: { active: boolean }) {
   // and the row records which it was.
   const [useMemory, setUseMemory] = useState(false);
   const [memory, setMemory] = useState<EvidenceMemory | null>(null);
+  // The run as a sequence. The panels below show what happened; this shows it
+  // in order, including the steps that have no panel of their own.
+  const [log, setLog] = useState<EvidenceLogEntry[]>([]);
+  const [logOpen, setLogOpen] = useState(false);
   // Every investigation reads the whole corpus; the category a chunk is filed
   // under is still reported on each tool call, but it is no longer a control.
   const [running, setRunning] = useState(false);
@@ -550,13 +556,14 @@ export default function EvidencePage({ active }: { active: boolean }) {
     const q = (text ?? question).trim();
     if (!q || running) return;
     setRunning(true); setCalls([]); setAnswer(null); setError(null);
-    setRunId(null); setViewing(null); setNotSaved(null); setMemory(null);
+    setRunId(null); setViewing(null); setNotSaved(null); setMemory(null); setLog([]);
     const ctrl = new AbortController();
     controller.current = ctrl;
     try {
       await askEvidence({ question: q, holdout, categories: [], memory: useMemory }, {
         run: (r) => { setRunId(r.id); setNotSaved(r.not_saved ?? null); },
         memory: setMemory,
+        log: (e) => setLog((es) => [...es, e]),
         toolCall: (c) => setCalls((cs) => [...cs, c]),
         answer: setAnswer,
         error: setError,
@@ -586,6 +593,7 @@ export default function EvidencePage({ active }: { active: boolean }) {
       const remembered = run.memory as EvidenceMemory | undefined;
       setMemory(remembered && "enabled" in remembered ? remembered : null);
       setUseMemory(!!remembered && "enabled" in remembered && remembered.enabled);
+      setLog(run.log ?? []);
       setCalls(run.calls ?? []);
       setAnswer(run.answer);
       setRunId(run.id);
@@ -724,6 +732,18 @@ export default function EvidencePage({ active }: { active: boolean }) {
                   <Typography sx={{ fontSize: 12, color: "text.secondary" }}>memory</Typography>
                 </Stack>
               </Stack>
+            </Tooltip>
+            <Tooltip title={log.length === 0
+              ? "The step-by-step log of a run: the context the agent is handed, what it reasons, "
+                + "every engine it queries, and what it writes back. Ask a question to fill it."
+              : `Open the step-by-step log — ${log.length} step(s)`}>
+              <span>
+                <Button variant="outlined" size="small" disabled={log.length === 0}
+                        startIcon={<Terminal size={15} />} onClick={() => setLogOpen(true)}
+                        sx={{ minHeight: 32 }}>
+                  Logs{log.length ? ` (${log.length})` : ""}
+                </Button>
+              </span>
             </Tooltip>
             {running ? (
               <Button variant="outlined" color="error" startIcon={<Square size={15} />}
@@ -1115,6 +1135,14 @@ export default function EvidencePage({ active }: { active: boolean }) {
       </Box>
 
       {/* ---------- citation traceability ---------- */}
+      <AgentLogDrawer
+        open={logOpen}
+        onClose={() => setLogOpen(false)}
+        log={log}
+        running={running}
+        onOpenCall={(i) => { const c = calls[i]; if (c) setTraceCall(c); }}
+      />
+
       <AgentTraceDrawer
         open={Boolean(traceCall)}
         onClose={() => setTraceCall(null)}

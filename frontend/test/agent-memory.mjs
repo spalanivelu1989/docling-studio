@@ -15,7 +15,12 @@
  *     lets them be mistaken for each other. A tidy-up that drops the warning
  *     leaves a panel that reads like a source list.
  *
- *  3. The frontend and the backend disagree about the event. app.py streams
+ *  3. The console goes dark. The log is the only record of the agent's
+ *     reasoning, the prompt it was really handed, and a submission that was
+ *     rejected and re-made -- none of which has a panel of its own, so a
+ *     broken wire here loses them silently rather than visibly.
+ *
+ *  4. The frontend and the backend disagree about the event. app.py streams
  *     one `memory` frame; if api.ts stops dispatching it, the panel is dead
  *     code and the run looks like it never consulted anything.
  */
@@ -32,6 +37,7 @@ const api = read("src", "api.ts");
 const agent = repo("evidence", "agent.py");
 const memory = repo("fitgap", "memory.py");
 const app = repo("app.py");
+const drawer = read("src", "components", "AgentLogDrawer.tsx");
 
 let failed = 0;
 function check(name, ok, detail) {
@@ -122,6 +128,56 @@ check(
   "only verified claims are written down",
   /kept = \[c for c in answer\.claims if c\.sources\]/.test(agent),
   "a claim whose quotes were discarded would be remembered as fact",
+);
+
+// --- the session log ----------------------------------------------------------
+
+check(
+  "the page has a Logs button",
+  /startIcon=\{<Terminal size=\{15\} \/>\}/.test(page) && /setLogOpen\(true\)/.test(page),
+  "nothing opens the console",
+);
+
+check(
+  "the console is rendered",
+  /<AgentLogDrawer/.test(page) && /open=\{logOpen\}/.test(page),
+  "the button toggles state nothing reads -- the Coverage blank-screen failure again",
+);
+
+check(
+  "live lines reach it",
+  /log:\s*\(e\)\s*=>\s*setLog\(/.test(page) && /event === "log"/.test(api),
+  "the frames arrive and are thrown away, so the console is empty during a run",
+);
+
+check(
+  "a reopened run restores its log",
+  /setLog\(run\.log \?\? \[\]\)/.test(page),
+  "the log exists only while the tab is open, which is what storing it was for",
+);
+
+check(
+  "the endpoint persists it",
+  /ev_store\.save_log\(conn, run_id, log\)/.test(app),
+  "nothing is written, so a reopened investigation has no log to restore",
+);
+
+check(
+  "the agent is asked to narrate",
+  /SAY WHAT YOU ARE DOING, in one sentence, before each tool call/.test(agent),
+  "without the instruction the model goes straight to its tools and the log has no reasoning at all",
+);
+
+check(
+  "reasoning blocks are read, not discarded",
+  /yield "thinking", \{"turn": turns/.test(agent),
+  "text blocks go back into messages and nowhere else",
+);
+
+check(
+  "a tool line points at its stored call",
+  /"call": len\(calls\) - 1/.test(app) && /onOpenCall\(entry\.call!\)/.test(drawer),
+  "the console cannot open the evidence a call returned, so it needs its own copy",
 );
 
 console.log(failed ? `\n${failed} check(s) failed` : "\nall checks passed");

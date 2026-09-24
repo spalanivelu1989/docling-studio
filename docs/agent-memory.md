@@ -167,6 +167,58 @@ did before any of this existed.
 
 ---
 
+## The investigation log
+
+Every run now keeps a step-by-step record, on the **Logs** button beside
+Investigate. It is the run as a sequence, which is a different thing from the
+panels below it: those say what happened, this says in what order and why.
+
+```
+ 0  06:38:12.524  question  Which systems does the SOVOS interface specification connect?
+ 1  06:38:12.908  memory    used=True recalled=6
+ 2  06:38:12.910  note      Context handed to the agent
+ 3  06:38:15.523  thinking  I'll start by resolving SOVOS in the knowledge graph...
+ 4  06:38:15.618  tool_call graph_entity — "SOVOS" → 1 node
+ 5  06:38:15.954  tool_call search_corpus — "SOVOS interface specification SAP" → 10 chunks
+ 6  06:38:19.842  thinking  The corpus is clear; now the graph's view of SOVOS and the ticket...
+...
+14  06:39:29.171  thinking  I have what I need. Submitting the answer.
+15  06:39:29.174  note      Answer rejected, sent back for correction
+16  06:40:12.753  thinking  The tag was malformed; resubmitting.
+17  06:40:12.761  note      Written back to memory
+18  06:40:14.133  answer    supported · 8 claims
+```
+
+Four of those kinds had no record anywhere before:
+
+| Kind | What it is |
+| --- | --- |
+| `question` | What was asked, with the scope and the toggles it was asked under. |
+| `note: prompt` | The context **as assembled** — question, scope note, and the page of recalled notes. Not the sentence that was typed. |
+| `thinking` | The agent's own account of what it is about to do. |
+| `note: budget` / `note: rejected` / `note: retained` | Running out of tool budget; a submission the schema refused and sent back; the text written to memory. |
+
+It is stored in `evidence_runs.log`, so reopening a past investigation restores
+it. A `tool_call` line holds an index into `calls` rather than a second copy of
+the passages, so clicking it opens the same trace drawer the panel does.
+
+### Why `thinking` is narration, not extended thinking
+
+`claude-opus-5` rejects `thinking: {"type": "enabled"}` outright, and
+`{"type": "adaptive"}` returns a block whose `thinking` field is **empty** and
+whose `signature` is encrypted. There is no plaintext reasoning to show,
+whatever is asked for.
+
+So the prompt asks the agent to state what it is doing in one sentence before
+each tool call, and the log shows that. This changed `prompt_hash`
+(`22ce11d0e928` → `a89375f129bf`), which means answers from before that change
+are not strictly comparable with answers after it — that is what the hash on
+every row is for. The code still reads a `thinking` block if one ever arrives
+with text in it, so a model that does return reasoning is shown rather than
+silently dropped.
+
+---
+
 ## What is not done yet
 
 * **Only the Evidence Agent uses it.** The transport is in `fitgap/memory.py`
