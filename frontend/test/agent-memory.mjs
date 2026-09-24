@@ -207,5 +207,41 @@ check(
   "the console cannot open the evidence a call returned, so it needs its own copy",
 );
 
+// --- what the landing page promises -------------------------------------------
+//
+// The landing page tells a reader who has not opened the app what it does. Two
+// things follow: it has to name the thing, and the claim it makes about it has
+// to stay true. "Memory steers the search; it can never be cited" is not
+// marketing — it is the invariant the verifier enforces, and if that stops
+// being true the landing page becomes a false claim about evidence.
+
+const landing = read("src", "pages", "LandingPage.tsx");
+
+check(
+  "the landing page names Hindsight",
+  /Hindsight/.test(landing),
+  "a reader who has not opened the app cannot learn that the agent has a memory",
+);
+
+check(
+  "the landing page names the agent the memory belongs to",
+  /Evidence Agent/.test(landing),
+  "'agent memory' with no agent named is a claim about nothing",
+);
+
+{
+  // Both sides, whitespace normalised so a reflow of either file does not
+  // break the check. The landing page's promise and the agent's own preface
+  // have to say the same thing, because only one of them is enforced and it
+  // is not the landing page.
+  const flat = (t) => t.replace(/\s+/g, " ");
+  check(
+    "the landing page's citation claim matches the agent's own",
+    /it can never be cited/.test(flat(landing))
+      && /nothing below may be quoted or cited/.test(flat(agent)),
+    "the page claims memory cannot be cited; the agent no longer tells the model so",
+  );
+}
+
 console.log(failed ? `\n${failed} check(s) failed` : "\nall checks passed");
 process.exit(failed ? 1 : 0);

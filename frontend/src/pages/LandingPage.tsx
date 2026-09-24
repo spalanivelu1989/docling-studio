@@ -17,6 +17,7 @@ import {
   DatabaseZap,
   FileSpreadsheet,
   FileText,
+  Brain,
   FolderArchive,
   MessageSquareText,
   ScanEye,
@@ -340,7 +341,11 @@ export default function LandingPage({ onNavigate }: { onNavigate: (page: Page) =
             <Box
               sx={{
                 display: "grid",
-                gridTemplateColumns: { xs: "1fr", sm: "repeat(2, 1fr)", md: "repeat(4, 1fr)" },
+                // Five steps. Four columns would leave the last one alone on a
+                // row of its own, which reads as an afterthought rather than
+                // the stage it is.
+                gridTemplateColumns: { xs: "1fr", sm: "repeat(2, 1fr)",
+                                       md: "repeat(3, 1fr)", lg: "repeat(5, 1fr)" },
                 gap: 2.5,
               }}
             >
@@ -368,6 +373,12 @@ export default function LandingPage({ onNavigate }: { onNavigate: (page: Page) =
                 icon={<DatabaseZap size={20} />}
                 desc="Converted Markdown is chunked with header preservation, embedded with Ollama BGE-M3 (1024d), and stored in PostgreSQL pgvector for hybrid semantic and keyword search."
               />
+              <PipelineStep
+                number="05"
+                title="Agent Memory & Recall"
+                icon={<Brain size={20} />}
+                desc="The Evidence Agent keeps what each investigation established in Hindsight, an open-source agent memory service running locally. A later run is handed those notes before its first search, so it knows where to look instead of rediscovering it. Memory steers the search; it can never be cited, because a claim still needs a quote retrieved in that run."
+              />
             </Box>
           </Paper>
         </Box>
@@ -378,7 +389,7 @@ export default function LandingPage({ onNavigate }: { onNavigate: (page: Page) =
             Supported Input Formats & Technologies
           </Typography>
           <Stack direction="row" spacing={1} sx={{ justifyContent: "center", flexWrap: "wrap", gap: 1 }}>
-            {["PowerPoint (.pptx, .ppt)", "Word (.docx, .doc)", "Excel (.xlsx, .xls)", "PDF (.pdf)", "HTML / XML", "PNG / JPG / Images", "Mermaid.js", "Docling Engine", "LibreOffice", "Poppler", "Tesseract OCR", "Claude 3.7", "BGE-M3 (Ollama)", "PostgreSQL pgvector", "FastAPI", "React 19"].map((tech) => (
+            {["PowerPoint (.pptx, .ppt)", "Word (.docx, .doc)", "Excel (.xlsx, .xls)", "PDF (.pdf)", "HTML / XML", "PNG / JPG / Images", "Mermaid.js", "Docling Engine", "LibreOffice", "Poppler", "Tesseract OCR", "Claude 3.7", "BGE-M3 (Ollama)", "PostgreSQL pgvector", "Hindsight (agent memory)", "WeasyPrint", "FastAPI", "React 19"].map((tech) => (
               <Chip
                 key={tech}
                 label={tech}
