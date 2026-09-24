@@ -162,33 +162,31 @@ check(
 
 // --- history, the same way on both pages --------------------------------------
 //
-// Both agents keep every run. Both should offer them the same way: a button in
-// the top right that opens an anchored menu, not a panel that sits between the
-// question and the answer on one page and a button on the other. Two pages
-// doing the same job two ways is the thing a reader has to learn twice.
+// Both agents keep every run, and both should offer them the same way: a
+// button in the top right, not a panel that sits between the question and the
+// answer on one page and a button on the other. Two pages doing the same job
+// two ways is the thing a reader has to learn twice.
+//
+// What that button opens used to be an anchored <Menu>, and these checks said
+// so. It is a right-side drawer now, shared with InsightLens and Ask RAG, so
+// everything about the panel itself -- that it filters, that it opens a run
+// beside the page instead of replacing it, that delete arms where the record
+// carries decisions -- is checked in run-history.mjs across all three pages
+// rather than here across two. What stays here is the part that is about
+// THESE two pages agreeing: where the button is.
 
 for (const [name, src] of Object.entries(pages)) {
   check(
     `${name} opens its history from a header button`,
     /startIcon=\{<History(Icon)? size=\{14\} \/>\}/.test(src)
-      && /setHistoryAnchor\(e\.currentTarget\)/.test(src),
+      && /onClick=\{\(\) => setHistoryOpen\(true\)\}/.test(src),
     "the history is somewhere other than the header button the other page uses",
   );
 
   check(
-    `${name} shows its history in an anchored menu`,
-    /<Menu anchorEl=\{historyAnchor\}/.test(src),
-    "a panel in the page flow pushes the answer down and cannot be dismissed by clicking away",
-  );
-
-  check(
-    `${name} can delete a run from that menu`,
-    /<Trash2 size=\{1[34]\} \/>/.test(src)
-      // In the DELETE handler specifically. The page uses stopPropagation in
-      // several places, so looking for it anywhere passes while the one that
-      // matters is gone -- and the row opens the run instead of deleting it.
-      && /e\.stopPropagation\(\);\s*(void\s+)?remove\(/.test(src),
-    "the only way to remove a run is the API; or the row opens instead of deleting",
+    `${name} can delete a run from it`,
+    /onDelete=\{remove\}/.test(src),
+    "the only way to remove a run is the API",
   );
 }
 

@@ -443,9 +443,15 @@ chunk it names; one that is not found is discarded rather than shown.
 
 **Investigations are kept.** Each run is written to `evidence_runs` as it
 happens — the question and its settings, every tool call in order, and the
-verified answer — so the history strip on the page reopens a past investigation
-with its working intact. Nothing is re-run and nothing is re-billed when you
-open one.
+verified answer — so a past investigation can be reopened with its working
+intact. Nothing is re-run and nothing is re-billed when you open one.
+
+The history button in the header opens a panel on the right. Selecting a run
+shows it *there*, beside whatever is on the page, rather than replacing it:
+loading a run overwrites a dozen pieces of page state, so looking at an old one
+used to cost you the one you were reading. "Load into page" still does that,
+when it is what you want. The Fit-Gap Copilot and InsightLens have the same
+panel, and Ask RAG's history is where its design came from.
 
 Written *as it happens* rather than at the end, which is what makes an
 interrupted run useful: close the tab mid-investigation and the row keeps the

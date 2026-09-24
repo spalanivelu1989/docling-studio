@@ -7,24 +7,12 @@ import { History, Trash2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { askHistory, type AskRunSummary } from "../api";
 import { clearAdornment } from "./ClearAdornment";
+// The same relative time the other three history panels show. It was
+// written out here and again in EvidencePage; the two had not drifted yet.
+import { when } from "./RunHistoryDrawer";
 
 function plural(n: number, word: string) {
   return `${n} ${word}${n === 1 ? "" : "s"}`;
-}
-
-/** Relative time, the same wording the Evidence Agent's history uses. */
-function when(iso: string | null): string {
-  if (!iso) return "";
-  const then = new Date(iso);
-  const mins = Math.round((Date.now() - then.getTime()) / 60000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return plural(mins, "minute") + " ago";
-  const hours = Math.round(mins / 60);
-  if (hours < 24) return plural(hours, "hour") + " ago";
-  const days = Math.round(hours / 24);
-  if (days === 1) return "yesterday";
-  if (days < 7) return `${days} days ago`;
-  return then.toLocaleDateString(undefined, { day: "numeric", month: "short" });
 }
 
 const STATUS_COLOR: Record<AskRunSummary["status"], "default" | "success" | "warning" | "error"> = {

@@ -1,6 +1,6 @@
 import {
   Alert, Autocomplete, Box, Button, Chip, CircularProgress, Collapse, Divider, IconButton,
-  LinearProgress, ListSubheader, Menu, MenuItem, Paper, Stack, Switch,
+  LinearProgress, ListSubheader, Paper, Stack, Switch,
   TextField, Tooltip, Typography,
 } from "@mui/material";
 import { alpha, useTheme } from "@mui/material/styles";
@@ -8,7 +8,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import {
   Ban, BookOpen, ChevronDown, ChevronUp, CircleAlert, CircleCheck, CircleHelp, Copy, Dices, Eye,
   FileText, FlaskConical, GitBranch, History as HistoryIcon, Network, Quote, Scale,
-  Brain, ScanLine, Search, SendHorizontal, Sigma, Square, Target, Terminal, Trash2,
+  Brain, ScanLine, Search, SendHorizontal, Sigma, Square, Target, Terminal,
   TriangleAlert,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactElement } from "react";
@@ -17,7 +17,8 @@ import {
   type EvidenceToolSources,
   type AnswerState, type EvidenceAnswer, type EvidenceClaim, type EvidenceSource,
   type EvidenceLogEntry, type EvidenceMemory,
-  type EvidenceRunSummary, type EvidenceStatus, type EvidenceToolCall, type ScoreTerm,
+  type EvidenceRunDetail, type EvidenceRunSummary, type EvidenceStatus,
+  type EvidenceToolCall, type ScoreTerm,
   type EvidenceRagHit,
   type Source, type Stance,
 } from "../api";
@@ -29,6 +30,7 @@ import { clearAdornment } from "../components/ClearAdornment";
 import DocumentInspectorDrawer from "../components/DocumentInspectorDrawer";
 import AgentTraceDrawer from "../components/AgentTraceDrawer";
 import AgentLogDrawer from "../components/AgentLogDrawer";
+import RunHistoryDrawer, { type HistoryCard } from "../components/RunHistoryDrawer";
 
 /* ------------------------------------------------------------------- states */
 
@@ -126,23 +128,6 @@ function useHue() {
 }
 
 const plural = (n: number, one: string, many = "") => `${n} ${n === 1 ? one : many || one + "s"}`;
-
-/** "4 minutes ago", "yesterday", "12 Sep". A history strip is read to find one
- *  run among many, and an ISO timestamp is the one format that helps with
- *  neither. */
-function when(iso: string | null): string {
-  if (!iso) return "";
-  const then = new Date(iso);
-  const mins = Math.round((Date.now() - then.getTime()) / 60000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return plural(mins, "minute") + " ago";
-  const hours = Math.round(mins / 60);
-  if (hours < 24) return plural(hours, "hour") + " ago";
-  const days = Math.round(hours / 24);
-  if (days === 1) return "yesterday";
-  if (days < 7) return `${days} days ago`;
-  return then.toLocaleDateString(undefined, { day: "numeric", month: "short" });
-}
 
 /* ------------------------------------------------------------------- pieces */
 
@@ -373,6 +358,176 @@ function memoryNotes(run: { memory?: EvidenceMemory | Record<string, never> }): 
   return m && "recalled" in m && m.used ? m.recalled : 0;
 }
 
+/** One past investigation, read inside the history drawer.
+ *
+ *  Deliberately not the page's own rendering at half the width. What a reader
+ *  wants here is enough to recognise the run and judge it -- the verdict, the
+ *  answer, each claim with its score and which documents carried it. The parts
+ *  that need room or another drawer of their own (a source quote in its
+ *  document, the tool trace, the log) stay one button away, behind "Load into
+ *  page", rather than being stacked drawer-on-drawer at 560px.
+ */
+function PastInvestigation({ run }: { run: EvidenceRunDetail }) {
+  const theme = useTheme();
+  const hue = useHue();
+  const answer = run.answer;
+  const state = (answer?.state ?? run.state) as AnswerState | "";
+  const notes = memoryNotes(run);
+
+  return (
+    <Stack spacing={1.75}>
+      {state && (
+        <Paper sx={{ p: 1.5, borderLeft: `3px solid ${hue(STATES[state].hue)}` }}>
+          <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
+            <Box sx={{ display: "flex", color: hue(STATES[state].hue) }}>{STATES[state].icon}</Box>
+            <Typography sx={{ fontSize: 13.5, fontWeight: 700 }}>{STATES[state].label}</Typography>
+          </Stack>
+          <Typography sx={{ fontSize: 12, color: "text.secondary", mt: 0.5, lineHeight: 1.55 }}>
+            {STATES[state].blurb}
+          </Typography>
+        </Paper>
+      )}
+
+      <Stack direction="row" spacing={0.6} useFlexGap sx={{ flexWrap: "wrap" }}>
+        {run.holdout && (
+          <Tooltip title="Run against the holdout corpus">
+            <Chip size="small" variant="outlined" label="holdout" sx={{ height: 19, fontSize: 10 }} />
+          </Tooltip>
+        )}
+        {notes > 0 && (
+          <Tooltip title={`Started from ${plural(notes, "note")} recalled from earlier investigations`}>
+            <Chip size="small" variant="outlined" icon={<Brain size={10} />} label={plural(notes, "note")}
+                  sx={{ height: 19, fontSize: 10, "& .MuiChip-icon": { ml: 0.4 } }} />
+          </Tooltip>
+        )}
+        <Chip size="small" variant="outlined" label={run.model} sx={{ height: 19, fontSize: 10 }} />
+        <Chip size="small" variant="outlined" label={plural(run.calls?.length ?? 0, "call")}
+              sx={{ height: 19, fontSize: 10 }} />
+        {run.seconds ? (
+          <Chip size="small" variant="outlined" label={`${run.seconds.toFixed(1)}s`}
+                sx={{ height: 19, fontSize: 10 }} />
+        ) : null}
+        {run.input_tokens ? (
+          <Tooltip title="Tokens in and out, as recorded">
+            <Chip size="small" variant="outlined"
+                  label={`${run.input_tokens.toLocaleString()} / ${run.output_tokens.toLocaleString()}`}
+                  sx={{ height: 19, fontSize: 10 }} />
+          </Tooltip>
+        ) : null}
+      </Stack>
+
+      {run.error && <Alert severity="warning" sx={{ fontSize: 12.5 }}>{run.error}</Alert>}
+      {run.status === "abandoned" && !run.error && (
+        <Alert severity="warning" sx={{ fontSize: 12.5 }}>
+          Interrupted — the browser went away before it finished. What it had done by then is below.
+        </Alert>
+      )}
+
+      {answer?.answer && (
+        <Box>
+          <Typography variant="overline" sx={{ fontSize: 10, color: "text.secondary" }}>Answer</Typography>
+          <Typography sx={{ fontSize: 13, lineHeight: 1.65, whiteSpace: "pre-wrap", mt: 0.25 }}>
+            {answer.answer}
+          </Typography>
+        </Box>
+      )}
+
+      {!!answer?.claims.length && (
+        <Box>
+          <Typography variant="overline" sx={{ fontSize: 10, color: "text.secondary" }}>
+            {plural(answer.claims.length, "claim")}
+          </Typography>
+          <Stack spacing={1} sx={{ mt: 0.5 }}>
+            {answer.claims.map((c, i) => (
+              <Paper key={i} sx={{ p: 1.4 }}>
+                <Stack direction="row" spacing={1.15} sx={{ alignItems: "flex-start" }}>
+                  <ScoreChip score={c.score} terms={c.score_terms} />
+                  <Typography sx={{ fontSize: 12.5, lineHeight: 1.55, flex: 1 }}>{c.text}</Typography>
+                </Stack>
+                {c.note && (
+                  <Typography sx={{ fontSize: 11, color: "warning.main", mt: 0.6 }}>{c.note}</Typography>
+                )}
+                {/* The documents, not the quotes. A quote wants its document
+                    beside it, and that is the inspector's job, not a drawer
+                    inside a drawer. */}
+                {!!c.sources.length && (
+                  <Stack spacing={0.35} sx={{ mt: 0.85 }}>
+                    {c.sources.map((src, j) => (
+                      <Stack key={j} direction="row" spacing={0.6}
+                             sx={{ alignItems: "baseline", minWidth: 0 }}>
+                        <Box sx={{ width: 5, height: 5, borderRadius: "50%", flex: "none",
+                                   mt: 0.7, bgcolor: hue(STANCE[src.stance].hue) }} />
+                        <Typography sx={{ fontSize: 11, color: "text.secondary", minWidth: 0,
+                                          overflow: "hidden", textOverflow: "ellipsis",
+                                          whiteSpace: "nowrap" }}>
+                          {src.doc}
+                          {src.heading_path ? ` · ${src.heading_path}` : ""}
+                        </Typography>
+                      </Stack>
+                    ))}
+                  </Stack>
+                )}
+                <Stack direction="row" spacing={0.6} useFlexGap sx={{ flexWrap: "wrap", mt: 0.85 }}>
+                  {c.independent_sources > 0 && (
+                    <Chip size="small" variant="outlined" icon={<Quote size={10} />}
+                          label={plural(c.independent_sources, "independent document")}
+                          sx={{ height: 18, fontSize: 9.5, "& .MuiChip-icon": { ml: 0.4 } }} />
+                  )}
+                  {c.graph_facts.map((f, k) => (
+                    <Chip key={k} size="small" icon={<Network size={10} />}
+                          label={f.meaningful ? "graph confirms" : "graph route flagged"}
+                          sx={{ height: 18, fontSize: 9.5, "& .MuiChip-icon": { ml: 0.4 },
+                                bgcolor: alpha(f.meaningful ? theme.palette.info.main : theme.palette.warning.main, 0.14),
+                                color: f.meaningful ? "info.main" : "warning.main" }} />
+                  ))}
+                </Stack>
+              </Paper>
+            ))}
+          </Stack>
+        </Box>
+      )}
+
+      {!!answer?.open_questions.length && (
+        <Box>
+          <Typography variant="overline" sx={{ fontSize: 10, color: "text.secondary" }}>
+            Left open
+          </Typography>
+          <Stack component="ul" spacing={0.4} sx={{ m: 0, mt: 0.25, pl: 2.25 }}>
+            {answer.open_questions.map((q, i) => (
+              <Typography key={i} component="li" sx={{ fontSize: 12, lineHeight: 1.55, color: "text.secondary" }}>
+                {q}
+              </Typography>
+            ))}
+          </Stack>
+        </Box>
+      )}
+
+      {!!answer?.limits.length && (
+        <Box>
+          <Typography variant="overline" sx={{ fontSize: 10, color: "text.secondary" }}>Limits</Typography>
+          <Stack component="ul" spacing={0.4} sx={{ m: 0, mt: 0.25, pl: 2.25 }}>
+            {answer.limits.map((l, i) => (
+              <Typography key={i} component="li" sx={{ fontSize: 12, lineHeight: 1.55, color: "text.secondary" }}>
+                {l}
+              </Typography>
+            ))}
+          </Stack>
+        </Box>
+      )}
+
+      {/* What is recorded but not shown here, and how to reach it. */}
+      <Paper sx={{ p: 1.3, bgcolor: (t) => surface(t, 0.5) }}>
+        <Typography sx={{ fontSize: 11.5, color: "text.secondary", lineHeight: 1.6 }}>
+          {plural(run.calls?.length ?? 0, "tool call")}
+          {run.log?.length ? ` and ${plural(run.log.length, "log entry", "log entries")}` : ""}
+          {" "}are recorded for this run. Load it into the page to step through them, and to open a
+          quote in the document it came from.
+        </Typography>
+      </Paper>
+    </Stack>
+  );
+}
+
 /* --------------------------------------------------------------------- page */
 
 export default function EvidencePage({ active }: { active: boolean }) {
@@ -412,7 +567,7 @@ export default function EvidencePage({ active }: { active: boolean }) {
   // Anchored to the header button rather than expanded in the page, the way
   // the Fit-Gap Copilot does it: past runs are a thing you go and get, not a
   // thing that sits between the question and the answer.
-  const [historyAnchor, setHistoryAnchor] = useState<null | HTMLElement>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [runId, setRunId] = useState<string | null>(null);
   const [viewing, setViewing] = useState<string | null>(null);
   const [notSaved, setNotSaved] = useState<string | null>(null);
@@ -594,6 +749,46 @@ export default function EvidencePage({ active }: { active: boolean }) {
     }
   }
 
+  /** The history summaries as the drawer's cards. Every badge this panel
+   *  showed as a <Menu> is still here -- the state icon, holdout, how many
+   *  notes were recalled -- so nothing was lost in moving it. */
+  const historyCards: HistoryCard[] = useMemo(
+    () => history.map((h) => ({
+      id: h.id,
+      title: h.question,
+      subtitle: h.summary,
+      startedAt: h.started_at,
+      lead: h.state
+        ? STATES[h.state as AnswerState].icon
+        : <TriangleAlert size={15} color={theme.palette.warning.main} />,
+      badges: (
+        <>
+          {h.status !== "done" && (
+            <Chip size="small" variant="outlined"
+                  color={h.status === "failed" ? "error" : "warning"}
+                  label={h.status} sx={{ height: 18, fontSize: 9.5 }} />
+          )}
+          {h.holdout && (
+            <Chip size="small" variant="outlined" label="holdout" sx={{ height: 18, fontSize: 9.5 }} />
+          )}
+          {memoryNotes(h) > 0 && (
+            <Tooltip title={`Started from ${plural(memoryNotes(h), "note")} recalled from earlier investigations`}>
+              <Chip size="small" variant="outlined" icon={<Brain size={10} />} label={memoryNotes(h)}
+                    sx={{ height: 18, fontSize: 9.5, "& .MuiChip-icon": { ml: 0.4 } }} />
+            </Tooltip>
+          )}
+        </>
+      ),
+      meta: [
+        plural(h.tool_calls, "call"),
+        h.claims ? plural(h.claims, "claim") : "",
+        h.sources ? plural(h.sources, "source") : "",
+        h.seconds ? `${h.seconds.toFixed(1)}s` : "",
+      ].filter(Boolean).join(" · "),
+    })),
+    [history, theme],
+  );
+
   /** Reopen a past investigation: the question, every tool call in the order
    *  it happened, and the answer as it was verified at the time. Nothing is
    *  re-run -- and nothing is re-billed. */
@@ -652,19 +847,14 @@ export default function EvidencePage({ active }: { active: boolean }) {
               One question, both engines. Every claim carries its sources and the arithmetic behind its score.
             </Typography>
           </Box>
-          <Tooltip title={history.length
-            ? "Reopen a past investigation — the question, every call in order, and the answer as it was verified"
-            : "Past investigations appear here once you have run one"}>
-            <span>
-              <Button size="small" variant="text" startIcon={<HistoryIcon size={14} />}
-                      disabled={history.length === 0}
-                      onClick={(e) => setHistoryAnchor(e.currentTarget)}
-                      sx={{ fontSize: 12.5, flex: "none" }}>
-                {history.length
-                  ? `${history.length} investigation${history.length === 1 ? "" : "s"}`
-                  : "History"}
-              </Button>
-            </span>
+          <Tooltip title="Past investigations — read one here, beside the one on the page">
+            <Button size="small" variant="text" startIcon={<HistoryIcon size={14} />}
+                    onClick={() => setHistoryOpen(true)}
+                    sx={{ fontSize: 12.5, flex: "none" }}>
+              {history.length
+                ? `${history.length} investigation${history.length === 1 ? "" : "s"}`
+                : "History"}
+            </Button>
           </Tooltip>
         </Stack>
 
@@ -799,72 +989,24 @@ export default function EvidencePage({ active }: { active: boolean }) {
           </Alert>
         )}
 
-        {/* previous investigations, on the header button */}
-        <Menu anchorEl={historyAnchor} open={!!historyAnchor}
-              onClose={() => setHistoryAnchor(null)}
-              anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
-              transformOrigin={{ vertical: "top", horizontal: "right" }}
-              slotProps={{ paper: { sx: { width: { xs: "calc(100vw - 32px)", sm: 520 },
-                                          maxHeight: 520 } } }}>
-          {history.length === 0 && (
-            <MenuItem disabled sx={{ fontSize: 12.5 }}>No investigations yet</MenuItem>
-          )}
-          {history.map((h) => (
-            <MenuItem key={h.id} selected={viewing === h.id} disabled={running}
-                      onClick={() => { setHistoryAnchor(null); open(h.id); }}
-                      sx={{ alignItems: "flex-start", gap: 1.25, py: 1.15, pr: 1,
-                            whiteSpace: "normal" }}>
-              <Box sx={{ pt: 0.25, flex: "none" }}>
-                {h.state ? STATES[h.state as AnswerState].icon
-                         : <TriangleAlert size={15} color={theme.palette.warning.main} />}
-              </Box>
-              <Box sx={{ flex: 1, minWidth: 0 }}>
-                <Typography sx={{ fontSize: 13, fontWeight: 600, lineHeight: 1.35 }}>
-                  {h.question}
-                </Typography>
-                {h.summary && (
-                  <Typography sx={{ fontSize: 11.5, color: "text.secondary", mt: 0.25,
-                                    overflow: "hidden", textOverflow: "ellipsis",
-                                    whiteSpace: "nowrap" }}>
-                    {h.summary}
-                  </Typography>
-                )}
-                <Stack direction="row" spacing={0.75}
-                       sx={{ alignItems: "center", mt: 0.5, flexWrap: "wrap" }}>
-                  <Typography sx={{ fontSize: 10.5, color: "text.disabled" }}>{when(h.started_at)}</Typography>
-                  {h.status !== "done" && (
-                    <Chip size="small" variant="outlined"
-                          color={h.status === "failed" ? "error" : "warning"}
-                          label={h.status} sx={{ height: 16, fontSize: 9.5 }} />
-                  )}
-                  {h.holdout && <Chip size="small" variant="outlined" label="holdout"
-                                      sx={{ height: 16, fontSize: 9.5 }} />}
-                  {memoryNotes(h) > 0 && (
-                    <Tooltip title={`Started from ${plural(memoryNotes(h), "note")} recalled from earlier investigations`}>
-                      <Chip size="small" variant="outlined" icon={<Brain size={10} />}
-                            label={memoryNotes(h)}
-                            sx={{ height: 16, fontSize: 9.5, "& .MuiChip-icon": { ml: 0.4 } }} />
-                    </Tooltip>
-                  )}
-                  <Typography sx={{ fontSize: 10.5, color: "text.disabled" }}>
-                    {plural(h.tool_calls, "call")}
-                    {h.claims ? ` · ${plural(h.claims, "claim")}` : ""}
-                    {h.sources ? ` · ${plural(h.sources, "source")}` : ""}
-                    {h.seconds ? ` · ${h.seconds.toFixed(1)}s` : ""}
-                  </Typography>
-                </Stack>
-              </Box>
-              <Tooltip title="Delete this investigation">
-                <IconButton size="small" aria-label="Delete investigation"
-                            onClick={(e) => { e.stopPropagation(); remove(h.id); }}
-                            sx={{ flex: "none", color: "text.disabled",
-                                  "&:hover": { color: "error.main" } }}>
-                  <Trash2 size={14} />
-                </IconButton>
-              </Tooltip>
-            </MenuItem>
-          ))}
-        </Menu>
+        {/* previous investigations, in a drawer beside the current one */}
+        <RunHistoryDrawer<EvidenceRunDetail>
+          open={historyOpen}
+          onClose={() => setHistoryOpen(false)}
+          icon={<HistoryIcon size={18} />}
+          title="Past investigations"
+          noun={["investigation", "investigations"]}
+          items={historyCards}
+          currentId={viewing}
+          onDelete={remove}
+          deleteLabel="Delete this investigation"
+          fetchDetail={evidence.run}
+          renderDetail={(run) => <PastInvestigation run={run} />}
+          onLoadIntoPage={open}
+          loadDisabled={running}
+          filterPlaceholder="Filter by question or answer…"
+          emptyText="Nothing investigated yet. Ask a question and it will appear here."
+        />
 
         {/* what the agent was told before it started */}
         {memory && (memory.used || memory.suppressed_by_holdout) && (

@@ -4,6 +4,7 @@ import {
   Tooltip, Typography,
 } from "@mui/material";
 import { alpha, useTheme } from "@mui/material/styles";
+import RunHistoryDrawer, { type HistoryCard } from "../components/RunHistoryDrawer";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   AlertTriangle, CheckCircle2, ChevronDown, CircleHelp, Download, FileDown, FileText, Gavel, Globe2,
@@ -18,7 +19,8 @@ import {
   type RolloutSourceChunk, type RolloutSourceDocument, type RolloutSources,
   type RolloutSubject,
   type RolloutPreview,
-  type RolloutRunSummary, type RolloutScores, type RolloutStatus, type UploadRole,
+  type RolloutRunDetail, type RolloutRunSummary, type RolloutScores, type RolloutStatus,
+  type UploadRole,
   type UploadSession,
 } from "../api";
 import { clearAdornment, clearOnEscape } from "../components/ClearAdornment";
@@ -48,6 +50,8 @@ const MATERIALITY_HUE: Record<Materiality, "error" | "warning" | "info" | "succe
 /** The two states that are a real legal obligation. Everything else is a
  *  choice, however local — which is the whole point of §5.3. */
 const MANDATORY: LocalizationState[] = ["CONFIRMED_STATUTORY", "SAP_DELIVERED"];
+
+const plural = (n: number, one: string, many = "") => `${n} ${n === 1 ? one : many || one + "s"}`;
 
 /* ------------------------------------------------------------------ pieces */
 
@@ -790,6 +794,151 @@ function GapCard({ gap, types, dispositions, states, onDecide, decisions = [], r
   );
 }
 
+/** One past analysis, read inside the history drawer.
+ *
+ *  The page shows this run across five tabs and a dozen wide tables. None of
+ *  that survives being poured into a 560px column, so this is the shape of the
+ *  answer rather than the answer itself: the headline, the four scores, what
+ *  the workshop has to decide, and the deviations in materiality order. The
+ *  exports and "Load into page" are underneath for everything else.
+ */
+function PastAnalysis({ run }: { run: RolloutRunDetail }) {
+  const sem = useSemantic();
+  const analysis = "deviations" in run.analysis ? (run.analysis as RolloutAnalysis) : null;
+  const scores = "counts" in run.scores ? (run.scores as RolloutScores) : null;
+  const gates = "issues" in run.gates ? (run.gates as RolloutGates) : null;
+  const counts = scores?.counts;
+
+  // Materiality order, so the drawer's short list is the top of the real list
+  // rather than whatever the agent happened to emit first.
+  const ORDER: Materiality[] = ["Critical", "High", "Medium", "Low", "Informational"];
+  const deviations = [...(analysis?.deviations ?? [])].sort(
+    (a, b) => ORDER.indexOf(a.materiality) - ORDER.indexOf(b.materiality),
+  );
+  const TOP = 8;
+
+  return (
+    <Stack spacing={1.75}>
+      <Stack direction="row" spacing={0.6} useFlexGap sx={{ flexWrap: "wrap" }}>
+        {run.country && <Chip size="small" variant="outlined" label={run.country} sx={{ height: 19, fontSize: 10 }} />}
+        {run.status !== "done" && (
+          <Chip size="small" variant="outlined" color={run.status === "failed" ? "error" : "warning"}
+                label={run.status} sx={{ height: 19, fontSize: 10 }} />
+        )}
+        {scores?.subject_label && (
+          <Chip size="small" variant="outlined" label={scores.subject_label} sx={{ height: 19, fontSize: 10 }} />
+        )}
+        <Chip size="small" variant="outlined" label={run.model} sx={{ height: 19, fontSize: 10 }} />
+        {run.decisions.length > 0 && (
+          <Tooltip title="Verdicts recorded against this analysis">
+            <Chip size="small" variant="outlined" color="primary"
+                  label={`${run.decisions.length} decided`} sx={{ height: 19, fontSize: 10 }} />
+          </Tooltip>
+        )}
+      </Stack>
+
+      {analysis?.headline && (
+        <Typography sx={{ fontSize: 13, lineHeight: 1.65 }}>{analysis.headline}</Typography>
+      )}
+
+      {scores && (
+        <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: "wrap" }}>
+          <ScoreTile label="GT alignment" value={scores.gt_alignment} band={scores.gt_band} accent={sem.fit} />
+          <ScoreTile label="Harmonization" value={scores.harmonization_potential}
+                     band={scores.harmonization_band} accent={sem.localization} />
+        </Stack>
+      )}
+
+      {counts && (
+        <Stack direction="row" spacing={0.6} useFlexGap sx={{ flexWrap: "wrap" }}>
+          {([
+            ["fit areas", counts.fit_areas],
+            ["deviations", counts.deviations],
+            ["localization", counts.localization_items],
+            ["backlog", counts.backlog],
+            ["open questions", counts.open_questions],
+            ["must discuss", counts.workshop?.MUST_DISCUSS ?? 0],
+          ] as [string, number][]).map(([label, n]) => (
+            <Chip key={label} size="small" variant="outlined" label={`${n} ${label}`}
+                  sx={{ height: 19, fontSize: 10 }} />
+          ))}
+          {counts.workshop_minutes ? (
+            <Tooltip title="Workshop time the deviations add up to">
+              <Chip size="small" variant="outlined" label={`${counts.workshop_minutes} min`}
+                    sx={{ height: 19, fontSize: 10 }} />
+            </Tooltip>
+          ) : null}
+        </Stack>
+      )}
+
+      {gates && gates.issues > 0 && (
+        <Alert severity={gates.hard ? "warning" : "info"} sx={{ fontSize: 12.5 }}>
+          {plural(gates.issues, "quality issue")} — {gates.hard} hard, {gates.soft} soft.
+        </Alert>
+      )}
+
+      {!!deviations.length && (
+        <Box>
+          <Typography variant="overline" sx={{ fontSize: 10, color: "text.secondary" }}>
+            Deviations, most material first
+          </Typography>
+          <Stack spacing={1} sx={{ mt: 0.5 }}>
+            {deviations.slice(0, TOP).map((d) => (
+              <Paper key={d.gap_id} sx={{ p: 1.4 }}>
+                <Stack direction="row" spacing={0.6} useFlexGap sx={{ flexWrap: "wrap", alignItems: "center" }}>
+                  <Typography sx={{ fontSize: 11, fontFamily: "monospace", fontWeight: 700 }}>
+                    {d.gap_id}
+                  </Typography>
+                  <Chip size="small" color={MATERIALITY_HUE[d.materiality]} variant="outlined"
+                        label={d.materiality} sx={{ height: 17, fontSize: 9.5 }} />
+                  <Chip size="small" variant="outlined" label={d.primary_type}
+                        sx={{ height: 17, fontSize: 9.5 }} />
+                  {d.workshop_bucket === "MUST_DISCUSS" && (
+                    <Chip size="small" variant="outlined" color="warning" label="must discuss"
+                          sx={{ height: 17, fontSize: 9.5 }} />
+                  )}
+                </Stack>
+                <Typography sx={{ fontSize: 12.5, lineHeight: 1.55, mt: 0.7 }}>
+                  {d.exact_difference}
+                </Typography>
+                {d.decision_question && (
+                  <Typography sx={{ fontSize: 11.5, color: "text.secondary", mt: 0.5, lineHeight: 1.55 }}>
+                    {d.decision_question}
+                  </Typography>
+                )}
+              </Paper>
+            ))}
+          </Stack>
+          {deviations.length > TOP && (
+            <Typography sx={{ fontSize: 11.5, color: "text.secondary", mt: 1 }}>
+              {deviations.length - TOP} more, with their evidence and decision options, on the page.
+            </Typography>
+          )}
+        </Box>
+      )}
+
+      {!!analysis?.open_questions.length && (
+        <Box>
+          <Typography variant="overline" sx={{ fontSize: 10, color: "text.secondary" }}>Left open</Typography>
+          <Stack component="ul" spacing={0.4} sx={{ m: 0, mt: 0.25, pl: 2.25 }}>
+            {analysis.open_questions.map((q, i) => (
+              <Typography key={i} component="li" sx={{ fontSize: 12, lineHeight: 1.55, color: "text.secondary" }}>
+                {q}
+              </Typography>
+            ))}
+          </Stack>
+        </Box>
+      )}
+
+      {!analysis && (
+        <Typography sx={{ fontSize: 12.5, color: "text.secondary" }}>
+          This run recorded no analysis{run.status !== "done" ? ` — it ${run.status}.` : "."}
+        </Typography>
+      )}
+    </Stack>
+  );
+}
+
 function Row({ label, value }: { label: string; value: string }) {
   if (!value) return null;
   return (
@@ -860,7 +1009,7 @@ export default function RolloutPage({ active }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState(0);
   const [history, setHistory] = useState<RolloutRunSummary[]>([]);
-  const [historyAnchor, setHistoryAnchor] = useState<null | HTMLElement>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [reviewer, setReviewer] = useState(() => {
     try { return localStorage.getItem("fitgap.reviewer") ?? ""; } catch { return ""; }
   });
@@ -1037,20 +1186,11 @@ export default function RolloutPage({ active }: Props) {
   // then disarms itself, so a mis-click in a menu costs nothing; the second
   // removes the analysis and, by ON DELETE CASCADE, the decisions recorded
   // against it, which is why it is not a single click.
-  const [armed, setArmed] = useState<string | null>(null);
-  const disarm = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => () => { if (disarm.current) clearTimeout(disarm.current); }, []);
-
+  // The two presses this used to arm for itself are the history drawer's job
+  // now -- `armDelete` below -- because all three panels wanted them and only
+  // this one had them. An analysis carries decisions somebody recorded against
+  // it, so a stray click must not be enough.
   async function remove(id: string) {
-    if (armed !== id) {
-      setArmed(id);
-      if (disarm.current) clearTimeout(disarm.current);
-      disarm.current = setTimeout(() => setArmed(null), 5000);
-      return;
-    }
-    if (disarm.current) clearTimeout(disarm.current);
-    setArmed(null);
     try {
       await rollout.deleteRun(id);
       // A deleted run must not be left on screen as though it were still there.
@@ -1061,6 +1201,29 @@ export default function RolloutPage({ active }: Props) {
       setError((e as Error).message);
     }
   }
+
+  /** The history summaries as the drawer's cards. */
+  const historyCards: HistoryCard[] = useMemo(
+    () => history.map((r) => ({
+      id: r.id,
+      title: `${r.scope_label}${r.country ? ` · ${r.country}` : ""}`,
+      startedAt: r.started_at,
+      badges: r.status !== "done"
+        ? (
+          <Chip size="small" variant="outlined"
+                color={r.status === "failed" ? "error" : "warning"}
+                label={r.status} sx={{ height: 18, fontSize: 9.5 }} />
+        )
+        : null,
+      meta: [
+        r.gt_alignment !== null ? `GT ${r.gt_alignment}%` : "",
+        r.harmonization_potential !== null ? `harm ${r.harmonization_potential}%` : "",
+        r.deviations ? plural(r.deviations, "deviation") : "",
+        r.must_discuss ? `${r.must_discuss} must discuss` : "",
+      ].filter(Boolean).join(" · "),
+    })),
+    [history],
+  );
 
   async function loadRun(id: string) {
     try {
@@ -1176,10 +1339,12 @@ export default function RolloutPage({ active }: Props) {
             Fit-Gap Copilot
           </Typography>
           <Box sx={{ flex: 1 }} />
-          <Button size="small" variant="text" startIcon={<History size={14} />}
-                  onClick={(e) => setHistoryAnchor(e.currentTarget)} sx={{ fontSize: 12.5 }}>
-            {history.length ? `${history.length} run${history.length === 1 ? "" : "s"}` : "History"}
-          </Button>
+          <Tooltip title="Past runs — read one here, beside the one on the page">
+            <Button size="small" variant="text" startIcon={<History size={14} />}
+                    onClick={() => setHistoryOpen(true)} sx={{ fontSize: 12.5 }}>
+              {history.length ? `${history.length} run${history.length === 1 ? "" : "s"}` : "History"}
+            </Button>
+          </Tooltip>
           {runId && analysis && (
             <>
               <Tooltip title={pdfReady
@@ -1214,40 +1379,39 @@ export default function RolloutPage({ active }: Props) {
           discovery-heavy.
         </Typography>
 
-        <Menu anchorEl={historyAnchor} open={!!historyAnchor} onClose={() => setHistoryAnchor(null)}>
-          {history.length === 0 && <MenuItem disabled sx={{ fontSize: 12.5 }}>No runs yet</MenuItem>}
-          {history.map((r) => (
-            <MenuItem key={r.id} onClick={() => { setHistoryAnchor(null); void loadRun(r.id); }}
-                      sx={{ fontSize: 12.5, gap: 1.5, pr: 1 }}>
-              <Box sx={{ flex: 1, minWidth: 0 }}>
-                <Typography sx={{ fontSize: 12.5, fontWeight: 600 }}>
-                  {r.scope_label}{r.country ? ` · ${r.country}` : ""}
-                </Typography>
-                <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
-                  {r.started_at?.slice(0, 16).replace("T", " ")} · {r.status}
-                  {r.gt_alignment !== null ? ` · GT ${r.gt_alignment}%` : ""}
-                  {r.deviations ? ` · ${r.deviations} deviations` : ""}
-                </Typography>
-              </Box>
-              {/* Two presses, not a confirm dialog: a menu that opens a modal
-                  over itself is worse than the accident it prevents, and an
-                  analysis carries decisions somebody recorded against it. The
-                  arming disarms itself, so a stray first click is harmless. */}
-              <Tooltip title={armed === r.id
-                ? "Press again to delete this analysis and any decisions recorded against it"
-                : "Delete this analysis"}>
-                <IconButton
-                  size="small" aria-label={armed === r.id ? "Confirm delete" : "Delete analysis"}
-                  onClick={(e) => { e.stopPropagation(); void remove(r.id); }}
-                  sx={{ color: armed === r.id ? "error.main" : "text.disabled",
-                        "&:hover": { color: "error.main" } }}
-                >
-                  <Trash2 size={13} />
-                </IconButton>
-              </Tooltip>
-            </MenuItem>
-          ))}
-        </Menu>
+        {/* past runs, in a drawer beside the current one */}
+        <RunHistoryDrawer<RolloutRunDetail>
+          open={historyOpen}
+          onClose={() => setHistoryOpen(false)}
+          icon={<History size={18} />}
+          title="Past runs"
+          noun={["run", "runs"]}
+          items={historyCards}
+          currentId={runId}
+          onDelete={remove}
+          armDelete
+          deleteLabel="Delete this analysis and any decisions recorded against it"
+          fetchDetail={rollout.run}
+          renderDetail={(run) => <PastAnalysis run={run} />}
+          detailActions={(run) => (
+            <>
+              {pdfReady && (
+                <Button size="small" variant="outlined" startIcon={<FileDown size={13} />}
+                        href={rollout.exportUrl(run.id, "pdf")} sx={{ fontSize: 12 }}>
+                  PDF
+                </Button>
+              )}
+              <Button size="small" variant="text" startIcon={<Download size={13} />}
+                      href={rollout.exportUrl(run.id, "md")} sx={{ fontSize: 12 }}>
+                Markdown
+              </Button>
+            </>
+          )}
+          onLoadIntoPage={(id) => void loadRun(id)}
+          loadDisabled={running}
+          filterPlaceholder="Filter by scope, country or headline…"
+          emptyText="Nothing analysed yet. Run one and it will appear here."
+        />
 
         {status && (!status.anthropic_key || status.error || !status.bpml.available) && (
           <Alert severity="warning" sx={{ mb: 3, fontSize: 12.5 }}>

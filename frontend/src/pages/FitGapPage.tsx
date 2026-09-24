@@ -1,6 +1,6 @@
 import {
   Alert, Autocomplete, Box, Button, Chip, CircularProgress, Collapse, Divider, Drawer,
-  IconButton, LinearProgress, ListSubheader, Menu, MenuItem, Paper, Select, Slider,
+  IconButton, LinearProgress, ListSubheader, MenuItem, Paper, Select, Slider,
   Stack, Switch, Tab, Tabs, TextField, ToggleButton, ToggleButtonGroup, Tooltip, Typography,
 } from "@mui/material";
 import { alpha, useTheme } from "@mui/material/styles";
@@ -19,10 +19,12 @@ import {
 import {
   fitgap, runFitGap, uploadSessionDocuments,
   type BpmlProcess, type FitGapClass, type FitGapEntry, type FitGapEvidence, type FitGapIssue,
-  type FitGapPreview, type FitGapRunSummary, type FitGapStatus, type FitGapSynthesis,
+  type FitGapPreview, type FitGapRunDetail, type FitGapRunSummary, type FitGapStatus,
+  type FitGapSynthesis,
   type UploadComparison, type UploadSession,
 } from "../api";
 import { clearAdornment, clearOnEscape } from "../components/ClearAdornment";
+import RunHistoryDrawer, { type HistoryCard } from "../components/RunHistoryDrawer";
 
 /* -------------------------------------------------------------- attachments */
 
@@ -300,6 +302,170 @@ function SectionLabel({ icon, children, right }: { icon?: ReactNode; children: R
       </Typography>
       <Box sx={{ flex: 1 }} />
       {right}
+    </Stack>
+  );
+}
+
+/** One past register, read inside the history drawer.
+ *
+ *  The page lays a register out as a scope tree, a step list and four
+ *  synthesis tabs. What survives at 560px is the shape of it: how much was
+ *  classified and how, the gaps in weight order, and the decisions the
+ *  synthesis surfaced. The XLSX underneath has every column.
+ */
+function PastRegister({ run }: { run: FitGapRunDetail }) {
+  const synth = (run.synthesis && "reuse" in run.synthesis
+    ? run.synthesis
+    : null) as FitGapSynthesis | null;
+  const reuse = synth?.reuse;
+  const TOP = 8;
+
+  // by_class counts come from the synthesis when there is one, and from the
+  // entries themselves when the run stopped before it synthesised. A register
+  // with no verdict summary at all is the one thing this panel cannot show.
+  const byClass = reuse?.by_class
+    ?? run.entries.reduce<Record<string, number>>((acc, e) => {
+      acc[e.classification] = (acc[e.classification] ?? 0) + 1;
+      return acc;
+    }, {});
+
+  return (
+    <Stack spacing={1.75}>
+      <Stack direction="row" spacing={0.6} useFlexGap sx={{ flexWrap: "wrap" }}>
+        <Chip size="small" variant="outlined" label={`Mode ${run.mode}`} sx={{ height: 19, fontSize: 10 }} />
+        {run.status !== "done" && (
+          <Chip size="small" variant="outlined" color={run.status === "failed" ? "error" : "warning"}
+                label={run.status} sx={{ height: 19, fontSize: 10 }} />
+        )}
+        {run.holdout && (
+          <Chip size="small" variant="outlined" label="holdout" sx={{ height: 19, fontSize: 10 }} />
+        )}
+        <Chip size="small" variant="outlined" label={run.model} sx={{ height: 19, fontSize: 10 }} />
+        {run.categories?.map((c) => (
+          <Chip key={c} size="small" variant="outlined" label={(CATEGORY_LABEL as Record<string, string>)[c] ?? c}
+                sx={{ height: 19, fontSize: 10 }} />
+        ))}
+        {/* The attachment is swept within hours, so its name is the whole record. */}
+        {run.uploads?.documents?.map((d) => (
+          <Tooltip key={d} title="An attachment this run read. The file itself is long gone.">
+            <Chip size="small" variant="outlined" icon={<Paperclip size={10} />} label={d}
+                  sx={{ height: 19, fontSize: 10, "& .MuiChip-icon": { ml: 0.4 } }} />
+          </Tooltip>
+        ))}
+      </Stack>
+
+      {run.question && (
+        <Typography sx={{ fontSize: 13, lineHeight: 1.65 }}>{run.question}</Typography>
+      )}
+
+      {reuse && (
+        <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: "wrap" }}>
+          {([
+            ["Reuse", reuse.reuse_pct],
+            ["Coverage", reuse.coverage_pct],
+          ] as [string, number | null][]).map(([label, v]) => (
+            <Paper key={label} variant="outlined" sx={{ p: 1.5, flex: "1 1 150px", minWidth: 140 }}>
+              <Typography sx={{ fontSize: 10, color: "text.secondary", textTransform: "uppercase",
+                                letterSpacing: ".06em" }}>
+                {label}
+              </Typography>
+              <Stack direction="row" spacing={0.5} sx={{ alignItems: "baseline", mt: 0.5 }}>
+                <Typography sx={{ fontSize: 26, fontWeight: 800, lineHeight: 1,
+                                  color: v === null ? "text.disabled" : "primary.main" }}>
+                  {v === null ? "—" : v}
+                </Typography>
+                {v !== null && (
+                  <Typography sx={{ fontSize: 13, fontWeight: 600, color: "primary.main" }}>%</Typography>
+                )}
+              </Stack>
+            </Paper>
+          ))}
+          <Paper variant="outlined" sx={{ p: 1.5, flex: "1 1 150px", minWidth: 140 }}>
+            <Typography sx={{ fontSize: 10, color: "text.secondary", textTransform: "uppercase",
+                              letterSpacing: ".06em" }}>
+              Classified
+            </Typography>
+            <Typography sx={{ fontSize: 26, fontWeight: 800, lineHeight: 1, mt: 0.5 }}>
+              {reuse.classified}
+              <Box component="span" sx={{ fontSize: 13, fontWeight: 600, color: "text.secondary" }}>
+                {" / "}{reuse.steps}
+              </Box>
+            </Typography>
+          </Paper>
+        </Stack>
+      )}
+
+      {!!Object.keys(byClass).length && (
+        <Stack direction="row" spacing={0.6} useFlexGap sx={{ flexWrap: "wrap", alignItems: "center" }}>
+          {Object.entries(byClass)
+            .filter(([, n]) => n > 0)
+            .sort((a, b) => b[1] - a[1])
+            .map(([cls, n]) => (
+              <Stack key={cls} direction="row" spacing={0.5} sx={{ alignItems: "center" }}>
+                <ClassBadge value={cls as FitGapClass} size="sm" />
+                <Typography sx={{ fontSize: 11.5, fontWeight: 700, color: "text.secondary" }}>{n}</Typography>
+              </Stack>
+            ))}
+        </Stack>
+      )}
+
+      {reuse?.note && (
+        <Typography sx={{ fontSize: 11.5, color: "text.secondary", lineHeight: 1.6 }}>{reuse.note}</Typography>
+      )}
+
+      {!!synth?.gaps.length && (
+        <Box>
+          <Typography variant="overline" sx={{ fontSize: 10, color: "text.secondary" }}>
+            Gaps, heaviest first
+          </Typography>
+          <Stack spacing={1} sx={{ mt: 0.5 }}>
+            {synth.gaps.slice(0, TOP).map((g) => (
+              <Paper key={g.bpml_code} sx={{ p: 1.4 }}>
+                <Stack direction="row" spacing={0.75} sx={{ alignItems: "center", flexWrap: "wrap", gap: 0.6 }}>
+                  <Typography sx={{ fontSize: 11, fontFamily: "monospace", fontWeight: 700 }}>
+                    {g.bpml_code}
+                  </Typography>
+                  <ClassBadge value={g.classification} size="sm" />
+                  <Chip size="small" variant="outlined" label={g.materiality}
+                        sx={{ height: 17, fontSize: 9.5 }} />
+                </Stack>
+                <Typography sx={{ fontSize: 12.5, fontWeight: 650, mt: 0.6 }}>{g.step_name}</Typography>
+                {g.rationale && (
+                  <Typography sx={{ fontSize: 11.5, color: "text.secondary", mt: 0.4, lineHeight: 1.55 }}>
+                    {g.rationale}
+                  </Typography>
+                )}
+              </Paper>
+            ))}
+          </Stack>
+          {synth.gaps.length > TOP && (
+            <Typography sx={{ fontSize: 11.5, color: "text.secondary", mt: 1 }}>
+              {synth.gaps.length - TOP} more, with their evidence and reviews, on the page.
+            </Typography>
+          )}
+        </Box>
+      )}
+
+      {!!synth?.decisions.length && (
+        <Box>
+          <Typography variant="overline" sx={{ fontSize: 10, color: "text.secondary" }}>
+            {plural(synth.decisions.length, "decision")} to take
+          </Typography>
+          <Stack component="ul" spacing={0.5} sx={{ m: 0, mt: 0.25, pl: 2.25 }}>
+            {synth.decisions.map((d, i) => (
+              <Typography key={i} component="li" sx={{ fontSize: 12, lineHeight: 1.55 }}>
+                {d.question}
+              </Typography>
+            ))}
+          </Stack>
+        </Box>
+      )}
+
+      {!run.entries.length && (
+        <Typography sx={{ fontSize: 12.5, color: "text.secondary" }}>
+          This run classified no steps{run.status !== "done" ? ` — it ${run.status}.` : "."}
+        </Typography>
+      )}
     </Stack>
   );
 }
@@ -1346,7 +1512,7 @@ export default function FitGapPage({ active, onShowInGraph }: Props) {
   const [uploadError, setUploadError] = useState<string | null>(null);
 
   const [history, setHistory] = useState<FitGapRunSummary[]>([]);
-  const [historyAnchor, setHistoryAnchor] = useState<null | HTMLElement>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const controller = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -1523,6 +1689,43 @@ export default function FitGapPage({ active, onShowInGraph }: Props) {
     try { if (id) await fitgap.uploads.drop(id); } catch { /* already swept */ }
   }
 
+  /** The history summaries as the drawer's cards. */
+  const historyCards: HistoryCard[] = useMemo(
+    () => history.map((r) => ({
+      id: r.id,
+      title: r.scope_label,
+      subtitle: r.question,
+      startedAt: r.started_at,
+      badges: (
+        <>
+          <Chip size="small" variant="outlined" label={`Mode ${r.mode}`}
+                sx={{ height: 18, fontSize: 9.5 }} />
+          {r.status !== "done" && (
+            <Chip size="small" variant="outlined"
+                  color={r.status === "failed" ? "error" : "warning"}
+                  label={r.status} sx={{ height: 18, fontSize: 9.5 }} />
+          )}
+          {r.holdout && (
+            <Chip size="small" variant="outlined" label="holdout" sx={{ height: 18, fontSize: 9.5 }} />
+          )}
+          {/* The attachment is swept within hours, so the count is all a
+              reopened register can show for it. */}
+          {!!r.uploads?.documents?.length && (
+            <Chip size="small" variant="outlined" icon={<Paperclip size={10} />}
+                  label={r.uploads.documents.length}
+                  sx={{ height: 18, fontSize: 9.5, "& .MuiChip-icon": { ml: 0.4 } }} />
+          )}
+        </>
+      ),
+      meta: [
+        plural(r.entries, "entry", "entries"),
+        r.reuse_pct !== null ? `${r.reuse_pct}% reuse` : "",
+        r.coverage_pct !== null ? `${r.coverage_pct}% covered` : "",
+      ].filter(Boolean).join(" · "),
+    })),
+    [history],
+  );
+
   async function loadRun(id: string) {
     try {
       const run = await fitgap.run(id);
@@ -1591,40 +1794,41 @@ export default function FitGapPage({ active, onShowInGraph }: Props) {
                 </Tooltip>
               </>
             )}
-            <Tooltip title="Previous runs">
-              <span>
-                <IconButton size="small" disabled={!history.length} onClick={(e) => setHistoryAnchor(e.currentTarget)}>
-                  <History size={16} />
-                </IconButton>
-              </span>
+            <Tooltip title="Previous runs — read one here, beside the one on the page">
+              <IconButton size="small" onClick={() => setHistoryOpen(true)} aria-label="Previous runs">
+                <History size={16} />
+              </IconButton>
             </Tooltip>
-            <Menu anchorEl={historyAnchor} open={!!historyAnchor} onClose={() => setHistoryAnchor(null)}>
-              {history.map((r) => (
-                <MenuItem key={r.id} onClick={() => { setHistoryAnchor(null); loadRun(r.id); }} sx={{ fontSize: 13 }}>
-                  <Stack direction="row" spacing={1.25}  sx={{ alignItems: "center", width: "100%" }}>
-                    <Chip size="small" label={`Mode ${r.mode}`} sx={{ height: 18, fontSize: 9.5 }} />
-                    <Box sx={{ flex: 1 }}>
-                      <Typography sx={{ fontSize: 13, fontWeight: 600 }}>{r.scope_label}</Typography>
-                      <Typography sx={{ fontSize: 11, color: "text.secondary" }}>
-                        {plural(r.entries, "entry", "entries")}
-                        {r.reuse_pct !== null ? ` · ${r.reuse_pct}% reuse` : ""}
-                        {r.holdout ? " · holdout" : ""}
-                        {r.categories?.length ? ` · ${r.categories.join(", ")}` : ""}
-                        {/* The attachment itself is swept within hours, so the
-                            names are all a reopened register can show. */}
-                        {r.uploads?.documents?.length
-                          ? ` · +${plural(r.uploads.documents.length, "attachment")}`
-                          : ""}
-                        {r.status === "abandoned" ? " · abandoned" : ""}
-                      </Typography>
-                    </Box>
-                    <Typography sx={{ fontSize: 10.5, color: "text.disabled" }}>
-                      {r.started_at?.slice(0, 16).replace("T", " ")}
-                    </Typography>
-                  </Stack>
-                </MenuItem>
-              ))}
-            </Menu>
+            {/* previous runs, in a drawer beside the current one */}
+            <RunHistoryDrawer<FitGapRunDetail>
+              open={historyOpen}
+              onClose={() => setHistoryOpen(false)}
+              icon={<History size={18} />}
+              title="Previous runs"
+              noun={["run", "runs"]}
+              items={historyCards}
+              currentId={runId}
+              /* No onDelete: /api/fitgap/runs has no DELETE, and a trash icon
+                 that throws is worse than no trash icon. */
+              fetchDetail={fitgap.run}
+              renderDetail={(run) => <PastRegister run={run} />}
+              detailActions={(run) => (
+                <>
+                  <Button size="small" variant="outlined" startIcon={<FileSpreadsheet size={13} />}
+                          href={fitgap.exportUrl(run.id, "xlsx")} sx={{ fontSize: 12 }}>
+                    XLSX
+                  </Button>
+                  <Button size="small" variant="text" startIcon={<Download size={13} />}
+                          href={fitgap.exportUrl(run.id, "json")} sx={{ fontSize: 12 }}>
+                    JSON
+                  </Button>
+                </>
+              )}
+              onLoadIntoPage={(id) => void loadRun(id)}
+              loadDisabled={running}
+              filterPlaceholder="Filter by scope or question…"
+              emptyText="Nothing run yet. Run one and it will appear here."
+            />
           </Stack>
         </Stack>
 
