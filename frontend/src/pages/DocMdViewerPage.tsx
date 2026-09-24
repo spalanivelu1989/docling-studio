@@ -44,7 +44,7 @@ import { useEffect, useId, useRef, useState, type DragEvent, type ReactNode } fr
 import { Group, Panel, Separator } from "react-resizable-panels";
 import { api, type KbFileItem, type Upload } from "../api";
 import Markdown from "../components/Markdown";
-import { surface } from "../theme";
+import { surface, well } from "../theme";
 
 const ACCEPT_DOCS = ".pptx,.ppt,.docx,.doc,.xlsx,.xlsm,.xls,.pdf,.html,.htm,.xml,.csv,.txt,.json,.msg,.eml,.png,.jpg,.jpeg,.webp,.bmp,.tiff,.tif";
 const ACCEPT_MD = ".md,.markdown,.mdown,.mkd,.txt";
@@ -533,7 +533,7 @@ export default function DocMdViewerPage() {
                   flex: 1,
                   overflow: "auto",
                   p: 2.5,
-                  bgcolor: (t) => (t.palette.mode === "light" ? "#f1f3f7" : "#0d1117"),
+                  bgcolor: (t) => well(t.palette.mode),
                 }}
               >
                 {docLoading || kbLoading ? (

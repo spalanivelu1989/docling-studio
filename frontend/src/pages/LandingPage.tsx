@@ -7,7 +7,7 @@ import {
   Stack,
   Typography,
 } from "@mui/material";
-import { alpha } from "@mui/material/styles";
+import { alpha, useTheme } from "@mui/material/styles";
 import { motion } from "framer-motion";
 import {
   ArrowRight,
@@ -25,11 +25,12 @@ import {
   Workflow,
 } from "lucide-react";
 import type { ReactNode } from "react";
-import { surface } from "../theme";
+import { frappe, surface, type Mode } from "../theme";
 
 type Page = "extract" | "batch" | "add-kb" | "review" | "viewer" | "ask" | "landing";
 
 export default function LandingPage({ onNavigate }: { onNavigate: (page: Page) => void }) {
+  const theme = useTheme();
   return (
     <Box
       sx={{
@@ -97,7 +98,7 @@ export default function LandingPage({ onNavigate }: { onNavigate: (page: Page) =
                 sx={{
                   background: (t) =>
                     t.palette.mode === "dark"
-                      ? "linear-gradient(135deg, #60a5fa 0%, #a78bfa 50%, #f472b6 100%)"
+                      ? `linear-gradient(135deg, ${frappe.blue} 0%, ${frappe.mauve} 50%, ${frappe.pink} 100%)`
                       : "linear-gradient(135deg, #2563eb 0%, #7c3aed 60%, #db2777 100%)",
                   WebkitBackgroundClip: "text",
                   WebkitTextFillColor: "transparent",
@@ -179,7 +180,7 @@ export default function LandingPage({ onNavigate }: { onNavigate: (page: Page) =
             {/* Service 1: Convert */}
             <ServiceCard
               icon={<FileText size={24} />}
-              color="#3b82f6"
+              color={SERVICE_HUES[theme.palette.mode][0]}
               title="1. Document Convert"
               subtitle="Deep layout extraction and flowchart recovery"
               badge="Core Converter"
@@ -197,7 +198,7 @@ export default function LandingPage({ onNavigate }: { onNavigate: (page: Page) =
             {/* Service 2: Batch Convert */}
             <ServiceCard
               icon={<FolderArchive size={24} />}
-              color="#8b5cf6"
+              color={SERVICE_HUES[theme.palette.mode][1]}
               title="2. Batch Convert"
               subtitle="High-throughput folder & multi-file conversion"
               badge="High Throughput"
@@ -215,7 +216,7 @@ export default function LandingPage({ onNavigate }: { onNavigate: (page: Page) =
             {/* Service 3: Doc vs MD */}
             <ServiceCard
               icon={<ScanEye size={24} />}
-              color="#06b6d4"
+              color={SERVICE_HUES[theme.palette.mode][2]}
               title="3. Doc vs MD Review"
               subtitle="Side-by-side source & Markdown verification"
               badge="Visual QA"
@@ -233,7 +234,7 @@ export default function LandingPage({ onNavigate }: { onNavigate: (page: Page) =
             {/* Service 4: MD Viewer */}
             <ServiceCard
               icon={<Columns2 size={24} />}
-              color="#10b981"
+              color={SERVICE_HUES[theme.palette.mode][3]}
               title="4. MD Viewer"
               subtitle="Dual Markdown comparator & revision inspector"
               badge="Diff & Inspect"
@@ -251,7 +252,7 @@ export default function LandingPage({ onNavigate }: { onNavigate: (page: Page) =
             {/* Service 5: Ask */}
             <ServiceCard
               icon={<MessageSquareText size={24} />}
-              color="#f59e0b"
+              color={SERVICE_HUES[theme.palette.mode][4]}
               title="5. Ask & Knowledge Base"
               subtitle="Hybrid semantic vector search and grounded Q&A"
               badge="pgvector + RAG"
@@ -409,6 +410,15 @@ export default function LandingPage({ onNavigate }: { onNavigate: (page: Page) =
 }
 
 // Subcomponent: Service Card
+/** A hue per service card. Five cards in a row need five colours that stay
+ *  apart, and the set has to be redrawn for dark: the Tailwind-ish blues and
+ *  greens the light cards use sit at about 3.7:1 on Frappé's Base, which is
+ *  under the floor for the card title they colour. */
+const SERVICE_HUES: Record<Mode, string[]> = {
+  light: ["#3b82f6", "#8b5cf6", "#06b6d4", "#10b981", "#f59e0b"],
+  dark: [frappe.blue, frappe.mauve, frappe.sky, frappe.green, frappe.yellow],
+};
+
 function ServiceCard({
   icon,
   color,

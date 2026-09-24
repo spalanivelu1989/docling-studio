@@ -58,7 +58,7 @@ import {
   type RagStatus,
 } from "../api";
 import { clearAdornment, clearOnEscape } from "../components/ClearAdornment";
-import { surface } from "../theme";
+import { frappe, surface, type Mode } from "../theme";
 
 interface StagedFile {
   id: string;
@@ -92,26 +92,46 @@ function getDocumentExtension(file: KbFileItem): string {
   return ext || "md";
 }
 
-function getExtensionColor(ext: string): { bg: string; color: string; border: string } {
-  switch (ext.toLowerCase()) {
-    case "xlsx":
-    case "xls":
-    case "csv":
-      return { bg: "rgba(16, 185, 129, 0.12)", color: "#059669", border: "rgba(16, 185, 129, 0.35)" };
-    case "docx":
-    case "doc":
-      return { bg: "rgba(37, 99, 235, 0.12)", color: "#2563eb", border: "rgba(37, 99, 235, 0.35)" };
-    case "pptx":
-    case "ppt":
-      return { bg: "rgba(249, 115, 22, 0.12)", color: "#ea580c", border: "rgba(249, 115, 22, 0.35)" };
-    case "pdf":
-      return { bg: "rgba(239, 68, 68, 0.12)", color: "#dc2626", border: "rgba(239, 68, 68, 0.35)" };
-    case "html":
-    case "xml":
-      return { bg: "rgba(139, 92, 246, 0.12)", color: "#7c3aed", border: "rgba(139, 92, 246, 0.35)" };
-    default:
-      return { bg: "rgba(107, 114, 128, 0.12)", color: "#4b5563", border: "rgba(107, 114, 128, 0.35)" };
-  }
+/** A hue per family of file type, for the chip beside a filename.
+ *
+ *  Two hues per family, because the light chips were drawn that way: a bright
+ *  one for the 12% fill and the 35% border, a darker one for the label that
+ *  has to stay legible on it. Frappé needs only one -- its accents are already
+ *  mixed to sit on a dark surface -- so dark uses the same value for both.
+ *
+ *  This used to be a switch returning three hand-written `rgba()` strings per
+ *  case, all of them light-mode values shown in both themes: #059669 on Base
+ *  is 2.5:1, a label you cannot read. */
+const EXT_FAMILY: Record<string, string> = {
+  xlsx: "sheet", xls: "sheet", csv: "sheet",
+  docx: "doc", doc: "doc",
+  pptx: "slides", ppt: "slides",
+  pdf: "pdf",
+  html: "markup", xml: "markup",
+};
+
+const EXT_HUES: Record<Mode, Record<string, { tint: string; text: string }>> = {
+  light: {
+    sheet: { tint: "#10b981", text: "#059669" },
+    doc: { tint: "#2563eb", text: "#2563eb" },
+    slides: { tint: "#f97316", text: "#ea580c" },
+    pdf: { tint: "#ef4444", text: "#dc2626" },
+    markup: { tint: "#8b5cf6", text: "#7c3aed" },
+    other: { tint: "#6b7280", text: "#4b5563" },
+  },
+  dark: {
+    sheet: { tint: frappe.green, text: frappe.green },
+    doc: { tint: frappe.blue, text: frappe.blue },
+    slides: { tint: frappe.peach, text: frappe.peach },
+    pdf: { tint: frappe.red, text: frappe.red },
+    markup: { tint: frappe.mauve, text: frappe.mauve },
+    other: { tint: frappe.overlay2, text: frappe.overlay2 },
+  },
+};
+
+function getExtensionColor(ext: string, mode: Mode): { bg: string; color: string; border: string } {
+  const { tint, text } = EXT_HUES[mode][EXT_FAMILY[ext.toLowerCase()] ?? "other"];
+  return { bg: alpha(tint, 0.12), color: text, border: alpha(tint, 0.35) };
 }
 
 export default function AddToKnowledgeBasePage({ active }: { active: boolean }) {
@@ -1001,7 +1021,7 @@ export default function AddToKnowledgeBasePage({ active }: { active: boolean }) 
                           All Formats ({kbFiles.length})
                         </MenuItem>
                         {availableExtensions.map(([ext, count]) => {
-                          const colors = getExtensionColor(ext);
+                          const colors = getExtensionColor(ext, theme.palette.mode);
                           return (
                             <MenuItem key={ext} value={ext} sx={{ fontSize: 12.5 }}>
                               <Box sx={{ display: "flex", alignItems: "center", gap: 1, width: "100%" }}>
@@ -1112,7 +1132,7 @@ export default function AddToKnowledgeBasePage({ active }: { active: boolean }) 
                         ) : (
                           filteredKbFiles.map((file) => {
                             const ext = getDocumentExtension(file);
-                            const colors = getExtensionColor(ext);
+                            const colors = getExtensionColor(ext, theme.palette.mode);
                             return (
                               <TableRow key={file.name} hover>
                                 <TableCell sx={{ fontWeight: 600 }}>

@@ -3,6 +3,7 @@ import { useTheme } from "@mui/material/styles";
 import DOMPurify from "dompurify";
 import { marked } from "marked";
 import { useLayoutEffect, useMemo, useRef } from "react";
+import { frappe } from "../theme";
 
 interface Props {
   source: string;
@@ -110,14 +111,14 @@ export default function Markdown({ source, diagrams, highlight, citations, onCit
                 themeVariables: {
                   darkMode: true,
                   background: theme.palette.background.paper,
-                  mainBkg: "#1e2733",
-                  primaryColor: "#1e2733",
+                  mainBkg: frappe.surface0,
+                  primaryColor: frappe.surface0,
                   primaryTextColor: theme.palette.text.primary,
-                  primaryBorderColor: "#3f4d60",
-                  secondaryColor: "#243040",
-                  tertiaryColor: "#1a2029",
-                  nodeBorder: "#3f4d60",
-                  clusterBkg: "#11161c",
+                  primaryBorderColor: frappe.surface2,
+                  secondaryColor: frappe.surface1,
+                  tertiaryColor: frappe.mantle,
+                  nodeBorder: frappe.surface2,
+                  clusterBkg: frappe.crust,
                   clusterBorder: theme.palette.divider,
                   lineColor: theme.palette.text.secondary,
                   textColor: theme.palette.text.primary,

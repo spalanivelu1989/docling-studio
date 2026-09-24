@@ -15,7 +15,7 @@ import {
   Tooltip,
   Typography,
 } from "@mui/material";
-import { alpha, useTheme } from "@mui/material/styles";
+import { alpha, useTheme, type Theme } from "@mui/material/styles";
 import ModelView from "../components/ModelView";
 import { clearAdornment, clearOnEscape } from "../components/ClearAdornment";
 import ProcessFlowView from "../components/ProcessFlowView";
@@ -64,7 +64,7 @@ import {
   type ModelNode,
 } from "../api";
 import Markdown from "../components/Markdown";
-import { surface } from "../theme";
+import { frappe, nodeHues, surface, unknownHue, well, type Mode } from "../theme";
 
 interface SimNode extends d3.SimulationNodeDatum, GraphNode {
   x?: number;
@@ -81,33 +81,44 @@ interface SimLink extends d3.SimulationLinkDatum<SimNode> {
   label: string;
 }
 
-const TYPE_CONFIG: Record<
+/** What a node type is, minus its colour.
+ *
+ *  The hue lives in the theme, because it has to be two hues -- the slate-and-
+ *  violet set for light paper, Frappé's own accents for dark -- and because
+ *  the trace drawer draws the same five categories and used to hold a second
+ *  copy of the list. `typeConfig()` puts the two halves back together. */
+const TYPE_META: Record<
   string,
-  { label: string; color: string; icon: typeof Network; defaultVisible: boolean }
+  { label: string; icon: typeof Network; defaultVisible: boolean }
 > = {
-  stream: { label: "Business Streams", color: "#8b5cf6", icon: Layers, defaultVisible: true },
-  system: { label: "Core Systems", color: "#0284c7", icon: Cpu, defaultVisible: true },
-  document: { label: "Markdown Documents", color: "#64748b", icon: FileText, defaultVisible: true },
-  process: { label: "BPML Processes", color: "#10b981", icon: Workflow, defaultVisible: true },
+  stream: { label: "Business Streams", icon: Layers, defaultVisible: true },
+  system: { label: "Core Systems", icon: Cpu, defaultVisible: true },
+  document: { label: "Markdown Documents", icon: FileText, defaultVisible: true },
+  process: { label: "BPML Processes", icon: Workflow, defaultVisible: true },
   // Specs start hidden because there used to be 548 of them against 720 nodes,
   // and drawing them all on first paint buried everything else. Since the
   // process register's Lowest Level Key column stopped being read as specs
   // there are 47 of 354, so that reason no longer holds -- left hidden for now
   // only to avoid changing what the page does by default without asking.
-  spec: { label: "SPARK Specifications", color: "#f97316", icon: FileCode, defaultVisible: false },
+  spec: { label: "SPARK Specifications", icon: FileCode, defaultVisible: false },
 };
+
+const typeConfig = (mode: Mode) =>
+  Object.fromEntries(
+    Object.entries(TYPE_META).map(([k, v]) => [k, { ...v, color: nodeHues[mode][k] }]),
+  ) as Record<string, { label: string; color: string; icon: typeof Network; defaultVisible: boolean }>;
 
 /** The colour a node is drawn in.
  *
- *  TYPE_CONFIG wins over the node's own `color`. The extractor gives every
+ *  The type wins over the node's own `color`. The extractor gives every
  *  stream and every system its own hue, so the four streams came out purple,
  *  pink, green and amber and the six systems blue, slate, sky, red, blue and
  *  green — while the legend beside them showed one swatch per type. Worse, the
  *  L2C green and the process green were the same value, so a stream and a BPML
  *  step were indistinguishable. Keying off the type is what makes the canvas
  *  agree with the legend, and it holds even against a stale cached graph. */
-function nodeColor(node: { type: string; color?: string }): string {
-  return TYPE_CONFIG[node.type]?.color || node.color || "#64748b";
+function nodeColor(node: { type: string; color?: string }, mode: Mode): string {
+  return nodeHues[mode][node.type] || node.color || unknownHue(mode);
 }
 
 const PRESET_QUERIES = [
@@ -128,6 +139,13 @@ interface KnowledgeGraphPageProps {
 
 export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }: KnowledgeGraphPageProps) {
   const theme = useTheme();
+  const TYPE_CONFIG = useMemo(() => typeConfig(theme.palette.mode), [theme.palette.mode]);
+  // The two query modes and the "matched" colour, named once so the chips in
+  // the results panel are drawn in the same hue as the canvas behind them.
+  const isDarkMode = theme.palette.mode === "dark";
+  const PATH_HUE = isDarkMode ? frappe.sky : "#0284c7";
+  const RELATED_HUE = isDarkMode ? frappe.pink : "#8b5cf6";
+  const MATCH_HUE = isDarkMode ? frappe.peach : "#ea580c";
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
@@ -147,7 +165,7 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
   // Derived from TYPE_CONFIG rather than repeated here, so `defaultVisible` is
   // the single place a default lives.
   const [visibleTypes, setVisibleTypes] = useState<Record<string, boolean>>(() =>
-    Object.fromEntries(Object.entries(TYPE_CONFIG).map(([k, v]) => [k, v.defaultVisible]))
+    Object.fromEntries(Object.entries(TYPE_META).map(([k, v]) => [k, v.defaultVisible]))
   );
   const [searchQuery, setSearchQuery] = useState("");
   // The canvas shows the graph that was built; the model view shows the
@@ -414,45 +432,45 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
 
       if (isQueryActive) {
         if (isQueryEdge) {
-          ctx.strokeStyle = isPathMode ? (isDark ? "#38bdf8" : "#0284c7") : (isDark ? "#c084fc" : "#7c3aed");
+          ctx.strokeStyle = isPathMode ? (isDark ? frappe.sky : "#0284c7") : (isDark ? frappe.pink : "#7c3aed");
           ctx.lineWidth = 3.2 / transform.k;
           ctx.globalAlpha = 1;
         } else {
-          ctx.strokeStyle = isDark ? "#1e293b" : "#e2e8f0";
+          ctx.strokeStyle = isDark ? frappe.surface0 : "#e2e8f0";
           ctx.lineWidth = 0.6 / transform.k;
           ctx.globalAlpha = 0.05;
         }
       } else if (hoveredNode) {
         if (isHoveredLink) {
           // Vibrant Electric Cyan on hover
-          ctx.strokeStyle = isDark ? "#38bdf8" : "#0284c7";
+          ctx.strokeStyle = isDark ? frappe.sky : "#0284c7";
           ctx.lineWidth = Math.max(2.4, 3.5 / transform.k);
           ctx.shadowColor = ctx.strokeStyle;
           ctx.shadowBlur = 8 / transform.k;
           ctx.globalAlpha = 1;
         } else {
           // All other links stay at normal visibility! Other links DO NOT disappear!
-          ctx.strokeStyle = isDark ? "rgba(148, 163, 184, 0.22)" : "rgba(100, 116, 139, 0.25)";
+          ctx.strokeStyle = isDark ? alpha(frappe.overlay1, 0.3) : "rgba(100, 116, 139, 0.25)";
           ctx.lineWidth = Math.max(0.7, 1 / transform.k);
           ctx.globalAlpha = transform.k < 0.4 ? 0.35 : 0.65;
         }
       } else if (selectedNode) {
         if (isFocalLink) {
           // Vibrant Indigo on selection
-          ctx.strokeStyle = isDark ? "#818cf8" : "#4f46e5";
+          ctx.strokeStyle = isDark ? frappe.lavender : "#4f46e5";
           ctx.lineWidth = Math.max(2.2, 3.2 / transform.k);
           ctx.shadowColor = ctx.strokeStyle;
           ctx.shadowBlur = 6 / transform.k;
           ctx.globalAlpha = 1;
         } else {
           // Softly de-emphasize other edges when a node is clicked, but keep them visible!
-          ctx.strokeStyle = isDark ? "rgba(71, 85, 105, 0.35)" : "rgba(203, 213, 225, 0.65)";
+          ctx.strokeStyle = isDark ? alpha(frappe.surface2, 0.5) : "rgba(203, 213, 225, 0.65)";
           ctx.lineWidth = 0.7 / transform.k;
           ctx.globalAlpha = 0.3;
         }
       } else {
         // Normal rest state: clean subtle connection
-        ctx.strokeStyle = isDark ? "rgba(148, 163, 184, 0.22)" : "rgba(100, 116, 139, 0.25)";
+        ctx.strokeStyle = isDark ? alpha(frappe.overlay1, 0.3) : "rgba(100, 116, 139, 0.25)";
         ctx.lineWidth = Math.max(0.7, 1 / transform.k);
         ctx.globalAlpha = transform.k < 0.4 ? 0.35 : 0.65;
       }
@@ -475,11 +493,11 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
 
           ctx.save();
           ctx.fillStyle = isFocalLink
-            ? (isHoveredLink ? (isDark ? "#38bdf8" : "#0284c7") : (isDark ? "#818cf8" : "#4f46e5"))
+            ? (isHoveredLink ? (isDark ? frappe.sky : "#0284c7") : (isDark ? frappe.lavender : "#4f46e5"))
             : isQueryEdge
-            ? (isPathMode ? (isDark ? "#38bdf8" : "#0284c7") : (isDark ? "#c084fc" : "#7c3aed"))
+            ? (isPathMode ? (isDark ? frappe.sky : "#0284c7") : (isDark ? frappe.pink : "#7c3aed"))
             : isDark
-            ? "rgba(148, 163, 184, 0.5)"
+            ? alpha(frappe.overlay1, 0.6)
             : "rgba(100, 116, 139, 0.6)";
 
           ctx.globalAlpha = isFocalLink || isQueryEdge ? 1 : 0.65;
@@ -518,13 +536,13 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
         const py = 2.5;
 
         // Badge pill
-        ctx.fillStyle = isDark ? "rgba(15, 23, 42, 0.94)" : "rgba(255, 255, 255, 0.96)";
+        ctx.fillStyle = isDark ? alpha(frappe.crust, 0.94) : "rgba(255, 255, 255, 0.96)";
         ctx.strokeStyle = isFocalLink
-          ? (isHoveredLink ? (isDark ? "#38bdf8" : "#0284c7") : (isDark ? "#818cf8" : "#4f46e5"))
+          ? (isHoveredLink ? (isDark ? frappe.sky : "#0284c7") : (isDark ? frappe.lavender : "#4f46e5"))
           : isQueryEdge
-          ? (isPathMode ? "#0284c7" : "#7c3aed")
+          ? (isPathMode ? (isDark ? frappe.sky : "#0284c7") : (isDark ? frappe.pink : "#7c3aed"))
           : isDark
-          ? "rgba(100, 116, 139, 0.35)"
+          ? alpha(frappe.surface2, 0.6)
           : "rgba(203, 213, 225, 0.75)";
         ctx.lineWidth = (isFocalLink || isQueryEdge ? 1.5 : 0.8) / transform.k;
 
@@ -544,11 +562,11 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
 
         // Text
         ctx.fillStyle = isFocalLink
-          ? (isHoveredLink ? (isDark ? "#7dd3fc" : "#0369a1") : (isDark ? "#a5b4fc" : "#4338ca"))
+          ? (isHoveredLink ? (isDark ? frappe.sky : "#0369a1") : (isDark ? frappe.lavender : "#4338ca"))
           : isQueryEdge
-          ? (isPathMode ? "#38bdf8" : "#c084fc")
+          ? (isPathMode ? (isDark ? frappe.sky : "#0284c7") : (isDark ? frappe.pink : "#7c3aed"))
           : isDark
-          ? "#cbd5e1"
+          ? frappe.subtext1
           : "#475569";
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
@@ -582,8 +600,10 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
 
       const radius = (node.size || 12) * (isSelected ? 1.4 : isHovered ? 1.35 : isHoveredNeighbor ? 1.15 : isQueryMatch ? 1.2 : 1);
       const baseColor = isQueryMatch && isPathMode
-        ? (node.type === "system" ? "#0284c7" : "#ea580c")
-        : nodeColor(node);
+        ? (node.type === "system"
+            ? (isDark ? frappe.blue : "#0284c7")
+            : (isDark ? frappe.peach : "#ea580c"))
+        : nodeColor(node, theme.palette.mode);
 
       ctx.save();
       ctx.beginPath();
@@ -595,7 +615,7 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
         ctx.globalAlpha = 0.3;
         ctx.fill();
         ctx.lineWidth = 1 / transform.k;
-        ctx.strokeStyle = isDark ? "rgba(15, 23, 42, 0.6)" : "rgba(255, 255, 255, 0.6)";
+        ctx.strokeStyle = isDark ? alpha(frappe.crust, 0.6) : "rgba(255, 255, 255, 0.6)";
         ctx.stroke();
       } else {
         // Full opacity for normal state, hover, neighbor, or selection! Nothing disappears on hover!
@@ -603,7 +623,7 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
         ctx.fillStyle = baseColor;
 
         if (isSelected || isHovered || isQueryMatch) {
-          ctx.shadowColor = isHovered ? (isDark ? "#38bdf8" : "#0284c7") : baseColor;
+          ctx.shadowColor = isHovered ? (isDark ? frappe.sky : "#0284c7") : baseColor;
           ctx.shadowBlur = (isSelected ? 18 : isHovered ? 14 : 12) / transform.k;
         }
         ctx.fill();
@@ -611,11 +631,11 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
         // White/dark high-contrast border
         ctx.lineWidth = (isSelected ? 3 : isHovered ? 2.5 : isHoveredNeighbor ? 2 : 1.8) / transform.k;
         ctx.strokeStyle = isSelected
-          ? "#ffffff"
+          ? (isDark ? frappe.text : "#ffffff")
           : isHovered || isHoveredNeighbor
-          ? (isDark ? "#38bdf8" : "#0284c7")
+          ? (isDark ? frappe.sky : "#0284c7")
           : isDark
-          ? "#0f172a"
+          ? frappe.crust
           : "#ffffff";
         ctx.stroke();
       }
@@ -651,17 +671,17 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
         // Label background badge
         const textWidth = ctx.measureText(text).width;
         ctx.fillStyle = isFocal
-          ? (isDark ? "rgba(15, 23, 42, 0.95)" : "rgba(255, 255, 255, 0.98)")
+          ? (isDark ? alpha(frappe.crust, 0.95) : "rgba(255, 255, 255, 0.98)")
           : isDark
-          ? "rgba(15, 23, 42, 0.88)"
+          ? alpha(frappe.crust, 0.88)
           : "rgba(255, 255, 255, 0.92)";
 
         ctx.strokeStyle = isFocal
-          ? (isDark ? "#38bdf8" : "#0284c7")
+          ? (isDark ? frappe.sky : "#0284c7")
           : isFocalNeighbor
-          ? (isDark ? "rgba(56, 189, 248, 0.4)" : "rgba(2, 132, 199, 0.4)")
+          ? (isDark ? alpha(frappe.sky, 0.4) : "rgba(2, 132, 199, 0.4)")
           : isDark
-          ? "rgba(51, 65, 85, 0.5)"
+          ? alpha(frappe.surface1, 0.7)
           : "rgba(226, 232, 240, 0.8)";
         ctx.lineWidth = 1 / transform.k;
 
@@ -680,11 +700,11 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
         ctx.stroke();
 
         ctx.fillStyle = isFocal
-          ? (isDark ? "#38bdf8" : "#0284c7")
+          ? (isDark ? frappe.sky : "#0284c7")
           : isFocalNeighbor
-          ? (isDark ? "#93c5fd" : "#0369a1")
+          ? (isDark ? frappe.sky : "#0369a1")
           : isDark
-          ? "#f8fafc"
+          ? frappe.text
           : "#0f172a";
         ctx.fillText(text, node.x, textY);
         ctx.restore();
@@ -1197,9 +1217,9 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
               ? "0 4px 20px -2px rgba(0, 0, 0, 0.4)"
               : "0 2px 10px -2px rgba(0, 0, 0, 0.05)",
           "@keyframes pulseDot": {
-            "0%": { transform: "scale(0.95)", boxShadow: "0 0 0 0 rgba(16, 185, 129, 0.7)" },
-            "70%": { transform: "scale(1)", boxShadow: "0 0 0 6px rgba(16, 185, 129, 0)" },
-            "100%": { transform: "scale(0.95)", boxShadow: "0 0 0 0 rgba(16, 185, 129, 0)" },
+            "0%": { transform: "scale(0.95)", boxShadow: (t: Theme) => `0 0 0 0 ${alpha(t.palette.success.main, 0.7)}` },
+            "70%": { transform: "scale(1)", boxShadow: (t: Theme) => `0 0 0 6px ${alpha(t.palette.success.main, 0)}` },
+            "100%": { transform: "scale(0.95)", boxShadow: (t: Theme) => `0 0 0 0 ${alpha(t.palette.success.main, 0)}` },
           },
         }}
       >
@@ -1255,9 +1275,9 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
                   px: 1,
                   py: 0.35,
                   borderRadius: 999,
-                  bgcolor: (t) => (t.palette.mode === "dark" ? "rgba(16, 185, 129, 0.12)" : "rgba(16, 185, 129, 0.08)"),
+                  bgcolor: (t) => alpha(t.palette.success.main, t.palette.mode === "dark" ? 0.12 : 0.08),
                   border: 1,
-                  borderColor: alpha("#10b981", 0.3),
+                  borderColor: (t) => alpha(t.palette.success.main, 0.3),
                 }}
               >
                 <Box
@@ -1265,11 +1285,11 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
                     width: 6,
                     height: 6,
                     borderRadius: "50%",
-                    bgcolor: "#10b981",
+                    bgcolor: "success.main",
                     animation: "pulseDot 2s infinite",
                   }}
                 />
-                <Typography sx={{ fontSize: 10.5, fontWeight: 700, color: "#10b981", letterSpacing: "0.02em" }}>
+                <Typography sx={{ fontSize: 10.5, fontWeight: 700, color: "success.main", letterSpacing: "0.02em" }}>
                   Graph RAG Active
                 </Typography>
               </Box>
@@ -1612,8 +1632,8 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
                               width: 9,
                               height: 9,
                               borderRadius: "50%",
-                              bgcolor: cfg?.color || "#64748b",
-                              boxShadow: `0 0 6px ${cfg?.color || "#64748b"}88`,
+                              bgcolor: cfg?.color || unknownHue(theme.palette.mode),
+                              boxShadow: `0 0 6px ${cfg?.color || unknownHue(theme.palette.mode)}88`,
                             }}
                           />
                           <Box sx={{ flex: 1, minWidth: 0 }}>
@@ -1879,7 +1899,7 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
                     gap: 0.5,
                   }}
                 >
-                  <Zap size={12} color="#f59e0b" /> Quick Presets:
+                  <Zap size={12} color={theme.palette.warning.main} /> Quick Presets:
                 </Typography>
                 <Stack spacing={0.75}>
                   {PRESET_QUERIES.map((preset, idx) => (
@@ -1923,7 +1943,7 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
         </Paper>
 
         {/* Main Canvas Area */}
-        <Box ref={containerRef} sx={{ flex: 1, position: "relative", bgcolor: (t) => (t.palette.mode === "dark" ? "#0b1120" : "#f8fafc") }}>
+        <Box ref={containerRef} sx={{ flex: 1, position: "relative", bgcolor: (t) => well(t.palette.mode) }}>
         {loading && (
           <Box
             sx={{
@@ -1992,9 +2012,9 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
                     size="small"
                     icon={
                       activeQueryResult.mode === "path" ? (
-                        <Route size={14} color="#0284c7" />
+                        <Route size={14} color={PATH_HUE} />
                       ) : (
-                        <Sparkles size={14} color="#8b5cf6" />
+                        <Sparkles size={14} color={RELATED_HUE} />
                       )
                     }
                     label={
@@ -2006,13 +2026,13 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
                       fontWeight: 750,
                       fontSize: 11.5,
                       bgcolor: alpha(
-                        activeQueryResult.mode === "path" ? "#0284c7" : "#8b5cf6",
+                        activeQueryResult.mode === "path" ? PATH_HUE : RELATED_HUE,
                         0.15
                       ),
                       color: activeQueryResult.mode === "path" ? "primary.main" : "secondary.main",
                       border: 1,
                       borderColor: alpha(
-                        activeQueryResult.mode === "path" ? "#0284c7" : "#8b5cf6",
+                        activeQueryResult.mode === "path" ? PATH_HUE : RELATED_HUE,
                         0.3
                       ),
                     }}
@@ -2047,10 +2067,10 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
                                 fontWeight: 700,
                                 fontSize: 11.5,
                                 cursor: "pointer",
-                                bgcolor: alpha(TYPE_CONFIG[step.from_type || ""]?.color || "#64748b", 0.15),
+                                bgcolor: alpha(TYPE_CONFIG[step.from_type || ""]?.color || unknownHue(theme.palette.mode), 0.15),
                                 color: TYPE_CONFIG[step.from_type || ""]?.color || "text.primary",
                                 border: 1,
-                                borderColor: alpha(TYPE_CONFIG[step.from_type || ""]?.color || "#64748b", 0.4),
+                                borderColor: alpha(TYPE_CONFIG[step.from_type || ""]?.color || unknownHue(theme.palette.mode), 0.4),
                               }}
                             />
                           )}
@@ -2068,10 +2088,10 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
                               fontWeight: 700,
                               fontSize: 11.5,
                               cursor: "pointer",
-                              bgcolor: alpha(TYPE_CONFIG[step.to_type || ""]?.color || "#64748b", 0.15),
+                              bgcolor: alpha(TYPE_CONFIG[step.to_type || ""]?.color || unknownHue(theme.palette.mode), 0.15),
                               color: TYPE_CONFIG[step.to_type || ""]?.color || "text.primary",
                               border: 1,
-                              borderColor: alpha(TYPE_CONFIG[step.to_type || ""]?.color || "#64748b", 0.4),
+                              borderColor: alpha(TYPE_CONFIG[step.to_type || ""]?.color || unknownHue(theme.palette.mode), 0.4),
                             }}
                           />
                         </Stack>
@@ -2097,7 +2117,7 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
                             fontSize: 11,
                             height: 22,
                             cursor: "pointer",
-                            bgcolor: alpha(cfg?.color || "#64748b", 0.12),
+                            bgcolor: alpha(cfg?.color || unknownHue(theme.palette.mode), 0.12),
                             color: cfg?.color || "text.primary",
                           }}
                         />
@@ -2622,14 +2642,14 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
                     width: 40,
                     height: 40,
                     borderRadius: 2,
-                    bgcolor: alpha(nodeColor(selectedNode), 0.15),
-                    color: nodeColor(selectedNode),
+                    bgcolor: alpha(nodeColor(selectedNode, theme.palette.mode), 0.15),
+                    color: nodeColor(selectedNode, theme.palette.mode),
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
                     border: 1,
-                    borderColor: alpha(nodeColor(selectedNode), 0.3),
-                    boxShadow: `0 0 16px ${alpha(nodeColor(selectedNode), 0.25)}`,
+                    borderColor: alpha(nodeColor(selectedNode, theme.palette.mode), 0.3),
+                    boxShadow: `0 0 16px ${alpha(nodeColor(selectedNode, theme.palette.mode), 0.25)}`,
                   }}
                 >
                   <Network size={20} />
@@ -2642,8 +2662,8 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
                       fontSize: 10.5,
                       fontWeight: 750,
                       height: 22,
-                      bgcolor: alpha(nodeColor(selectedNode), 0.15),
-                      color: nodeColor(selectedNode),
+                      bgcolor: alpha(nodeColor(selectedNode, theme.palette.mode), 0.15),
+                      color: nodeColor(selectedNode, theme.palette.mode),
                       borderRadius: 1.5,
                     }}
                   />
@@ -2756,9 +2776,9 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
                           fontSize: 12,
                           borderRadius: 1.75,
                           border: 1,
-                          borderColor: alpha(nodeColor(item), 0.3),
-                          bgcolor: alpha(nodeColor(item), 0.08),
-                          "&:hover": { bgcolor: alpha(nodeColor(item), 0.16) },
+                          borderColor: alpha(nodeColor(item, theme.palette.mode), 0.3),
+                          bgcolor: alpha(nodeColor(item, theme.palette.mode), 0.08),
+                          "&:hover": { bgcolor: alpha(nodeColor(item, theme.palette.mode), 0.16) },
                         }}
                       />
                     ))}
@@ -2785,11 +2805,11 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
                           fontWeight: 650,
                           fontSize: 12,
                           borderRadius: 1.75,
-                          bgcolor: alpha(nodeColor(item), 0.1),
-                          color: nodeColor(item),
+                          bgcolor: alpha(nodeColor(item, theme.palette.mode), 0.1),
+                          color: nodeColor(item, theme.palette.mode),
                           border: 1,
-                          borderColor: alpha(nodeColor(item), 0.25),
-                          "&:hover": { bgcolor: alpha(nodeColor(item), 0.2) },
+                          borderColor: alpha(nodeColor(item, theme.palette.mode), 0.25),
+                          "&:hover": { bgcolor: alpha(nodeColor(item, theme.palette.mode), 0.2) },
                         }}
                       />
                     ))}
@@ -2836,10 +2856,10 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
                           fontWeight: 750,
                           fontSize: 11,
                           fontFamily: "monospace",
-                          color: "#ea580c",
-                          bgcolor: alpha("#ea580c", 0.1),
+                          color: MATCH_HUE,
+                          bgcolor: alpha(MATCH_HUE, 0.1),
                           border: 1,
-                          borderColor: alpha("#ea580c", 0.25),
+                          borderColor: alpha(MATCH_HUE, 0.25),
                           borderRadius: 1.5,
                         }}
                       />
@@ -2948,7 +2968,7 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
               <Stack direction="row" spacing={0.75} sx={{ alignItems: "center" }}>
                 <Tooltip title={copiedAnswer ? "Copied!" : "Copy Answer"}>
                   <IconButton size="small" onClick={handleCopyAnswer} sx={{ border: 1, borderColor: "divider", borderRadius: 1.5 }}>
-                    {copiedAnswer ? <Check size={14} color="#10b981" /> : <Copy size={14} />}
+                    {copiedAnswer ? <Check size={14} color={theme.palette.success.main} /> : <Copy size={14} />}
                   </IconButton>
                 </Tooltip>
                 <IconButton size="small" onClick={() => setIsAnswerDrawerOpen(false)} sx={{ borderRadius: 1.5, border: 1, borderColor: "divider" }}>

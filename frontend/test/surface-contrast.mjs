@@ -60,9 +60,36 @@ check("surface() is defined the way this test understands it", Boolean(m),
 
 if (m) {
   const [darkBase, lightBase] = [parseFloat(m[1]), parseFloat(m[2])];
-  const PAPER = { light: [255, 255, 255], dark: [0x15, 0x1a, 0x21] };
-  const SECONDARY = { light: [0x5f, 0x67, 0x73], dark: [0x9a, 0xa3, 0xae] };
+
+  // Read the two colours out of makeTheme rather than repeating them here.
+  // They used to be written out -- #151a21 paper, #9aa3ae secondary -- and
+  // when the dark palette became Catppuccin Frappé this test went on proving
+  // a contrast ratio for two colours the app had stopped using. It passed the
+  // whole time. A test with its own private copy of the thing it checks is
+  // worse than no test, because it reports on it.
+  const hex = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+  const frappe = Object.fromEntries(
+    [...theme.matchAll(/^\s{2}(\w+): "(#[0-9a-f]{6})",$/gm)].map((x) => [x[1], x[2]]),
+  );
+  const resolve = (expr) => {
+    const named = expr.match(/frappe\.(\w+)/);
+    if (named) {
+      if (!frappe[named[1]]) throw new Error(`theme.ts has no frappe.${named[1]}`);
+      return frappe[named[1]];
+    }
+    return expr.match(/#[0-9a-f]{6}/)[0];
+  };
+  const pick = (re, what) => {
+    const hit = theme.match(re);
+    if (!hit) throw new Error(`could not find ${what} in makeTheme -- update this check`);
+    return { dark: hex(resolve(hit[1])), light: hex(resolve(hit[2])) };
+  };
+
+  const PAPER = pick(/paper:\s*dark \? ([^:]+?) : ("#[0-9a-f]{6}")\s*\}/, "background.paper");
+  const SECONDARY = pick(/secondary:\s*dark \? ([\w.]+) : ("#[0-9a-f]{6}")/, "text.secondary");
   const TINT = { light: [0, 0, 0], dark: [255, 255, 255] };
+  console.log(`       paper ${PAPER.dark} dark / ${PAPER.light} light; `
+    + `secondary ${SECONDARY.dark} dark / ${SECONDARY.light} light`);
 
   const srgb = (c) => (c / 255 <= 0.03928 ? c / 255 / 12.92 : ((c / 255 + 0.055) / 1.055) ** 2.4);
   const lum = ([r, g, b]) => 0.2126 * srgb(r) + 0.7152 * srgb(g) + 0.0722 * srgb(b);

@@ -3,6 +3,7 @@ import * as d3 from "d3";
 import { ArrowLeft, Compass, CornerLeftUp, Minus, Plus } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { GraphData, GraphModel, GraphNode, ModelNode } from "../api";
+import { frappe } from "../theme";
 
 /** The graph's schema drawn the way Neo4j's model editor draws it: a circle per
  *  label, a labelled arrow per relationship type, positions taken from the
@@ -18,7 +19,10 @@ const R = 54;                      // node radius in model units
 // Data Importer draws a neutral canvas: white circles with a thin grey rim,
 // grey arrows, and a green tick on a label backed by data. Every label here is,
 // since the model was generated from the graph.
-const TICK = "#2e9e4f";
+//
+// Importer's green is mixed for white paper and goes muddy on Frappé, so the
+// dark canvas gets the palette's own Green instead.
+const tick = (dark: boolean) => (dark ? frappe.green : "#2e9e4f");
 
 interface Props {
   model: GraphModel;
@@ -328,7 +332,7 @@ export default function ModelView({
             >
               <path
                 d="M 0 0 L 10 5 L 0 10 z"
-                fill={key === "edge" ? (dark ? "#94a3b8" : "#9aa5b1") : dark ? "#475569" : "#cbd5e1"}
+                fill={key === "edge" ? (dark ? frappe.overlay2 : "#9aa5b1") : dark ? frappe.surface2 : "#cbd5e1"}
               />
             </marker>
           ))}
@@ -351,7 +355,7 @@ export default function ModelView({
                   <path
                     d={`M ${b.x + (dx / len) * INST_R} ${b.y + (dy / len) * INST_R}
                         L ${a.x - (dx / len) * INST_R} ${a.y - (dy / len) * INST_R}`}
-                    stroke={dark ? "#94a3b8" : "#9aa5b1"}
+                    stroke={dark ? frappe.overlay2 : "#9aa5b1"}
                     strokeWidth={1.6}
                     fill="none"
                     markerEnd="url(#arrow-edge)"
@@ -380,8 +384,8 @@ export default function ModelView({
                     cx={l.x}
                     cy={l.y}
                     r={INST_R}
-                    fill={dark ? "#1e293b" : "#ffffff"}
-                    stroke={isRoot ? theme.palette.primary.main : dark ? "#64748b" : "#b9c0c8"}
+                    fill={dark ? frappe.surface0 : "#ffffff"}
+                    stroke={isRoot ? theme.palette.primary.main : dark ? frappe.surface2 : "#b9c0c8"}
                     strokeWidth={isRoot ? 3 : 1.8}
                   />
                   <text
@@ -390,7 +394,7 @@ export default function ModelView({
                     textAnchor="middle"
                     fontSize={15}
                     fontWeight={600}
-                    fill={dark ? "#e2e8f0" : "#1f2328"}
+                    fill={dark ? frappe.text : "#1f2328"}
                   >
                     {l.node.code || l.node.label}
                   </text>
@@ -400,7 +404,7 @@ export default function ModelView({
                       y={l.y + 19}
                       textAnchor="middle"
                       fontSize={12}
-                      fill={dark ? "#94a3b8" : "#8b949e"}
+                      fill={dark ? frappe.overlay2 : "#8b949e"}
                     >
                       {l.node.jira_key}
                     </text>
@@ -410,8 +414,8 @@ export default function ModelView({
                     y={l.y + INST_R + 18}
                     textAnchor="middle"
                     fontSize={14}
-                    fill={dark ? "#cbd5e1" : "#4b5563"}
-                    style={{ paintOrder: "stroke", stroke: dark ? "#0f172a" : "#f5f6f7", strokeWidth: 5 }}
+                    fill={dark ? frappe.subtext1 : "#4b5563"}
+                    style={{ paintOrder: "stroke", stroke: dark ? frappe.mantle : "#f5f6f7", strokeWidth: 5 }}
                   >
                     {(l.node.description || "").slice(0, 26)}
                   </text>
@@ -424,7 +428,7 @@ export default function ModelView({
                 x={instance.laid[0].x + 90}
                 y={instance.laid[0].y + 120}
                 fontSize={15}
-                fill={dark ? "#94a3b8" : "#8b949e"}
+                fill={dark ? frappe.overlay2 : "#8b949e"}
                 letterSpacing={0.4}
               >
                 :{instance.relation.toUpperCase()}
@@ -439,7 +443,7 @@ export default function ModelView({
           if (!from || !to) return null;
           const dim = hovered && hovered !== rel.from && hovered !== rel.to;
           const common = {
-            stroke: dark ? "#94a3b8" : "#9aa5b1",
+            stroke: dark ? frappe.overlay2 : "#9aa5b1",
             strokeWidth: 1.6,
             fill: "none",
             markerEnd: "url(#arrow-edge)",
@@ -467,10 +471,10 @@ export default function ModelView({
                   textAnchor="middle"
                   dominantBaseline="middle"
                   fontSize={16}
-                  fill={dark ? "#94a3b8" : "#8b949e"}
+                  fill={dark ? frappe.overlay2 : "#8b949e"}
                   letterSpacing={0.4}
                   opacity={dim ? 0.2 : 1}
-                  style={{ paintOrder: "stroke", stroke: dark ? "#0f172a" : "#f5f6f7", strokeWidth: 5 }}
+                  style={{ paintOrder: "stroke", stroke: dark ? frappe.mantle : "#f5f6f7", strokeWidth: 5 }}
                 >
                   {rel.type}
                 </text>
@@ -488,10 +492,10 @@ export default function ModelView({
                 y={g.my - 6}
                 textAnchor="middle"
                 fontSize={16}
-                fill={dark ? "#94a3b8" : "#8b949e"}
+                fill={dark ? frappe.overlay2 : "#8b949e"}
                 letterSpacing={0.4}
                 opacity={dim ? 0.2 : 1}
-                style={{ paintOrder: "stroke", stroke: dark ? "#0f172a" : "#f5f6f7", strokeWidth: 5 }}
+                style={{ paintOrder: "stroke", stroke: dark ? frappe.mantle : "#f5f6f7", strokeWidth: 5 }}
               >
                 {rel.type}
               </text>
@@ -541,8 +545,8 @@ export default function ModelView({
                 cx={n.position.x}
                 cy={n.position.y}
                 r={R}
-                fill={dark ? "#1e293b" : "#ffffff"}
-                stroke={dark ? "#64748b" : "#b9c0c8"}
+                fill={dark ? frappe.surface0 : "#ffffff"}
+                stroke={dark ? frappe.surface2 : "#b9c0c8"}
                 strokeWidth={1.8}
               />
               <text
@@ -551,7 +555,7 @@ export default function ModelView({
                 textAnchor="middle"
                 fontSize={19}
                 fontWeight={500}
-                fill={dark ? "#e2e8f0" : "#1f2328"}
+                fill={dark ? frappe.text : "#1f2328"}
               >
                 {n.token.length > 13 ? `${n.token.slice(0, 12)}…` : n.token}
               </text>
@@ -561,7 +565,7 @@ export default function ModelView({
                   y={n.position.y + 17}
                   textAnchor="middle"
                   fontSize={16}
-                  fill={dark ? "#94a3b8" : "#8b949e"}
+                  fill={dark ? frappe.overlay2 : "#8b949e"}
                 >
                   {n.count}
                 </text>
@@ -573,7 +577,7 @@ export default function ModelView({
                     cx={n.position.x}
                     cy={n.position.y + R}
                     r={13}
-                    fill={dark ? "#0f172a" : "#ffffff"}
+                    fill={dark ? frappe.base : "#ffffff"}
                     stroke={theme.palette.primary.main}
                     strokeWidth={1.8}
                   />
@@ -593,7 +597,7 @@ export default function ModelView({
                   d={`M ${n.position.x + R * 0.46} ${n.position.y - R * 0.68}
                       l ${R * 0.12} ${R * 0.15} l ${R * 0.26} ${-R * 0.32}`}
                   fill="none"
-                  stroke={TICK}
+                  stroke={tick(dark)}
                   strokeWidth={4.5}
                   strokeLinecap="round"
                   strokeLinejoin="round"

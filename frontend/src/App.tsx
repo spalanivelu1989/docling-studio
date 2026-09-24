@@ -79,11 +79,18 @@ const TINT: Record<TabGroup, number> = {
   inspect: 0.06,
 };
 
-/** Label opacity, per group and per theme. The dark palette's amber (#fbbf24)
- *  and green (#4ade80) are far brighter than its blue and purple, so at equal
- *  opacity those two labels shout while the others murmur. Damping them is
- *  what makes the four groups read as peers. The light palette's accents are
- *  dark and saturated already, so they need no correction.
+/** Label opacity, per group and per theme. The dark palette's Yellow and Green
+ *  are far brighter than its Blue and Mauve -- 0.60 and 0.56 relative luminance
+ *  against 0.41 and 0.43 -- so at equal opacity those two labels shout while
+ *  the others murmur. Damping them is what makes the four groups read as peers.
+ *  The light palette's accents are dark and saturated already, so they need no
+ *  correction.
+ *
+ *  These numbers were tuned for the palette that came before Catppuccin Frappé
+ *  and were re-measured rather than assumed when it changed: on Frappé the four
+ *  groups now land within 3.46-3.73:1 of their own tinted background, a tighter
+ *  spread than the 3.04-3.57:1 they held before, so the damping was left as it
+ *  was. Frappé mixes its accents to a common weight, which is most of why.
  */
 const LABEL_ALPHA: Record<"light" | "dark", Record<TabGroup, number>> = {
   light: { engine: 0.82, convert: 0.82, index: 0.82, inspect: 0.82 },

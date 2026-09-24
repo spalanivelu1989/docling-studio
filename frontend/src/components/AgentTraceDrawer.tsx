@@ -9,6 +9,7 @@ import {
   Typography,
 } from "@mui/material";
 import { alpha, useTheme, type Theme } from "@mui/material/styles";
+import { nodeHues, unknownHue } from "../theme";
 import * as d3 from "d3";
 import {
   ArrowRight,
@@ -69,14 +70,6 @@ const ENGINE_FACE: Record<string, { name: string; colour: string; icon: typeof S
   rag: { name: "RAG", colour: "primary.main", icon: Search },
   graph: { name: "GRAPH", colour: "info.main", icon: Network },
   bpml: { name: "BPML", colour: "success.main", icon: Target },
-};
-
-const NODE_HUE: Record<string, string> = {
-  stream: "#8b5cf6",
-  system: "#0284c7",
-  process: "#10b981",
-  document: "#64748b",
-  spec: "#f97316",
 };
 
 const ROLE_LABEL: Record<string, string> = {
@@ -553,6 +546,7 @@ function GraphCanvas({
   citedNodes: Set<string>;
   citedEdges: Set<string>;
 }) {
+  const hues = nodeHues[theme.palette.mode];
   const ref = useRef<SVGSVGElement | null>(null);
   const [size, setSize] = useState({ w: 640, h: 340 });
   const boxRef = useRef<HTMLDivElement | null>(null);
@@ -629,7 +623,7 @@ function GraphCanvas({
     node
       .append("circle")
       .attr("r", (d) => radius(d))
-      .attr("fill", (d) => NODE_HUE[d.type] ?? muted)
+      .attr("fill", (d) => nodeHues[theme.palette.mode][d.type] ?? muted)
       .attr("fill-opacity", (d) => (d.role === "neighbour" ? 0.55 : 0.9))
       .attr("stroke", (d) =>
         d.id === selected?.id
@@ -707,7 +701,7 @@ function GraphCanvas({
       >
         <Key colour={theme.palette.info.main} label="started here" ring />
         <Key colour={theme.palette.success.main} label="used in the answer" ring />
-        {Object.entries(NODE_HUE)
+        {Object.entries(hues)
           .filter(([t]) => trace.nodes.some((n) => n.type === t))
           .map(([t, hue]) => <Key key={t} colour={hue} label={t} />)}
         <Box sx={{ flex: 1 }} />
@@ -741,12 +735,13 @@ function NodeCard({
   trace: EvidenceGraphTrace;
   cited: boolean;
 }) {
+  const theme = useTheme();
   const related = trace.edges.filter((e) => e.source === node.id || e.target === node.id);
   const labelOf = (id: string) => trace.nodes.find((n) => n.id === id)?.label ?? id;
   return (
     <Box sx={{ mt: 1.25, p: 1.25, border: 1, borderColor: "divider", borderRadius: 1 }}>
       <Stack direction="row" spacing={0.75} sx={{ alignItems: "center", flexWrap: "wrap", gap: 0.5 }}>
-        <Box sx={{ width: 10, height: 10, borderRadius: "50%", bgcolor: NODE_HUE[node.type] ?? "grey.500" }} />
+        <Box sx={{ width: 10, height: 10, borderRadius: "50%", bgcolor: nodeHues[theme.palette.mode][node.type] ?? unknownHue(theme.palette.mode) }} />
         <Typography sx={{ fontSize: 13, fontWeight: 700 }}>{node.label}</Typography>
         <Chip size="small" variant="outlined" label={node.type} sx={{ height: 18, fontSize: 10 }} />
         <Chip size="small" variant="outlined" label={ROLE_LABEL[node.role] ?? node.role}
