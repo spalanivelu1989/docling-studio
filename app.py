@@ -13,6 +13,7 @@ the indexed Markdown (rag.py).
 
 from __future__ import annotations
 
+import glob
 import hashlib
 import json
 import os
@@ -424,8 +425,47 @@ def _original_name(markdown: Path) -> str | None:
     return f"{stem}.{suffix}"
 
 
-def _upload_job_holding(name: str) -> Path | None:
-    """An upload job still holding `name`, if one is left.
+def _accepted(path: Path | None) -> Path | None:
+    """`path`, but only if it is a file in a format the preview pane can open."""
+    if path is not None and path.is_file() and path.suffix.lower() in ACCEPTED:
+        return path
+    return None
+
+
+def _beside_markdown(markdown: Path) -> Path | None:
+    """An original sitting next to the markdown/ folder, under either name.
+
+    Two names are tried. First the converter's: it writes <stem>_<ext>.md, so
+    "Pricing_xlsx.md" came from "Pricing.xlsx" -- the only candidate that names
+    its own extension. Failing that, the Markdown's whole stem, matched against
+    whatever accepted extension is actually there.
+
+    The second name exists because Markdown written by anything other than this
+    converter keeps the original's name intact. "BKP1_CRM.md" came from
+    "BKP1_CRM.pdf", and reading that trailing "_CRM" as an extension sends the
+    lookup after a "BKP1.CRM" that never existed -- which is why three
+    hand-converted SAP decks reported no original with their PDFs sitting in
+    the folder directly above them.
+    """
+    folder = markdown.parent.parent
+    name = _original_name(markdown)
+    if name:
+        hit = _accepted(folder / name)
+        if hit is not None:
+            return hit
+    if not folder.is_dir():
+        return None
+    # escape(): a stem may legitimately contain [ ] or ?, which glob would
+    # otherwise read as a pattern and quietly match the wrong file, or nothing.
+    for candidate in sorted(folder.glob(f"{glob.escape(markdown.stem)}.*")):
+        hit = _accepted(candidate)
+        if hit is not None:
+            return hit
+    return None
+
+
+def _upload_job_holding(markdown: Path) -> Path | None:
+    """An upload job still holding this document's original, if one is left.
 
     A document that came in through the web UI has no original beside its
     Markdown: knowledge_base/ holds the Markdown and nothing else. But the
@@ -435,22 +475,28 @@ def _upload_job_holding(name: str) -> Path | None:
     produced it, which is how a PDF added from the browser can still be
     reviewed against its own Markdown.
 
+    Matched on the same two names _beside_markdown tries. A job whose file is
+    in a format the preview pane cannot open does not end the search, because
+    another job may hold the same document in one that it can.
+
     Best effort by design: clearing the upload really does remove the only copy
     of the original, and saying so is better than pretending otherwise.
     """
     if not WORKDIR.is_dir():
         return None
-    wanted = name.lower()
+    name = (_original_name(markdown) or "").lower()
+    stem = markdown.stem.lower()
     for job in sorted(WORKDIR.iterdir()):
         label = job / "name.txt"
         if not label.is_file():
             continue
         try:
-            if label.read_text().strip().lower() != wanted:
-                continue
+            held = label.read_text().strip().lower()
         except OSError:
             continue
-        source = next((p for p in job.glob("source.*") if p.is_file()), None)
+        if not held or (held != name and Path(held).stem != stem):
+            continue
+        source = _accepted(next((p for p in job.glob("source.*") if p.is_file()), None))
         if source is not None:
             return source
     return None
@@ -462,18 +508,10 @@ def _original_of(markdown: Path) -> Path | None:
     Two places, in order: beside the markdown/ folder it was indexed from --
     "solvay-spark/pkg/markdown/Pricing_xlsx.md" came from
     "solvay-spark/pkg/Pricing.xlsx" -- and failing that, the upload job that
-    produced it. See _upload_job_holding.
+    produced it. See _beside_markdown for the names tried, and
+    _upload_job_holding for the second place.
     """
-    name = _original_name(markdown)
-    if not name:
-        return None
-    candidate = markdown.parent.parent / name
-    if candidate.is_file() and candidate.suffix.lower() in ACCEPTED:
-        return candidate
-    kept = _upload_job_holding(name)
-    if kept is not None and kept.suffix.lower() in ACCEPTED:
-        return kept
-    return None
+    return _beside_markdown(markdown) or _upload_job_holding(markdown)
 
 
 @app.post("/api/kb/files/open")

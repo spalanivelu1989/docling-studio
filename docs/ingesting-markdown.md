@@ -141,8 +141,8 @@ curl -s http://127.0.0.1:8000/api/coverage | \
 
 ```
 {'on_disk': 217, 'indexed': 217, 'in_graph': 217, 'documents': 217,
- 'clean': 213, 'file_missing': 0, 'not_indexed': 0, 'not_in_graph': 0,
- 'shadowed': 0, 'category_mismatch': 0, 'no_original': 4}
+ 'clean': 216, 'file_missing': 0, 'not_indexed': 0, 'not_in_graph': 0,
+ 'shadowed': 0, 'category_mismatch': 0, 'no_original': 1}
 ```
 
 `on_disk`, `indexed` and `in_graph` must be equal. If `in_graph` is short, you
@@ -202,21 +202,41 @@ extraction failure, and the two look identical until you open one.
 
 Coverage reported `no_original` for all three SAP files. The Doc vs Markdown
 Review page pairs a Markdown file with the document it was converted from, and
-finds it by name: the converter writes `<stem>_<ext>.md`, so `Pricing_xlsx.md`
-is matched with `Pricing.xlsx` sitting one folder up.
+nothing in the database records that pairing -- `rag_documents` stores the
+Markdown path, because the Markdown is what was chunked -- so it is recovered
+by name, from the folder directly above `markdown/`.
 
-`BKP1_CRM.md` has no format suffix, so the lookup derives `BKP1.CRM` and finds
-nothing. To make the review work, name the Markdown for its source and put the
-source beside the `markdown/` folder:
+Two names are tried, in this order:
+
+| The Markdown       | Name tried        | When it applies                        |
+| ------------------ | ----------------- | -------------------------------------- |
+| `Pricing_xlsx.md`  | `Pricing.xlsx`    | written by this repo's converter, which names its output `<stem>_<ext>.md` |
+| `BKP1_CRM.md`      | `BKP1_CRM.*`      | written by anything else, which keeps the original's name intact |
+
+The SAP files are the second case. `bpmn2md.py` produced them outside this
+repo, so the trailing `_CRM` is part of the name rather than a format suffix --
+and reading it as one sends the lookup after a `BKP1.CRM` that never existed.
+The fix was to copy the PDFs in, no renaming required:
+
+```bash
+cp ~/Desktop/sap_best_practice/pdf/*.pdf solvay-spark/sap/
+```
 
 ```
-solvay-spark/sap/BKP1_CRM.pdf            <- the original
-solvay-spark/sap/markdown/BKP1_CRM_pdf.md <- the Markdown
+solvay-spark/sap/BKP1_CRM.pdf             <- the original
+solvay-spark/sap/markdown/BKP1_CRM.md     <- the Markdown
 ```
 
-Renaming changes the document's identity in every store, so do it **before**
-indexing, or re-index afterwards and let the stale rows be cleaned up (see
-below).
+Put the original there **before** you index if you can, but nothing breaks if
+you do it afterwards: the corpus stores the Markdown path only, so dropping a
+file into the folder above is invisible to it. Refresh Coverage and the flag
+clears.
+
+The one flag that is left, `knowledge_base/BPML_Process_xlsx.md`, is a real
+gap rather than a naming quirk: its source is
+`solvay-spark/pkg/BPML_ProcessesHierarchyExtended.xlsx`, a different name in a
+different folder, and no convention bridges that. Renaming the Markdown to
+match would fix it, at the cost of re-indexing.
 
 ---
 

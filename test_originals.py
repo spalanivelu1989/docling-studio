@@ -144,6 +144,79 @@ def test_an_original_in_a_format_we_cannot_open_is_refused():
     assert app._original_of(md) is None
 
 
+def test_markdown_that_kept_the_original_stem_finds_it():
+    """The SAP case. bpmn2md.py wrote "BKP1_CRM.md" from "BKP1_CRM.pdf", so the
+    converter's <stem>_<ext> reading looks for a "BKP1.CRM" that never existed
+    and Coverage reported no original with the PDF one folder up."""
+    md_dir = TMP / "spark/sap" / "markdown"
+    md_dir.mkdir(parents=True, exist_ok=True)
+    md = md_dir / "BKP1_CRM.md"
+    md.write_text("# crm\n")
+    (TMP / "spark/sap" / "BKP1_CRM.pdf").write_text("original bytes")
+
+    found = app._original_of(md)
+    assert found is not None, "the whole stem was not tried as a name"
+    assert found.name == "BKP1_CRM.pdf"
+
+
+def test_the_converters_name_wins_over_the_whole_stem():
+    """Both readings resolve to a real file. The converter's is the one that
+    actually produced the Markdown; the stem match is only a fallback."""
+    md = corpus_doc("spark/pkg", "Pricing", "xlsx", with_original=True)
+    (TMP / "spark/pkg" / "Pricing_xlsx.pdf").write_text("a different document")
+    found = app._original_of(md)
+    assert found.name == "Pricing.xlsx", f"the fallback shadowed the real source: {found}"
+
+
+def test_a_stem_match_in_a_format_we_cannot_open_is_refused():
+    md_dir = TMP / "spark/sap" / "markdown"
+    md_dir.mkdir(parents=True, exist_ok=True)
+    md = md_dir / "BKP9_CRM.md"
+    md.write_text("# crm\n")
+    (TMP / "spark/sap" / "BKP9_CRM.zip").write_text("original bytes")
+    assert app._original_of(md) is None
+
+
+def test_an_upload_holding_the_whole_stem_is_found():
+    md_dir = TMP / "knowledge_base"
+    md_dir.mkdir(parents=True, exist_ok=True)
+    md = md_dir / "BKP4_CRM.md"
+    md.write_text("# crm\n")
+    upload_job("5150a1a10001", "BKP4_CRM.pdf", "pdf")
+
+    found = app._original_of(md)
+    assert found is not None, "the stem was not matched against the job's file name"
+    assert found.parent.name == "5150a1a10001"
+
+
+def test_an_unopenable_job_does_not_end_the_search():
+    """Matching on the stem alone means the extension is no longer part of the
+    match, so the first job to answer to a name may hold something the preview
+    pane cannot render. Another job may hold the same document in a format it
+    can, and stopping at the first would miss it."""
+    md_dir = TMP / "knowledge_base"
+    md_dir.mkdir(parents=True, exist_ok=True)
+    md = md_dir / "BKP5_CRM.md"
+    md.write_text("# crm\n")
+    upload_job("1111000000aa", "BKP5_CRM.zip", "zip")
+    upload_job("2222000000bb", "BKP5_CRM.pdf", "pdf")
+
+    found = app._original_of(md)
+    assert found is not None, "an unopenable job ended the search"
+    assert found.parent.name == "2222000000bb"
+
+
+def test_a_job_with_an_empty_label_matches_nothing():
+    """An empty name.txt used to compare equal to the empty name a Markdown
+    with no readable suffix produces, which would offer an unrelated file."""
+    md_dir = TMP / "knowledge_base"
+    md_dir.mkdir(parents=True, exist_ok=True)
+    md = md_dir / "loose.md"
+    md.write_text("# loose\n")
+    upload_job("3333000000cc", "   ", "pdf")
+    assert app._original_of(md) is None
+
+
 def main() -> int:
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     setup()
