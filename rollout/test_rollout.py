@@ -921,6 +921,186 @@ def test_the_filename_says_what_the_pack_is():
     assert ro_pdf.filename({"id": "ro_bare"}).endswith("ro_bare.pdf")
 
 
+# A pack made of the shapes that actually broke: a ten-column register, an
+# identifier that must not be split, a column of empty cells with one long one
+# in it, a file name past any column width, and a timestamp.
+HARD_PACK = """\
+# Fit-to-Standard analysis — 4.10.2 Process Returns · India
+
+| | |
+|---|---|
+| Run | `ro_hardpack1` |
+| Country As-Is sources | sample_BKP_Customer_Returns.clean_xml (as_is) |
+| Finished | 2026-09-22T11:59:48.566193+05:30 |
+
+## Deviation register
+
+| Gap | Step | Exact difference | Type | Materiality | Localization | GT fit | Harmonization | Disposition | Confidence |
+|---|---|---|---|---|---|---|---|---|---|
+| GAP-01 | AS-04, AS-13 | The template enforces a two-person credit release control on returns; the As-Is depicts none at any point in the flow. | AP/CT/SEC | High | Not localization-related | 1/4 | 85% | CONFIGURE_STANDARD | Medium |
+| GAP-11 | n/a | Neither side documents how Indian tax documents are produced for a return. | LC/CT/DT | High | Suspected localization — validate | 1/4 | 40% | RETAIN_LOCAL_EXCEPTION | Low |
+
+## As-Is steps
+
+| Step | Actor | Action | Rule | Control | System | Confidence |
+|---|---|---|---|---|---|---|
+| AS-01 Customer returns material | Returns and Refund Clerk | Process is started by the event. | | | | High |
+| AS-02 Sell from Stock | Returns and Refund Clerk | Referenced preceding process. | | | | Medium |
+| AS-03 Create Returns Order | Returns and Refund Clerk | Create the returns order. | Annotation attached to the task: creation with reference to a sales order or invoice is optional. | | | High |
+| AS-04 Decide handling | Returns and Refund Clerk | | | | | High |
+| AS-05 Generate Returns Delivery | Returns and Refund Clerk | Generates the returns delivery. | | | | High |
+| AS-06 Perform Picking | Shipping Specialist | Pick the returns delivery. | | | | High |
+| AS-07 Post Goods Receipt | Shipping Specialist | Post the goods receipt. | | | | High |
+| AS-08 Perform Material Inspection | Receiving Specialist | Inspect the returned material. | | | | High |
+| AS-09 Parallel split | Shipping Specialist | | | | | Medium |
+| AS-10 Determine Refund | Returns and Refund Clerk | Determine the refund. | | | | High |
+"""
+
+
+def _broken_tokens(markdown: str, run_id: str = "ro_hardpack1"):
+    """Every cell whose single unbreakable token was split across lines.
+
+    Measured from the rendered layout, not estimated: the estimate is what got
+    this wrong four times running. A cell that wrapped at a SPACE is fine; a
+    break inside a token is not, and the two are told apart by joining the
+    rendered lines with no separator and asking whether the result occurs
+    verbatim in the source.
+    """
+    from weasyprint import CSS, HTML
+
+    from rollout import pdf as ro_pdf
+
+    flat = markdown.replace("**", "").replace("`", "")
+    body = ro_pdf._html_body(markdown)
+    doc = HTML(string=f"<!doctype html><html lang='en'><body>{body}</body></html>").render(
+        stylesheets=[CSS(string=ro_pdf.stylesheet(run_id))])
+    bad = []
+
+    def lines_of(cell):
+        out = []
+
+        def walk(box):
+            if type(box).__name__ == "LineBox":
+                text = []
+
+                def grab(x):
+                    if type(x).__name__ == "TextBox":
+                        text.append(x.text)
+                    for c in getattr(x, "children", []):
+                        grab(c)
+
+                grab(box)
+                out.append("".join(text))
+            else:
+                for c in getattr(box, "children", []):
+                    walk(c)
+
+        walk(cell)
+        return out
+
+    def walk(box):
+        if type(box).__name__ == "TableCellBox":
+            lines = lines_of(box)
+            joined = "".join(l.strip() for l in lines)
+            if len(lines) > 1 and joined and " " not in joined and joined in flat:
+                bad.append((joined, len(lines)))
+        for c in getattr(box, "children", []):
+            walk(c)
+
+    for page in doc.pages:
+        walk(page._page_box)
+    return bad
+
+
+def test_no_identifier_is_ever_broken_in_half():
+    """The whole point of measuring columns. Before this, 187 identifiers
+    across twelve real packs came out as "GAP-0 / 1", "REQUIRES_DECISI / ON",
+    "Materialit / y" -- unreadable, and quotable wrong."""
+    from rollout import pdf as ro_pdf
+
+    ok, why = ro_pdf.available()
+    if not ok:
+        print(f"       (skipped: {why[:60]})")
+        return
+    bad = _broken_tokens(HARD_PACK)
+    assert not bad, f"{len(bad)} token(s) split: {bad[:5]}"
+
+
+def test_a_table_too_wide_for_the_page_turns_it():
+    """A ten-column register cannot be read on A4 portrait, and squeezing it
+    pushed its last column off the paper entirely -- the content was not
+    truncated, it was simply gone."""
+    from rollout import pdf as ro_pdf
+
+    tables = ro_pdf.measure(HARD_PACK)
+    wide = [w for w, is_wide in tables if is_wide]
+    assert len(wide) >= 1, "the ten-column register was left on a portrait page"
+    assert len(wide[0]) == 10
+    assert "@page wide" in ro_pdf.stylesheet("") and "size: A4 landscape" in ro_pdf.stylesheet("")
+
+
+def test_every_table_shares_out_exactly_its_width():
+    from rollout import pdf as ro_pdf
+
+    for cols, _ in ro_pdf.measure(HARD_PACK):
+        assert abs(sum(cols) - 1.0) < 1e-9, f"columns sum to {sum(cols)}"
+        assert all(c > 0 for c in cols)
+
+
+def test_a_column_is_wide_enough_for_its_longest_token():
+    """The allocation gives every column what it NEEDS before sharing out what
+    is left. A column that cannot hold its own longest identifier has already
+    lost, whatever it does with the remainder."""
+    from rollout import pdf as ro_pdf
+
+    header = ["Gap", "Disposition"]
+    tokens = [["GAP-01"], ["CONFIGURE_STANDARD"]]
+    need = ro_pdf._needs(header, tokens, wide=True)
+    unit, pad = ro_pdf.MM_PER_UNIT_WIDE, ro_pdf.PAD_MM_WIDE
+    assert need[1] - pad >= unit * ro_pdf._width("CONFIGURE_STANDARD")
+    # and the padding and the collapsed border are both paid for
+    assert ro_pdf.PAD_MM_WIDE > 2 * 1.4, "the collapsed border is not accounted for"
+
+
+def test_one_long_cell_among_empty_ones_still_gets_room():
+    """The 75th percentile describes the typical cell and says nothing about
+    the exceptional one. A Rule column of blanks with a single ninety-character
+    annotation took the minimum width and turned that cell into ten lines,
+    beside two columns that were entirely empty."""
+    from rollout import pdf as ro_pdf
+
+    cols, _ = ro_pdf.measure(HARD_PACK)[2]
+    rule, control = cols[3], cols[4]
+    assert rule > control * 1.5, (
+        f"the column holding the annotation ({rule:.3f}) is not meaningfully wider "
+        f"than the empty one beside it ({control:.3f})")
+
+
+def test_a_token_too_long_for_any_column_breaks_at_a_seam():
+    """Some tokens fit nowhere -- a thirty-seven character file name, a full
+    ISO timestamp. Where they break is still a choice, and mid-word is the
+    wrong one."""
+    from rollout import pdf as ro_pdf
+
+    html = ro_pdf._seams("<td>sample_BKP_Customer_Returns.clean_xml</td>")
+    assert "<wbr>" in html
+    assert "sample_<wbr>BKP_<wbr>Customer_<wbr>Returns." in html
+    # A short identifier is left alone: it is made to fit instead.
+    assert "<wbr>" not in ro_pdf._seams("<td>GAP-01</td>")
+
+
+def test_the_character_widths_are_measured_not_guessed():
+    """Counting characters got upper case wrong by a third in one direction
+    and lower case wrong in the other, which is why headings broke."""
+    from rollout import pdf as ro_pdf
+
+    assert ro_pdf._width("W") > ro_pdf._width("i") * 3
+    assert ro_pdf._width("REQUIRES") > ro_pdf._width("requires")
+    assert ro_pdf._width("Gap", bold=True) > ro_pdf._width("Gap")
+    # Unknown characters still cost something.
+    assert ro_pdf._width("—") > 0
+
+
 def test_the_pdf_and_the_markdown_are_the_same_document():
     """Rendered from the pack rather than from the run, so a section added to
     one cannot go missing from the other."""
