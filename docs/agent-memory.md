@@ -68,12 +68,18 @@ trade in any direction. Give it its own environment.
 
 ## Setting it up
 
-Anywhere outside this repo:
+Somewhere permanent and outside this repo — the venv is about 1.8 GB, and a
+temporary directory is not the place for it:
 
 ```bash
+cd ~
 uv venv --python 3.13 hindsight-venv
 uv pip install --python hindsight-venv/bin/python hindsight-api
 ```
+
+The venv is disposable; the memories are not. They live in embedded Postgres
+under `~/.pg0/instances/hindsight/`, which is nothing to do with where you put
+the venv, so rebuilding the environment does not lose the bank.
 
 Then start it. This configuration keeps **everything on the machine** — Ollama
 for the language model, in-process embeddings, embedded Postgres:
@@ -156,6 +162,7 @@ did before any of this existed.
 | Toggle greyed under holdout | Working as intended — see the table at the top. |
 | Panel says "Nothing was remembered about this question" | The bank has nothing relevant yet. The first run on a topic always says this. |
 | Bank count does not move after a run | Extraction is still running. Minutes, on Ollama. |
+| `cannot bind 127.0.0.1:8888: [Errno 48] Address already in use` | A Hindsight server is already running. `lsof -nP -iTCP:8888 -sTCP:LISTEN` says which process; it may well be one you want, since they all share the same bank. Stop it, or start this one on another port with `--port` and set `HINDSIGHT_URL` to match. |
 | `Unclosed client session` on shutdown | The app did not call `memory.close()`. It does, from the lifespan. |
 
 ---
