@@ -541,7 +541,7 @@ export interface BatchEmbedSummary {
   seconds: number;
 }
 
-// --- Fit-Gap Copilot ----------------------------------------------------------
+// --- InsightLens ----------------------------------------------------------
 
 export type FitGapClass =
   | "FIT_STANDARD" | "FIT_CONFIG" | "GAP_DEVELOPMENT"
@@ -749,7 +749,7 @@ export interface FitGapHandlers {
   error: (message: string) => void;
 }
 
-/** Run the Copilot and dispatch its server-sent events. Hand-parsed for the
+/** Run InsightLens and dispatch its server-sent events. Hand-parsed for the
  *  same reason as ask(): EventSource can only GET, and a reconnect would
  *  re-run (and re-bill) the whole register. */
 export async function runFitGap(body: FitGapRunBody, on: FitGapHandlers, signal: AbortSignal) {
@@ -794,7 +794,7 @@ export async function runFitGap(body: FitGapRunBody, on: FitGapHandlers, signal:
 
 // --- documents attached to one agent session ----------------------------------
 //
-// Shared by the Fit-Gap Copilot and the Rollout Agent. A document carries the
+// Shared by InsightLens and the Rollout Agent. A document carries the
 // role it plays in the analysis, which is what lets the Rollout Agent run a
 // three-way comparison rather than a two-document diff.
 

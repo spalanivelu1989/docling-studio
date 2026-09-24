@@ -1,4 +1,4 @@
-# Fit-Gap Copilot — repo read-through (M0)
+# InsightLens — repo read-through (M0)
 
 What the handover assumes, against what is actually in this repository. Written
 before `fitgap/` was built, corrected against the running system afterwards.
@@ -9,7 +9,7 @@ Date: 21 September 2026 · corpus fingerprint `86156d230c23199a` (83 documents,
 
 ---
 
-## 1. What the Copilot calls
+## 1. What InsightLens calls
 
 ### `rag.py`
 
@@ -17,13 +17,13 @@ No retrieval-only refactor was needed — `search()` has always returned hits
 without generating an answer, and `ask_events()` is a separate layer on top.
 `fitgap/tools.py` wraps it as-is, so `/api/ask` is untouched.
 
-| Function | Signature | Used by the Copilot |
+| Function | Signature | Used by InsightLens |
 |---|---|---|
 | `search` | `(question, k=8, conn=None, mode="hybrid", query_vector=None) -> list[Hit]` | `search_corpus` |
 | `connect` | `() -> Connection` | every tool session |
 | `embed` | `(texts, input_type="") -> list[ndarray]` | indirectly, via `search` |
 | `index_file` | `(conn, path, force=False, on_embed=None) -> dict` | no |
-| `ask_events` | `(question, k=8, mode="hybrid")` | **no — deliberately.** The Copilot must not get a pre-written answer |
+| `ask_events` | `(question, k=8, mode="hybrid")` | **no — deliberately.** InsightLens must not get a pre-written answer |
 
 `Hit` carries `chunk_id, title, source, heading_path, content, score,
 vector_rank, keyword_rank, similarity, bm25`.
@@ -40,7 +40,7 @@ codes (`4.5.1.3`) are indexed verbatim and BM25 matches them**, which is why
 |---|---|
 | `extract_graph` | `(force=False) -> {nodes, edges, stats}` — reads `knowledge_graph.json` unless forced |
 | `find_shortest_path` | `(graph_data, start_id, end_id) -> {nodes, edges, hops} \| None` |
-| `query_graph` | `(query="", source_id=None, target_id=None) -> dict` — used by `/api/graph/query`, **not** by the Copilot |
+| `query_graph` | `(query="", source_id=None, target_id=None) -> dict` — used by `/api/graph/query`, **not** by InsightLens |
 
 Graph contents: **354 nodes, 560 edges** (was 720/842 before the process
 register's Lowest Level Key column stopped being read as spec nodes).
@@ -230,7 +230,7 @@ The three soft issues raised were all `ticket_not_in_graph`, i.e. finding 2.5.
 
 ## 6. Open questions (§13) that this read-through can now answer
 
-1. **Scoring unit.** Unanswerable until the registers arrive. The Copilot keys
+1. **Scoring unit.** Unanswerable until the registers arrive. InsightLens keys
    everything on the dotted BPML code, which is the only identifier shared by
    the sheet and the corpus text.
 2. **Transcripts in the index.** They are already indexed. The rubric caps

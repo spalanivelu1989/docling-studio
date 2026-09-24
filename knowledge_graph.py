@@ -493,7 +493,7 @@ def extract_graph(
     a category does not silently serve a graph that predates it.
 
     `files` builds the graph from a specific set of Markdown files instead of
-    the corpus, which is how the Fit-Gap Copilot gets a graph of a document
+    the corpus, which is how InsightLens gets a graph of a document
     somebody uploaded for one session. Pass `cache=False` with it: that graph
     is nobody else's, and writing it to the shared cache file would serve one
     session's upload to every other reader of the graph.

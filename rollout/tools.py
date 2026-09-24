@@ -1,9 +1,9 @@
 """The Rollout Agent's window onto its three sources.
 
-Retrieval, the graph and the BPML sheet are the Copilot's (fitgap/tools.py)
+Retrieval, the graph and the BPML sheet are InsightLens's (fitgap/tools.py)
 and are reused as they are -- same retrieval log, same holdout masking, same
 source labelling in the investigation view. What is added here is the part the
-Copilot has no need for: telling the three sides of the comparison apart.
+InsightLens has no need for: telling the three sides of the comparison apart.
 
   read_sources   the attachments, filtered by the role they were given
   list_sources   what is attached, in which role, and what the corpus holds

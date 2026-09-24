@@ -13,7 +13,7 @@ category on every row, and a run can be scoped to some of them:
 |---|---|---|---|
 | **RAG** (`/ask`) | bge-m3 vector + BM25 → RRF → top-8 → Claude | exact codes, verbatim detail | sees only 8 chunks; no notion of document version, date or count |
 | **Graph** (`/graph`) | regex + ontology → BFS → templated answer | enumeration, connectivity, counting | 6 systems only; holds only the BPML codes a document or the register mentions; co-membership looks like integration |
-| **Fit-Gap Copilot** (`/fit-gap`) | both, as agent tools → rubric → verifier | judgement with cited evidence | one BPML step at a time; 12 tool calls; will answer UNKNOWN |
+| **InsightLens** (`/fit-gap`) | both, as agent tools → rubric → verifier | judgement with cited evidence | one BPML step at a time; 12 tool calls; will answer UNKNOWN |
 
 The set has three parts. **Q1–Q16** are grounded in PKG. **D1–D6** are
 grounded in DR, whose failure modes differ in kind. **C1–C5** need both
@@ -88,7 +88,7 @@ Two documents that share a stream hub are rendered as a system integration.
 This is the over-linking caveat made concrete, and it is the single most
 important failure in the set: the answer is fluent, specific and wrong.
 
-**Watch for.** RAG and the Copilot inheriting the framing if the question is
+**Watch for.** RAG and InsightLens inheriting the framing if the question is
 asked leadingly. The honest answer names S/4HANA as SOVOS's only documented
 source.
 
@@ -118,13 +118,13 @@ the Part 2 is agreed to be taken up in Phase 2."*
 **Why it discriminates.** RRF will rank chunks from **both** files highly
 because they are near-duplicates. The graph links `SPARK-21930` to both with
 `references_ticket` and neither is marked primary — it can report that two
-documents exist but nothing about which supersedes which. The Copilot's §6
+documents exist but nothing about which supersedes which. InsightLens's §6
 rubric says independent evidence means *"a different file, **not a copy**"*, so
 two quotes from these two files must **not** buy the +0.15 that lifts
 confidence to 0.65.
 
 **Watch for.** An answer that states the removal behaviour and the deleted
-auto-apply restriction as if both were current. A Copilot entry at 0.65
+auto-apply restriction as if both were current. An InsightLens entry at 0.65
 confidence citing one quote from each file.
 
 **Scores well if** the engine reports the retrigger requirement, attributes it
@@ -149,7 +149,7 @@ Ship-to*.
   nothing, which is *correct but unhelpful* unless it suggests the near miss.
 - **RAG** — BM25 indexes the document title, so `21999` matches on the
   **filename** while every chunk body says `21199`.
-- **Copilot** — `graph_entity` misses, `search_corpus` hits; the verifier will
+- **InsightLens** — `graph_entity` misses, `search_corpus` hits; the verifier will
   raise `ticket_not_in_graph` if it reports SPARK-21999 as real.
 
 **Watch for.** Any engine answering "SPARK-21999 is the CMIR ship-to priority
@@ -241,7 +241,7 @@ discrepancy sits beside it: `D41` defines **both `CU` and `EB` as
 
 **Why it discriminates.** Both sheets are in one file, so retrieval will
 plausibly surface both; whether the answer *notices the conflict* is the whole
-test. The graph cannot see sheet contents. The Copilot should express this as a
+test. The graph cannot see sheet contents. InsightLens should express this as a
 **DecisionPoint** rather than picking a side — its rubric forbids recommending
 what Solvay should decide.
 
@@ -312,14 +312,14 @@ path through a stream hub, for Q4 any answer treating SPARK-21999 as real, for
 Q6 any invented Italian FI number. A high score with a "must not" violation is
 still a failure.
 
-**For the Copilot specifically**, Q1/Q3/Q5/Q7 map onto real BPML steps
+**For InsightLens specifically**, Q1/Q3/Q5/Q7 map onto real BPML steps
 (4.7.1.3, 4.5.2.2, 4.5.1.4, 4.5.2.2), so they can be run as register scopes
 rather than as free text, and scored on classification *and* evidence validity.
 UNKNOWN with a stated reason should score above a confident wrong class.
 
 ## Running them
 
-All sixteen are loaded into the Fit-Gap Copilot page (`/fit-gap`) as a
+All sixteen are loaded into InsightLens page (`/fit-gap`) as a
 searchable picker: filter by the axis a question isolates, search by id, text
 or axis, or shuffle. Picking one fills the question box **and sets the BPML
 scope it belongs to**, so the register runs over the process step the question
@@ -420,7 +420,7 @@ So there are three distinct states in one sheet: **agreed** (ZF5, with a named
 confirmer), **proposed but not agreed** (F2, explicitly TBC), and **open**
 (Spain, explicitly `??`).
 
-**Why it discriminates.** This is the distinction the Fit-Gap Copilot is built
+**Why it discriminates.** This is the distinction InsightLens is built
 around — UNKNOWN versus a DecisionPoint versus a confident classification — and
 here the corpus hands it over pre-labelled. A good answer reproduces the
 number range *and* its TBC status. A weak one states 4100000000–4109999999 as
@@ -455,7 +455,7 @@ is carried for the one that has one.
 
 **Why it discriminates.** The document contains a proposal, a senior reply with
 carve-outs, and a roadmap item that has slipped — none of which is an approved
-design. The Copilot's rubric caps confidence at **0.4 when the only evidence is
+design. InsightLens's rubric caps confidence at **0.4 when the only evidence is
 a transcript or a meeting note**, and an email thread is squarely that. RAG has
 no such rule.
 
@@ -464,7 +464,7 @@ Dropping the Bicar Pharma / IPH exceptions. Presenting one person's emailed
 opinion without attributing it.
 
 **Scores well if** the answer says a preference was expressed and answered by
-email, names the exceptions, and does not upgrade it to a decision. A Copilot
+email, names the exceptions, and does not upgrade it to a decision. An InsightLens
 entry here should be ≤ 0.4 confidence or a DecisionPoint.
 
 ---
@@ -512,7 +512,7 @@ every interface actually runs through), **DMS**, **Arkhineo** (archiving),
 completely, and with a number that is wrong by more than half — and nothing in
 its output signals that six is a design choice rather than a count. RAG has no
 global view but will name whichever systems its eight chunks happen to mention,
-which is honest-by-accident. The Copilot can call `graph_neighbors` *and*
+which is honest-by-accident. InsightLens can call `graph_neighbors` *and*
 `search_corpus`, so it is the only one positioned to notice the gap.
 
 **Watch for.** Any answer that presents six as the complete landscape. The
@@ -619,7 +619,7 @@ Note the contrast with Q15: the forward flow is a written ten-step narrative;
 its mirror is a pile of screenshots. Same subject, opposite provenance.
 
 **Watch for.** Document numbers quoted as authoritative with no provenance
-caveat. The three unreadable images passed over in silence. A Copilot entry
+caveat. The three unreadable images passed over in silence. An InsightLens entry
 citing a VLM-transcribed value as evidence without lowering confidence — the
 rubric has no clause for machine-read provenance, which is itself a finding
 worth recording.
@@ -658,7 +658,7 @@ document. Those are the errors that survive review and reach a register.
 **Expected shape of the results.** The graph should win Q8 outright and lose
 Q9, Q10, Q14, Q15 and Q16 by construction — it holds no field-level data. RAG
 should win Q10 and Q14 if retrieval lands on the right document, and is most
-exposed on Q12 and Q15, where vector similarity is weakest. The Copilot should
+exposed on Q12 and Q15, where vector similarity is weakest. InsightLens should
 win Q11 by rubric, and is the only engine positioned to notice Q13 at all — it
 alone can query both the graph's list and the corpus and compare them.
 
@@ -706,7 +706,7 @@ required."*
 
 **Why it discriminates.** RAG will retrieve the demonstration and the
 confirmation and has no field that distinguishes "presented" from "agreed". The
-graph holds the documents but not their modality. The Copilot's rubric has an
+graph holds the documents but not their modality. InsightLens's rubric has an
 UNKNOWN class and a materiality judgement, which is the only machinery here
 that can return "not decided" as the answer rather than as a failure.
 
@@ -1007,7 +1007,7 @@ Two checks make that visible:
 wrong answer, C5 because it separates a one-search route from a reformulating
 one.
 
-**Expected shape.** The Copilot and the Evidence Agent should beat the `/ask`
+**Expected shape.** InsightLens and the Evidence Agent should beat the `/ask`
 page across C1–C5, and the margin should come almost entirely from issuing more
 than one query. If `/ask` scores level with them, either the questions are not
 asymmetric enough or the corpus statistics are doing more work than expected —

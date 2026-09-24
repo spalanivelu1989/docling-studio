@@ -1,4 +1,4 @@
-"""The only window the Copilot has onto the corpus (handover §4.1).
+"""The only window InsightLens has onto the corpus (handover §4.1).
 
 Every tool wraps something that already exists -- rag.search for retrieval,
 knowledge_graph for identity, bpml for scope -- and adds two things the agent
@@ -84,7 +84,7 @@ class Session:
     # widen it by asking for a category the person did not choose.
     categories: tuple[str, ...] = ()
     # An upload session id, when the analyst attached documents of their own to
-    # this Copilot session. Like `categories` it belongs to the session, not to
+    # this InsightLens session. Like `categories` it belongs to the session, not to
     # a tool call: the model cannot reach another analyst's upload by asking.
     uploads: str = ""
     # Which attached role is the SUBJECT of this run -- "as_is" for a country

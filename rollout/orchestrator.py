@@ -145,7 +145,7 @@ def run(req: RunRequest) -> Iterator[Event]:
 
         # One trace for the whole run. The upload session is the Langfuse
         # session: it is what ties several analyses of the same attached
-        # documents together, including the ones the Copilot ran. There is no
+        # documents together, including the ones InsightLens ran. There is no
         # user_id because this application has no accounts -- see the note in
         # app.py's module docstring.
         run = tracing.start_run(
@@ -390,7 +390,7 @@ def _call_event(stage: str, call) -> dict:
 
 
 def _fingerprint(categories) -> str:
-    """Scoped to what this run could read, like the Copilot's."""
+    """Scoped to what this run could read, like InsightLens's."""
     import hashlib
 
     h = hashlib.sha256()

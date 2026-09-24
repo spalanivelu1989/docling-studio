@@ -292,7 +292,7 @@ def test_confidence_ignores_unweighted_claims():
 
 
 # --- graph scoping -------------------------------------------------------------
-# The Evidence Agent reads with the same Session as the Copilot, so its four
+# The Evidence Agent reads with the same Session as InsightLens, so its four
 # graph tools have to honour the same category scope its retrieval does.
 # graph_enumerate is the one that matters most: it produces an exact count,
 # and an unscoped count puts documents the run cannot open into a figure the

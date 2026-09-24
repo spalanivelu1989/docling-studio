@@ -1,4 +1,4 @@
-"""The BPML process hierarchy: the Copilot's scope backbone (handover §2).
+"""The BPML process hierarchy: InsightLens's scope backbone (handover §2).
 
 `BPML_ProcessesHierarchyExtended.xlsx` is read directly rather than through
 the corpus, because its Markdown conversion is a stub -- 9,096 rows x 50
@@ -176,7 +176,7 @@ def subtree(code: str, max_depth: int | None = None) -> list[Process]:
 
 
 def steps_in_scope(code: str, max_steps: int | None = None) -> list[Process]:
-    """The units the Copilot classifies: level-4 steps under `code`, falling
+    """The units InsightLens classifies: level-4 steps under `code`, falling
     back to level 3 (then the node itself) where level 4 does not exist.
 
     The fallback is per branch, not per scope: 4.5 may detail some of its

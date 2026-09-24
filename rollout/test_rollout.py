@@ -289,7 +289,7 @@ def test_a_template_process_that_does_not_resolve_is_still_an_error():
     #
     # The text has no real words in it on purpose: bpml.resolve_scope matches
     # on name as well as code, so a string containing "process" resolves to a
-    # real node. That looseness is the Copilot's too, and the page shows what
+    # real node. That looseness is InsightLens's too, and the page shows what
     # it landed on beside the field.
     from rollout.orchestrator import _resolve
 
@@ -659,7 +659,7 @@ def test_compare_entities_passes_the_run_scope_to_the_corpus_side():
 
 
 def test_a_session_with_no_subject_still_defaults_to_the_country():
-    """The Copilot builds sessions without a subject; it only ever has one."""
+    """InsightLens builds sessions without a subject; it only ever has one."""
     from rollout import tools as rtools
     import uploads
 

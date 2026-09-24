@@ -5,7 +5,7 @@ that may not hallucinate SAP functionality, may not invent statutory
 obligations and may not reach for an extension before standard configuration
 needs those rules enforced somewhere that cannot be talked out of them.
 
-Gates repair rather than merely report, for the same reason the Copilot's
+Gates repair rather than merely report, for the same reason InsightLens's
 verifier does: a register a reviewer cannot trust is worse than a shorter one.
 A quote that is not in the chunk it names is dropped; a localization claimed as
 statutory without evidence is demoted to "suspected"; an extension proposed

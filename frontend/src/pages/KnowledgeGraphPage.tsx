@@ -121,7 +121,7 @@ const PRESET_QUERIES = [
 interface KnowledgeGraphPageProps {
   active: boolean;
   onNavigate?: (page: string, params?: any) => void;
-  /** A query handed over from another page (the Fit-Gap Copilot's "show in
+  /** A query handed over from another page (InsightLens's "show in
    *  graph"). The nonce lets the same text be sent twice. */
   incomingQuery?: { text: string; nonce: number } | null;
 }
@@ -1119,7 +1119,7 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
     [zoomToNodes]
   );
 
-  // A query handed over from the Fit-Gap Copilot: run it once the graph is
+  // A query handed over from InsightLens: run it once the graph is
   // loaded and this page is the visible one.
   const lastIncoming = useRef<number>(0);
   useEffect(() => {

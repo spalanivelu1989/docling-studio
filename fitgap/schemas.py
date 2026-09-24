@@ -1,4 +1,4 @@
-"""Data contracts for the Fit-Gap Copilot (handover §5).
+"""Data contracts for InsightLens (handover §5).
 
 The JSON Schema the agent's `submit_entry` tool advertises is generated from
 these models, so the prompt and the validator can never drift apart.

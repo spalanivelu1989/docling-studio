@@ -1,7 +1,7 @@
 """Postgres persistence for runs, entries and reviews (handover §5, §10).
 
 Reviews sit alongside entries and never overwrite them: the register has to
-keep showing what the Copilot proposed next to what the human decided, or the
+keep showing what InsightLens proposed next to what the human decided, or the
 next evaluation has nothing to measure.
 
 These tables are not per-category -- a run reads every category it is pointed

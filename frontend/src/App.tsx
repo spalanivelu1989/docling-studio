@@ -35,7 +35,7 @@ const TABS: { value: Page; label: string; icon: ReactElement; group: TabGroup }[
   { value: "ask", label: "Ask RAG", icon: <MessageSquareText size={16} />, group: "engine" },
   { value: "graph", label: "Knowledge Graph", icon: <Network size={16} />, group: "engine" },
   { value: "evidence", label: "Agent", icon: <FlaskConical size={16} />, group: "engine" },
-  { value: "fitgap", label: "Fit-Gap Copilot", icon: <Scale size={16} />, group: "engine" },
+  { value: "fitgap", label: "InsightLens", icon: <Scale size={16} />, group: "engine" },
   { value: "rollout", label: "Rollout Agent", icon: <Globe2 size={16} />, group: "engine" },
   { value: "extract", label: "Convert", icon: <FileText size={16} />, group: "convert" },
   { value: "batch", label: "Batch Convert", icon: <FolderArchive size={16} />, group: "convert" },

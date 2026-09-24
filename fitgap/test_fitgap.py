@@ -261,7 +261,7 @@ def test_a_session_masks_only_in_holdout_mode():
 # --- documents attached to a session ------------------------------------------
 #
 # The isolation, not the storage: these assert the guarantees an analyst is
-# relying on when they drop a draft into the Copilot. None of it needs a
+# relying on when they drop a draft into InsightLens. None of it needs a
 # database -- every path below returns before it would reach one.
 
 def test_an_attachment_is_not_in_the_corpus_database_at_all():

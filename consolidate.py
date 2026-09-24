@@ -25,7 +25,7 @@ move. DR keeps its ids and PKG is offset, because the stored runs cite 190 DR
 chunks and only 60 PKG ones -- see OFFSET below and `migration_plan.md` §8.
 
 `docling_session` is never touched. An analyst's attachment lives in a schema of
-its own in a database of its own, and that separation is a guarantee the Copilot
+its own in a database of its own, and that separation is a guarantee InsightLens
 and the Rollout Agent make; this migration does not weaken it.
 """
 

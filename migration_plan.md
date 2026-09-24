@@ -160,7 +160,7 @@ say so — the corpus merge works either way, but then `rag.py` keeps a reduced
 `database_url()` for `FITGAP`/`ROLLOUT`/`SESSION` and the cleanup in §7 is smaller.
 
 **(c) The session store does not merge, ever.** `docling_session` stays a separate
-database with a schema per upload session. That separation is the guarantee the Copilot
+database with a schema per upload session. That separation is the guarantee InsightLens
 and the Rollout Agent make to an analyst who drops a draft in: an uploaded document
 cannot be reached by a corpus search, because it is not in the corpus database at all.
 Merging it would turn a structural guarantee into a `WHERE` clause. Don't.
@@ -279,7 +279,7 @@ which is what the reader wanted in the first place. The `kind: "postgres"` /
 `"session"` / `"session-graph"` / `"graph"` / `"sheet"` distinction is unaffected and
 still carries the thing that matters: retrieval hit Postgres, the graph did not.
 
-### Fit-Gap Copilot — `/api/fitgap/*`, `fitgap/`
+### InsightLens — `/api/fitgap/*`, `fitgap/`
 
 *Today:* `Session.categories` scopes `search_corpus`; `store.corpus_fingerprint`
 hashes every document the run could read by walking `rag.shards(categories)`;
@@ -291,7 +291,7 @@ prefix (`UPLOAD:`).
 `fingerprint` values sorted by `source` and never touches a row id, so the id offset in
 §8 cannot move it — the hash changes only if the *set of documents in scope* changes.
 That is a guarantee by construction, but it is load-bearing (a changed fingerprint
-silently breaks the Copilot's reproducibility claim), so §10.9 still measures it rather
+silently breaks InsightLens's reproducibility claim), so §10.9 still measures it rather
 than trusting the argument.
 
 `store.connect()` points at `docling` instead of `docling_fitgap` (decision (b)).
@@ -505,7 +505,7 @@ be rewritten, which is precisely why the map has to be permanent.
 **Alternative — rewrite nothing.** Leave the run records exactly as they were written,
 on the principle that a run record is an audit artefact and editing it is editing
 history, and resolve old keys through the map at read time. This is more honest and
-slightly more code. If the Copilot's reproducibility claim is going to be shown to
+slightly more code. If InsightLens's reproducibility claim is going to be shown to
 anyone outside the team, take this option.
 
 Either way the map is created and populated. The decision is only whether the 60 stored
@@ -662,7 +662,7 @@ prints pass or fail.
 11. Every stored run still opens in the UI, and its evidence chips render.
 
 **Isolation**
-12. A Copilot session with an attachment still cannot retrieve that attachment through
+12. An InsightLens session with an attachment still cannot retrieve that attachment through
     `search_corpus`, and `get_chunk("UPLOAD:1")` on a session with no attachment still
     errors. (Existing tests; they must keep passing unchanged.)
 13. A run scoped to PKG retrieves nothing filed DR — both through retrieval and through
@@ -674,7 +674,7 @@ prints pass or fail.
 16. Batch Convert: a two-file batch into DR.
 17. Add to Knowledge Base: the count matches `SELECT count(*) FROM rag_documents`;
     delete one document and watch the count fall by exactly one.
-18. Fit-Gap Copilot: one short run with an attachment.
+18. InsightLens: one short run with an attachment.
 19. Rollout Agent: one run, and the score tiles populate.
 20. Evidence Agent: one question, and `describe_sources` names categories not databases.
 21. Knowledge graph: unchanged (it never read the database) — confirm the node count is
@@ -909,7 +909,7 @@ not one anyone wanted to keep making. All of them came out:
 | Ask | the multi-select, the scope line on the count chip, the "nothing indexed in X" warning |
 | Knowledge Graph | the multi-select, the refetch-on-scope-change, the remembered category set |
 | Evidence | the multi-select |
-| Fit-Gap Copilot | the "Corpus" select and its note about a narrowed run |
+| InsightLens | the "Corpus" select and its note about a narrowed run |
 | Rollout Agent | the "Template corpus" select (the reviewer field beside it stayed) |
 | Convert | the destination picker and its default-picking fetch |
 | Batch Convert | the destination picker and `?category=` on the embed call |

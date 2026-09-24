@@ -1505,7 +1505,7 @@ def ask(body: Question) -> StreamingResponse:
 
 
 
-# --- Fit-Gap Copilot (fitgap/) ------------------------------------------------
+# --- InsightLens (fitgap/) ------------------------------------------------
 # A third component beside rag.py and knowledge_graph.py: it calls both through
 # fitgap/tools.py and never merges them. Every entry it produces is "proposed"
 # and waits for a named reviewer.
@@ -1519,7 +1519,7 @@ def fitgap_page() -> HTMLResponse:
 
 @app.get("/api/fitgap/status")
 def fitgap_status() -> dict:
-    """What the Copilot can see right now: the BPML sheet, the index, the
+    """What InsightLens can see right now: the BPML sheet, the index, the
     graph and the model. The page shows this before the first run so a missing
     prerequisite is visible rather than a failed run."""
     from fitgap import agent as fg_agent, bpml as fg_bpml, store as fg_store
@@ -1663,7 +1663,7 @@ def fitgap_run(req: "FitGapRun") -> StreamingResponse:
 
 # --- documents attached to one agent session ----------------------------------
 #
-# Shared by the Fit-Gap Copilot and the Rollout Agent, which is why these are
+# Shared by InsightLens and the Rollout Agent, which is why these are
 # /api/uploads rather than /api/fitgap/uploads. They never reach the corpus:
 # each is converted, chunked and embedded into a Postgres schema of its own
 # inside docling_session -- a different database from the one the corpus is in
@@ -2464,7 +2464,7 @@ def _try(fn, *args) -> None:
 
 
 def _corpus_fingerprint(categories: list[str]) -> str:
-    """What the run could have read, hashed the way the Copilot's and the
+    """What the run could have read, hashed the way InsightLens's and the
     Rollout Agent's records hash it."""
     import hashlib
 

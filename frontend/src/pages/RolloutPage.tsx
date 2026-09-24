@@ -368,7 +368,7 @@ function Sources({
       {files.length > 0 && (
         <Typography sx={{ fontSize: 10.5, color: "text.secondary", mt: 1 }}>
           Held in <code>{data?.database}.{data?.schema}</code> · deleted in {expiry} of no use ·
-          not searchable from the Ask page, the Copilot or any other run
+          not searchable from the Ask page, InsightLens or any other run
         </Typography>
       )}
     </Box>
@@ -915,7 +915,7 @@ export default function RolloutPage({ active }: Props) {
     try { localStorage.setItem("fitgap.reviewer", reviewer); } catch { /* private mode */ }
   }, [reviewer]);
 
-  // The scope picker is the Copilot's — both agents read the Global Template
+  // The scope picker is InsightLens's — both agents read the Global Template
   // hierarchy out of the same BPML sheet.
   const [scopeUnknown, setScopeUnknown] = useState(false);
 

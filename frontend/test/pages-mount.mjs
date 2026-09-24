@@ -143,6 +143,45 @@ if (product) {
         `"Docling Studio" is this app's former name: ${stale.join(", ")}`);
 }
 
+// --- the page's own former name -----------------------------------------------
+//
+// "Fit-Gap Copilot" became "InsightLens". Unlike the rename above, this one has
+// a lower-case twin that is CORRECT and must survive: the `copilot` engine key,
+// the "copilot" member of the Engine union, the fitgap-copilot trace tag. Those
+// are identifiers, not the product name, and renaming them means a database
+// migration and a break in the trace history.
+//
+// So the rule is case-sensitive, and it covers comments too — a comment that
+// still calls it the Copilot is how the next person learns the wrong name.
+
+{
+  const stale = [];
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir)) {
+      const full = join(dir, entry);
+      if (statSync(full).isDirectory()) walk(full);
+      else if (/\.(tsx?|html)$/.test(entry)) {
+        readFileSync(full, "utf8").split("\n").forEach((line, i) => {
+          if (/Copilot/.test(line)) stale.push(`${full.replace(SRC, "src")}:${i + 1}`);
+        });
+      }
+    }
+  };
+  walk(SRC);
+  check("nothing still calls the page the Copilot",
+        stale.length === 0,
+        `"Fit-Gap Copilot" is now "InsightLens": ${stale.join(", ")}`);
+}
+
+{
+  // And the name is where the tab actually reads from, so the browser title,
+  // the tab strip and the page heading cannot drift apart.
+  const labelled = /\{ value: "fitgap", label: "InsightLens"/.test(src);
+  check("the fitgap tab is labelled InsightLens",
+        labelled,
+        "the tab label is what document.title and the tab strip both derive from");
+}
+
 console.log(`\n${tabs.length} tabs: ${tabs.join(", ")}`);
 console.log(failed ? `${failed} check(s) failed` : "all checks passed");
 process.exit(failed ? 1 : 0);

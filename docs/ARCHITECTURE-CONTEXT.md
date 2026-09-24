@@ -62,7 +62,7 @@ front end. No auth, no multi-tenancy, localhost only.
 | `rag.py` | **RAG engine**: index, hybrid search, answer. Also a CLI |
 | `knowledge_graph.py` | **Graph engine**: extraction, BFS, query, answer synthesis |
 | `knowledge_graph.json` | Cached extracted graph (~410 KB), rebuilt on demand |
-| `fitgap/` | **Fit-Gap Copilot**: one bounded agent run per BPML step → a proposed register entry. Calls both engines through `fitgap/tools.py`; never merges them |
+| `fitgap/` | **InsightLens**: one bounded agent run per BPML step → a proposed register entry. Calls both engines through `fitgap/tools.py`; never merges them |
 | `evidence/` | **Evidence Agent**: any question, both engines, answered as scored claims. Reuses `fitgap/tools.py`; adds provenance, near-duplicate and hub-artefact judgement |
 | `folder_to_md.py`, `pptx_to_md.py` | Batch CLI wrappers |
 | `frontend/src/pages/*.tsx` | React SPA pages (10 pages) |
@@ -230,7 +230,7 @@ only through `fitgap/tools.py`, which wraps `rag.search()` and
 `knowledge_graph` as Claude tool-use tools. **The two engines still never call
 each other** — an agent is the only thing that sees both.
 
-### Fit-Gap Copilot (`fitgap/`, `/fit-gap`, `/api/fitgap/*`)
+### InsightLens (`fitgap/`, `/fit-gap`, `/api/fitgap/*`)
 
 One bounded agent run per BPML step (12 tool calls, 40k context), producing a
 `FitGapEntry` with `status = "proposed"` and a verbatim quote behind every
@@ -279,7 +279,7 @@ threadpool — Docling and LibreOffice are blocking and would otherwise freeze t
 | `GET/DELETE /api/kb/files[/{filename}]` · `POST /api/kb/batch-insert` | Knowledge-base management |
 | `GET /api/rag/status` | Models, dimension, default k, document/chunk counts, config errors |
 | `POST /api/ask` | **SSE** stream of `rag.ask_events` |
-| `GET /fit-gap`, `POST /api/fitgap/run` (SSE) | **Fit-Gap Copilot** — map-reduce over a BPML scope; events `scope`, `step_start`, `tool_call`, `entry`, `verify_fail`, `synthesis`, `done` |
+| `GET /fit-gap`, `POST /api/fitgap/run` (SSE) | **InsightLens** — map-reduce over a BPML scope; events `scope`, `step_start`, `tool_call`, `entry`, `verify_fail`, `synthesis`, `done` |
 | `GET /api/fitgap/scope`, `/runs`, `/runs/{id}/export?format=md\|json\|xlsx`, `POST /api/fitgap/entries/{id}/review` | Scope picker, run history, exports, the human review loop |
 | `GET /evidence`, `POST /api/evidence/ask` (SSE) | **Evidence Agent** — one question, both engines; events `tool_call` then `answer` |
 | `GET /api/evidence/status` | Model, tools, the graph hubs being filtered, the near-duplicate groups |

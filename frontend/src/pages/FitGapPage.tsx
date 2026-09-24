@@ -26,7 +26,7 @@ import { clearAdornment, clearOnEscape } from "../components/ClearAdornment";
 
 /* -------------------------------------------------------------- attachments */
 
-/** Documents the analyst attached to this Copilot session.
+/** Documents the analyst attached to this InsightLens session.
  *
  *  They are converted by Docling, embedded into a Postgres schema of their
  *  own and given a knowledge graph of their own -- in a different database from
@@ -218,7 +218,7 @@ function Attachments({
               ))}
             </Stack>
             <Typography sx={{ fontSize: 11, color: "text.secondary", mt: 0.75 }}>
-              Outlined chips are entities only the attachment mentions. The Copilot is told to
+              Outlined chips are entities only the attachment mentions. InsightLens is told to
               report a disagreement between an attachment and the corpus rather than pick a winner.
             </Typography>
           </Collapse>
@@ -1568,7 +1568,7 @@ export default function FitGapPage({ active, onShowInGraph }: Props) {
               </Box>
               <Box>
                 <Typography variant="h5" sx={{ fontWeight: 800, letterSpacing: "-.02em", lineHeight: 1.15 }}>
-                  Fit-Gap Copilot
+                  InsightLens
                 </Typography>
                 <Typography sx={{ fontSize: 12.5, color: "text.secondary" }}>
                   Reads the corpus through both engines and drafts a fit-gap register.
@@ -1645,7 +1645,7 @@ export default function FitGapPage({ active, onShowInGraph }: Props) {
             value={question}
             onChange={(e) => { setQuestion(e.target.value); if (picked) setPicked(null); }}
             onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); start(); } }}
-            placeholder={`Ask the Copilot about a slice of the process, or pick one of the ${EVAL_QUESTIONS.length} evaluation questions below`}
+            placeholder={`Ask InsightLens about a slice of the process, or pick one of the ${EVAL_QUESTIONS.length} evaluation questions below`}
             slotProps={{
               input: {
                 sx: { fontSize: 15, alignItems: "flex-start" },
@@ -1912,7 +1912,7 @@ export default function FitGapPage({ active, onShowInGraph }: Props) {
           <Paper sx={{ p: 3, textAlign: "center" }}>
             <Typography sx={{ fontSize: 14, fontWeight: 600, mb: 0.5 }}>Nothing run yet</Typography>
             <Typography sx={{ fontSize: 13, color: "text.secondary", maxWidth: 620, mx: "auto" }}>
-              Pick a slice of the BPML hierarchy and the Copilot classifies each step under it, one bounded
+              Pick a slice of the BPML hierarchy and InsightLens classifies each step under it, one bounded
               agent run at a time: the knowledge graph for identity, hybrid retrieval for substance, and a
               quote from a real chunk behind every claim.
             </Typography>

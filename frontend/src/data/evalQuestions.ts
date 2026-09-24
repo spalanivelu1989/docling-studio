@@ -10,7 +10,7 @@
  *  Each one is grounded in a specific passage of the Solvay SPARK corpus and
  *  built to provoke one named failure. Every BPML scope below was checked
  *  against BPML_ProcessesHierarchyExtended.xlsx, so selecting a question
- *  always resolves to a real subtree the Copilot can run a register over.
+ *  always resolves to a real subtree InsightLens can run a register over.
  */
 
 export type Engine = "rag" | "graph" | "copilot";
@@ -33,7 +33,7 @@ export interface EvalQuestion {
   /** The single dimension this question isolates. */
   axis: string;
   question: string;
-  /** A real BPML code; the Copilot runs its register over this subtree. */
+  /** A real BPML code; InsightLens runs its register over this subtree. */
   scope: string;
   scopeLabel: string;
   steps: number;
@@ -106,7 +106,7 @@ export const EVAL_QUESTIONS: EvalQuestion[] = [
     tests:
       "Two near-identical specs for one ticket. The January version adds an ATP-retrigger requirement and deletes an auto-apply restriction the December one still carries.",
     watchFor:
-      "Stating the deleted restriction as current. A Copilot entry at 0.65 confidence citing one quote from each file — the rubric says a copy is not an independent source.",
+      "Stating the deleted restriction as current. An InsightLens entry at 0.65 confidence citing one quote from each file — the rubric says a copy is not an independent source.",
     expect: { rag: "partial", graph: "weak", copilot: "strong" },
   },
   {
@@ -238,7 +238,7 @@ export const EVAL_QUESTIONS: EvalQuestion[] = [
     tests:
       "An email thread, not a design. A request (“Any chance to have these switched to SCI?”) and a reply carrying carve-outs for Bicar Pharma and IPH.",
     watchFor:
-      "Reporting it as policy. Dropping the exceptions. The Copilot's rubric caps confidence at 0.4 when the only evidence is discussion — an email is squarely that.",
+      "Reporting it as policy. Dropping the exceptions. InsightLens's rubric caps confidence at 0.4 when the only evidence is discussion — an email is squarely that.",
     mustNot: "Present the email exchange as an approved design.",
     heavy: true,
     expect: { rag: "weak", graph: "blind", copilot: "strong" },
@@ -531,7 +531,7 @@ export const EXPECTATION_LABEL: Record<Expectation, string> = {
 export const ENGINE_LABEL: Record<Engine, string> = {
   rag: "RAG",
   graph: "Graph",
-  copilot: "Copilot",
+  copilot: "InsightLens",
 };
 
 export const AXES = Array.from(new Set(EVAL_QUESTIONS.map((q) => q.axis)));

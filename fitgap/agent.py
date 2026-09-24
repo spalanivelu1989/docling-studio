@@ -69,7 +69,7 @@ Mode B classes (a country decision about a template step that Mode A has already
 """
 
 SYSTEM_A = f"""\
-You are the Fit-Gap Copilot for the Solvay SPARK S/4HANA rollout (Lead-to-Cash).
+You are InsightLens for the Solvay SPARK S/4HANA rollout (Lead-to-Cash).
 
 For ONE BPML process step you decide whether the S/4HANA template meets it with SAP \
 standard, with configuration, or only with custom development -- and you say how sure \
