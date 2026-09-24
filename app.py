@@ -432,13 +432,31 @@ def _accepted(path: Path | None) -> Path | None:
     return None
 
 
-def _beside_markdown(markdown: Path) -> Path | None:
-    """An original sitting next to the markdown/ folder, under either name.
+def _original_folders(markdown: Path) -> list[Path]:
+    """Where an original may sit, nearest convention first.
 
-    Two names are tried. First the converter's: it writes <stem>_<ext>.md, so
-    "Pricing_xlsx.md" came from "Pricing.xlsx" -- the only candidate that names
-    its own extension. Failing that, the Markdown's whole stem, matched against
-    whatever accepted extension is actually there.
+    A bulk conversion leaves the source beside the markdown/ folder it wrote
+    into: "solvay-spark/pkg/markdown/Pricing_xlsx.md" came from
+    "solvay-spark/pkg/Pricing.xlsx". But knowledge_base/ is flat -- the
+    Markdown sits directly in it, with no markdown/ subfolder to be above -- so
+    there "the folder above" is the repo root, and nobody keeps a source
+    workbook next to app.py. For a flat folder the original belongs in the same
+    folder as its Markdown, so look in both.
+
+    Costs nothing in the nested layout: a markdown/ folder holds .md files, and
+    .md is not a format the preview pane is offered.
+    """
+    return [markdown.parent.parent, markdown.parent]
+
+
+def _beside_markdown(markdown: Path) -> Path | None:
+    """An original on disk near the Markdown, under either name.
+
+    Two names are tried, and the name matters more than the folder. First the
+    converter's: it writes <stem>_<ext>.md, so "Pricing_xlsx.md" came from
+    "Pricing.xlsx" -- the only candidate that names its own extension. Failing
+    that, the Markdown's whole stem, matched against whatever accepted
+    extension is actually there.
 
     The second name exists because Markdown written by anything other than this
     converter keeps the original's name intact. "BKP1_CRM.md" came from
@@ -447,20 +465,25 @@ def _beside_markdown(markdown: Path) -> Path | None:
     hand-converted SAP decks reported no original with their PDFs sitting in
     the folder directly above them.
     """
-    folder = markdown.parent.parent
+    folders = _original_folders(markdown)
     name = _original_name(markdown)
     if name:
-        hit = _accepted(folder / name)
-        if hit is not None:
-            return hit
-    if not folder.is_dir():
-        return None
-    # escape(): a stem may legitimately contain [ ] or ?, which glob would
-    # otherwise read as a pattern and quietly match the wrong file, or nothing.
-    for candidate in sorted(folder.glob(f"{glob.escape(markdown.stem)}.*")):
-        hit = _accepted(candidate)
-        if hit is not None:
-            return hit
+        for folder in folders:
+            hit = _accepted(folder / name)
+            if hit is not None:
+                return hit
+    for folder in folders:
+        if not folder.is_dir():
+            continue
+        # escape(): a stem may legitimately contain [ ] or ?, which glob would
+        # otherwise read as a pattern and quietly match the wrong file, or
+        # nothing.
+        for candidate in sorted(folder.glob(f"{glob.escape(markdown.stem)}.*")):
+            if candidate == markdown:
+                continue
+            hit = _accepted(candidate)
+            if hit is not None:
+                return hit
     return None
 
 

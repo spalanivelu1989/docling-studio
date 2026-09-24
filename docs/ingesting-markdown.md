@@ -141,8 +141,8 @@ curl -s http://127.0.0.1:8000/api/coverage | \
 
 ```
 {'on_disk': 217, 'indexed': 217, 'in_graph': 217, 'documents': 217,
- 'clean': 216, 'file_missing': 0, 'not_indexed': 0, 'not_in_graph': 0,
- 'shadowed': 0, 'category_mismatch': 0, 'no_original': 1}
+ 'clean': 217, 'file_missing': 0, 'not_indexed': 0, 'not_in_graph': 0,
+ 'shadowed': 0, 'category_mismatch': 0, 'no_original': 0}
 ```
 
 `on_disk`, `indexed` and `in_graph` must be equal. If `in_graph` is short, you
@@ -213,6 +213,17 @@ Two names are tried, in this order:
 | `Pricing_xlsx.md`  | `Pricing.xlsx`    | written by this repo's converter, which names its output `<stem>_<ext>.md` |
 | `BKP1_CRM.md`      | `BKP1_CRM.*`      | written by anything else, which keeps the original's name intact |
 
+Each name is looked for in two folders, nearest convention first:
+
+| Layout                        | Where the original goes          |
+| ----------------------------- | -------------------------------- |
+| `solvay-spark/<code>/markdown/` | `solvay-spark/<code>/` — beside the `markdown/` folder |
+| `knowledge_base/` (flat)        | `knowledge_base/` — beside the Markdown itself |
+
+The flat case needs saying because `knowledge_base/` has no `markdown/`
+subfolder to be above: "the folder above" it is the repo root, and nobody keeps
+a source workbook next to `app.py`.
+
 The SAP files are the second case. `bpmn2md.py` produced them outside this
 repo, so the trailing `_CRM` is part of the name rather than a format suffix --
 and reading it as one sends the lookup after a `BKP1.CRM` that never existed.
@@ -232,11 +243,16 @@ you do it afterwards: the corpus stores the Markdown path only, so dropping a
 file into the folder above is invisible to it. Refresh Coverage and the flag
 clears.
 
-The one flag that is left, `knowledge_base/BPML_Process_xlsx.md`, is a real
-gap rather than a naming quirk: its source is
-`solvay-spark/pkg/BPML_ProcessesHierarchyExtended.xlsx`, a different name in a
-different folder, and no convention bridges that. Renaming the Markdown to
-match would fix it, at the cost of re-indexing.
+`knowledge_base/BPML_Process_xlsx.md` was the flat case: its workbook went to
+
+```bash
+cp ~/Desktop/BPML_Process.xlsx knowledge_base/
+```
+
+Both folders are gitignored, so originals put in either place stay local. They
+are also invisible to the two scanners — indexing and the graph build both glob
+`*.md` — so a workbook dropped in beside its Markdown changes nothing but the
+review page.
 
 ---
 

@@ -217,6 +217,61 @@ def test_a_job_with_an_empty_label_matches_nothing():
     assert app._original_of(md) is None
 
 
+def test_a_flat_folder_keeps_the_original_beside_the_markdown():
+    """knowledge_base/ has no markdown/ subfolder, so "the folder above" it is
+    the repo root -- and nobody keeps a source workbook next to app.py. The
+    BPML workbook sat unfound for exactly this reason."""
+    md_dir = TMP / "knowledge_base"
+    md_dir.mkdir(parents=True, exist_ok=True)
+    md = md_dir / "BPML_Process_xlsx.md"
+    md.write_text("# bpml\n")
+    (md_dir / "BPML_Process.xlsx").write_text("original bytes")
+
+    found = app._original_of(md)
+    assert found is not None, "the Markdown's own folder was never looked in"
+    assert found.parent.name == "knowledge_base"
+
+
+def test_a_flat_folder_finds_a_whole_stem_too():
+    """Both fallbacks at once: no format suffix in the name, and no folder
+    above to look in."""
+    md_dir = TMP / "knowledge_base"
+    md_dir.mkdir(parents=True, exist_ok=True)
+    md = md_dir / "BKP6_CRM.md"
+    md.write_text("# crm\n")
+    (md_dir / "BKP6_CRM.pdf").write_text("original bytes")
+    assert app._original_of(md) is not None
+
+
+def test_the_folder_above_wins_over_the_markdowns_own():
+    """Where a conversion really did write into a markdown/ subfolder, the
+    source beside it is the one that produced the Markdown."""
+    md = corpus_doc("spark/pkg", "Costing", "xlsx", with_original=True)
+    (md.parent / "Costing.xlsx").write_text("a stray copy in markdown/")
+    found = app._original_of(md)
+    assert found.parent.name == "pkg", f"a file in markdown/ shadowed the source: {found}"
+
+
+def test_the_markdown_is_never_offered_as_its_own_original():
+    """Globbing the Markdown's own folder for its own stem finds the Markdown
+    itself. Today .md is not a format the preview pane is offered, so the
+    format check alone hides this -- but that is a list somebody may add to,
+    and pairing a document with itself would be a confusing way to find out.
+    """
+    md_dir = TMP / "knowledge_base"
+    md_dir.mkdir(parents=True, exist_ok=True)
+    md = md_dir / "standalone.md"
+    md.write_text("# alone\n")
+    assert app._original_of(md) is None
+
+    real = app.ACCEPTED
+    app.ACCEPTED = real | {".md"}
+    try:
+        assert app._original_of(md) is None, "the Markdown was offered as its own original"
+    finally:
+        app.ACCEPTED = real
+
+
 def main() -> int:
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     setup()
