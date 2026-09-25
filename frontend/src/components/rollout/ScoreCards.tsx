@@ -7,13 +7,11 @@ import { alpha, Box, ButtonBase, Stack, Typography, useTheme, type Theme } from 
 import type { ReactNode } from "react";
 
 import type { RolloutAnalysis, RolloutScores, RolloutSubject } from "../../api";
+import { outlookCounts, outlookPhrase, outlookSentence } from "./outlook";
 import { materialityColour, usePremium } from "./premium";
 
 const MATERIALITIES = ["Critical", "High", "Medium", "Low", "Informational"];
 
-// Dispositions that take the deviation away, and those that keep it.
-const ABSORBED = new Set(["ADOPT_GT", "CONFIGURE_STANDARD", "ADOPT_SAP_BP", "USE_SAP_LOCALIZATION", "RETIRE_LEGACY"]);
-const LOCAL = new Set(["RETAIN_LOCAL_EXCEPTION", "EXTEND_STANDARD"]);
 
 /** A 0–100 score as a colour, on the same cut points as the bands. */
 function scoreColour(theme: Theme, accent: string, v: number | null): string {
@@ -24,8 +22,10 @@ function scoreColour(theme: Theme, accent: string, v: number | null): string {
 const pts = (n: number) => `${Math.abs(n).toFixed(1)} pts`;
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
-function Card({ label, value, unit, colour, bar, band, lines, onOpen, open }: {
+function Card({ label, value, unit, colour, bar, band, lines, onOpen, open, title }: {
   label: string;
+  /** Hover text: how the figure is worked out. */
+  title?: string;
   value: string;
   unit?: string;
   colour: string;
@@ -37,7 +37,7 @@ function Card({ label, value, unit, colour, bar, band, lines, onOpen, open }: {
   open: string;
 }) {
   return (
-    <ButtonBase onClick={onOpen} aria-label={`${label}: ${value}${unit ?? ""}. ${open}`}
+    <ButtonBase onClick={onOpen} aria-label={`${label}: ${value}${unit ?? ""}. ${open}`} title={title}
                 sx={{ display: "flex", flexDirection: "column", alignItems: "stretch", textAlign: "left",
                       bgcolor: "background.paper", border: 1, borderColor: "divider", borderRadius: "10px",
                       px: 2.5, pt: 2.25, pb: 2, minWidth: 0, transition: "border-color .15s, box-shadow .15s",
@@ -107,17 +107,13 @@ export default function ScoreCards({ analysis, scores, subject, types, onTab }: 
   if (rated.length > 1) gtLines.push(<>Strongest: <B>{rated[rated.length - 1].label}</B> at {rated[rated.length - 1].percent}%</>);
   gtLines.push(<><B>{plural(c.fit_areas, "step")}</B> already fit the template as {c.fit_areas === 1 ? "it is" : "they are"}</>);
 
-  // --- harmonization potential
-  const absorbed = devs.filter((d) => ABSORBED.has(d.candidate_disposition)).length;
-  const local = devs.filter((d) => LOCAL.has(d.candidate_disposition)).length;
-  const undecided = devs.filter((d) => d.candidate_disposition === "REQUIRES_DECISION").length;
-  const redesign = devs.filter((d) => d.candidate_disposition === "REDESIGN_GT").length;
-  const hLines: ReactNode[] = devs.length ? [
-    <><B>{absorbed} of {devs.length}</B> deviations can be absorbed by the template or SAP standard</>,
-    ...(local ? [<><B>{local}</B> look like a lasting local need</>] : []),
-    ...(redesign ? [<><B>{redesign}</B> point to a template change</>] : []),
-    ...(undecided ? [<><B>{undecided}</B> still need a decision before they can be judged</>] : []),
-  ].slice(0, 3) : ["No deviations, so there is nothing to harmonise."];
+  // --- standardisation outlook (harmonization potential): the levels, not the
+  // dispositions, so the card says what the client can expect of each gap.
+  const hLines: ReactNode[] = devs.length
+    ? outlookCounts(devs).map(({ key, n }) => (
+        <><B>{n}</B> {outlookPhrase(key, n)}</>
+      ))
+    : ["No deviations, so there is nothing to standardise."];
 
   // --- localization-adjusted
   const adj = scores.localization_adjusted;
@@ -189,10 +185,11 @@ export default function ScoreCards({ analysis, scores, subject, types, onTab }: 
                gridTemplateColumns: { xs: "1fr", sm: "repeat(2, minmax(0, 1fr))", md: "repeat(3, minmax(0, 1fr))", xl: "repeat(5, minmax(0, 1fr))" } }}>
       <Card label="Alignment to the Global Template" value={pct(gt)} unit={gt === null ? undefined : "%"} colour={gtColour} bar={gt}
             band={scores.gt_band} lines={gtLines} onOpen={() => onTab("dimensions")} open="Open dimensions" />
-      <Card label="Harmonization potential" value={pct(scores.harmonization_potential)}
+      <Card label="Standardisation outlook" value={pct(scores.harmonization_potential)}
             unit={scores.harmonization_potential === null ? undefined : "%"}
             colour={scores.harmonization_potential === null ? theme.palette.text.disabled : theme.palette.info.main}
             bar={scores.harmonization_potential} band={scores.harmonization_band} lines={hLines}
+            title={[outlookSentence(devs), scores.harmonization_rule].filter(Boolean).join(".\n\n")}
             onOpen={() => onTab("deviations")} open="Open deviations" />
       <Card label="Localization-adjusted" value={pct(adj)} unit={adj === null ? undefined : "%"}
             colour={scoreColour(theme, p.accent, adj)} bar={adj}

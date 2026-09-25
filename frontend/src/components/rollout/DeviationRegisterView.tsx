@@ -13,9 +13,9 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { Deviation, RolloutEvidence, RolloutDecision, RolloutSubject } from "../../api";
 import { DecisionButtons, StatusText, latest, type OnDecide } from "./decision";
 import DeviationRiskView from "./DeviationRiskView";
+import { OUTLOOK, outlookOf } from "./outlook";
 import MaterialityPill from "./MaterialityPill";
 import { BUCKET_LABEL, DISPOSITION_LABEL, MONO, RADIUS, idColumn, ranked, usePremium } from "./premium";
-import { optionComment } from "./WorkshopAgendaView";
 
 const LETTERS = "ABCDEFGH";
 
@@ -271,7 +271,12 @@ export default function DeviationRegisterView({
                     // Null is "no SAP source was read", not a mismatch, so it is a dash.
                     ...(subject.score_b ? [{ l: "SAP BP fit", v: gap.sap_bp_fit_rating === null ? "—" : `${gap.sap_bp_fit_rating}/4`, mono: true,
                                              note: gap.sap_bp_fit_rating === null ? sapBlank(gap).short : undefined }] : []),
-                    { l: "Harmonisation", v: `${gap.harmonization_potential}%`, mono: true },
+                    // Computed from the disposition, localization state and GT fit; the
+                    // working is shown so a reader can check it. Older runs carry the
+                    // agent's own figure and say so.
+                    { l: "Standardisation outlook", v: OUTLOOK[outlookOf(gap)].label, mono: false,
+                      note: `${gap.harmonization_potential}% · ${gap.harmonization_terms?.formula
+                        ?? "agent's estimate (run predates the computed rule)"}` },
                     { l: "Evidence confidence", v: gap.evidence_confidence, mono: false },
                   ].map((k, i) => (
                     <Stack key={k.l} spacing={0.25} sx={{ px: 1.5, py: 1.1, borderLeft: i ? 1 : 0, borderColor: "divider" }}>
@@ -347,7 +352,7 @@ export default function DeviationRegisterView({
                   {gap.workshop_minutes || 10} min · confidence {gap.evidence_confidence.toLowerCase()}
                 </Typography>
                 <DecisionButtons gapId={gap.gap_id} reviewer={reviewer} deciding={deciding} onDecide={onDecide}
-                                 decisions={decisions[gap.gap_id]} comment={optionComment(agendaOptions, choice[gap.gap_id])} />
+                                 decisions={decisions[gap.gap_id]} option={choice[gap.gap_id]} />
                 {(decisions[gap.gap_id] ?? []).length > 1 && (
                   <Stack spacing={0.5}>
                     {(decisions[gap.gap_id] ?? []).slice(0, -1).reverse().map((d) => (

@@ -2,13 +2,23 @@
  *  standing verdict and who gave it, and the three buttons that add another.
  *  The log is append-only, so the last row is the verdict and the rest are
  *  how it got there. */
-import { Button, Stack, Typography, useTheme } from "@mui/material";
+import { Button, Stack, TextField, Typography, useTheme } from "@mui/material";
+import { useState } from "react";
 
 import type { RolloutDecision } from "../../api";
 import { RADIUS, usePremium } from "./premium";
 
 export type Verdict = "accept" | "reject" | "defer";
-export type OnDecide = (gapId: string, verdict: Verdict, comment?: string) => void;
+/** What goes with a verdict: the option chosen, by its position in the list
+ *  the room was shown, and why. Deferring or rejecting needs a reason. */
+export interface DecisionExtra {
+  option?: number;
+  rationale?: string;
+}
+export type OnDecide = (gapId: string, verdict: Verdict, extra?: DecisionExtra) => void;
+
+/** Defer and Reject say nothing useful later without a reason. */
+export const needsRationale = (v: Verdict) => v !== "accept";
 
 export const VERDICT_LABEL: Record<Verdict, string> = { accept: "Accepted", defer: "Deferred", reject: "Rejected" };
 
@@ -35,16 +45,19 @@ export function StatusText({ decision, size = 12.5 }: { decision?: RolloutDecisi
   );
 }
 
-export function DecisionButtons({ gapId, reviewer, deciding, onDecide, comment, decisions }: {
+export function DecisionButtons({ gapId, reviewer, deciding, onDecide, option, decisions }: {
   gapId: string;
   reviewer: string;
   deciding: Record<string, string>;
   onDecide?: OnDecide;
-  comment?: string;
+  /** The option picked on the card, if any. */
+  option?: number;
   decisions?: RolloutDecision[];
 }) {
   const last = latest(decisions);
   const named = !!reviewer.trim();
+  const [rationale, setRationale] = useState("");
+  const why = rationale.trim();
   return (
     <Stack spacing={1}>
       {last && (
@@ -55,18 +68,26 @@ export function DecisionButtons({ gapId, reviewer, deciding, onDecide, comment, 
         </Typography>
       )}
       {onDecide && (
-        <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: "wrap", alignItems: "center" }}>
-          {(["accept", "defer", "reject"] as const).map((v) => (
-            <Button key={v} size="small" variant={v === "accept" ? "contained" : "outlined"} disableElevation
-                    color={v === "reject" ? "error" : "primary"}
-                    disabled={!named || !!deciding[gapId]}
-                    onClick={() => onDecide(gapId, v, comment)}
-                    sx={{ textTransform: "none", borderRadius: RADIUS, minWidth: 76 }}>
-              {deciding[gapId] === v ? "Saving…" : v[0].toUpperCase() + v.slice(1)}
-            </Button>
-          ))}
-          {!named && <Typography sx={{ fontSize: 12, color: "error.main" }}>Name yourself in Deciding as to decide.</Typography>}
-        </Stack>
+        <>
+          <TextField size="small" fullWidth multiline maxRows={4} value={rationale}
+                     onChange={(e) => setRationale(e.target.value)}
+                     label="Rationale" placeholder="Why this was decided (needed to defer or reject)"
+                     slotProps={{ htmlInput: { maxLength: 2000 } }}
+                     sx={{ "& .MuiInputBase-input": { fontSize: 12.5 }, "& .MuiOutlinedInput-root": { borderRadius: RADIUS } }} />
+          <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: "wrap", alignItems: "center" }}>
+            {(["accept", "defer", "reject"] as const).map((v) => (
+              <Button key={v} size="small" variant={v === "accept" ? "contained" : "outlined"} disableElevation
+                      color={v === "reject" ? "error" : "primary"}
+                      disabled={!named || !!deciding[gapId] || (needsRationale(v) && !why)}
+                      title={needsRationale(v) && !why ? "Write a rationale first" : undefined}
+                      onClick={() => { onDecide(gapId, v, { option, rationale: why || undefined }); setRationale(""); }}
+                      sx={{ textTransform: "none", borderRadius: RADIUS, minWidth: 76 }}>
+                {deciding[gapId] === v ? "Saving…" : v[0].toUpperCase() + v.slice(1)}
+              </Button>
+            ))}
+            {!named && <Typography sx={{ fontSize: 12, color: "error.main" }}>Name yourself in Deciding as to decide.</Typography>}
+          </Stack>
+        </>
       )}
     </Stack>
   );

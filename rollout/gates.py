@@ -24,7 +24,7 @@ from fitgap.verifier import quote_in_chunk
 from .tools import is_sap_bp_chunk
 
 from .schemas import (BUILD_DISPOSITIONS, SUBJECTS, Analysis, AsIsModel, Deviation,
-                      Evidence, QualityIssue)
+                      Evidence, QualityIssue, step_refs)
 
 # Evidence is only worth anything if the agent saw the chunk in this run.
 def _seen(ev: Evidence, session: ftools.Session) -> bool:
@@ -288,9 +288,12 @@ def _says_what_it_compared_against(analysis: Analysis, scope_named: bool,
 
 def _completeness(analysis: Analysis, asis: AsIsModel, issues: list[QualityIssue]) -> None:
     """QG1 — every As-Is step is mapped, or explicitly named as unmapped."""
-    accounted = {f.as_is_step_id for f in analysis.fit_areas if f.as_is_step_id}
-    accounted |= {d.as_is_step_id for d in analysis.deviations if d.as_is_step_id}
-    missing = [s.step_id for s in asis.steps if s.step_id not in accounted]
+    # Split, not compared whole: "5.1, 5.14" covers 5.1 and 5.14, and comparing
+    # the whole string reported both as unmapped when neither was.
+    accounted: set[str] = set()
+    for ref in [f.as_is_step_id for f in analysis.fit_areas] + [d.as_is_step_id for d in analysis.deviations]:
+        accounted |= step_refs(ref)
+    missing = [s.step_id for s in asis.steps if s.step_id.upper() not in accounted]
     if missing:
         issues.append(QualityIssue(
             gate="QG1", severity="soft",

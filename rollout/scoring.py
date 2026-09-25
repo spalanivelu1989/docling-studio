@@ -1,8 +1,10 @@
 """The four alignment scores (§12), computed rather than generated.
 
-The agent rates each of the seven dimensions 0-4 and rates each deviation's
-harmonization potential. Everything numeric below is arithmetic over those
-ratings, done here. That separation is the point: a score a model writes can
+The agent rates each of the seven dimensions 0-4 and classifies each
+deviation. Everything numeric below is arithmetic over those ratings and
+classifications, done here -- including each deviation's harmonization
+potential, which `harmonization()` derives from its disposition, localization
+state and GT fit. That separation is the point: a score a model writes can
 be argued into a better number, and a score derived from a rated register
 cannot be moved without changing a finding that a reviewer can see.
 
@@ -14,8 +16,8 @@ Score D  Standardization potential          materiality-weighted harmonization
 
 from __future__ import annotations
 
-from .schemas import (DIMENSIONS, MANDATORY_LOCALIZATION, MATERIALITY_WEIGHT,
-                      SUBJECTS, Analysis, Deviation, DimensionRating)
+from .schemas import (DIMENSIONS, DISPOSITIONS, MANDATORY_LOCALIZATION,
+                      MATERIALITY_WEIGHT, SUBJECTS, Analysis, Deviation, DimensionRating)
 
 # The weights are a specification, so a typo in the table must fail loudly
 # rather than quietly produce scores out of 97.
@@ -90,6 +92,71 @@ def _localization_share(deviations: list[Deviation]) -> float:
     return mandatory / total
 
 
+# How far the proposed disposition moves the country onto the standard. The
+# disposition is the agent's classification of the gap; this table is what
+# that classification is worth, stated once, so the same disposition always
+# gives the same starting point.
+HARMONIZATION_BASE: dict[str, int] = {
+    "ADOPT_GT": 90,
+    "RETIRE_LEGACY": 85,
+    "CONFIGURE_STANDARD": 80,
+    "ADOPT_SAP_BP": 75,
+    "USE_SAP_LOCALIZATION": 70,
+    "REDESIGN_GT": 60,
+    "REQUIRES_DECISION": 50,
+    "OUT_OF_SCOPE": 50,
+    "RETAIN_LOCAL_EXCEPTION": 30,
+    "EXTEND_STANDARD": 20,
+}
+assert set(HARMONIZATION_BASE) == set(DISPOSITIONS), "every disposition needs a harmonization base"
+# How the working reads: "Adopt the template 90 · GT fit 3/4 +5 = 95".
+DISPOSITION_SHORT: dict[str, str] = {
+    "ADOPT_GT": "Adopt the template", "RETIRE_LEGACY": "Retire the legacy step",
+    "CONFIGURE_STANDARD": "Configure SAP standard", "ADOPT_SAP_BP": "Adopt SAP Best Practice",
+    "USE_SAP_LOCALIZATION": "Use SAP localization", "REDESIGN_GT": "Redesign the template",
+    "REQUIRES_DECISION": "Needs a decision", "OUT_OF_SCOPE": "Out of scope",
+    "RETAIN_LOCAL_EXCEPTION": "Keep a local exception", "EXTEND_STANDARD": "Extension",
+}
+# A legal obligation cannot be harmonised away whatever is proposed for it,
+# and a suspected one cannot be counted on until it is checked.
+HARMONIZATION_CAP: dict[str, int] = {"CONFIRMED_STATUTORY": 15, "SAP_DELIVERED": 25, "SUSPECTED": 50}
+CAP_REASON: dict[str, str] = {"CONFIRMED_STATUTORY": "confirmed statutory",
+                              "SAP_DELIVERED": "SAP-delivered localization",
+                              "SUSPECTED": "suspected localization"}
+# Points per GT-fit step either side of 2 (0-4): a gap already close to the
+# template is easier to close than one far from it.
+FIT_STEP = 5
+
+
+def harmonization(d: Deviation) -> tuple[int, dict]:
+    """One deviation's harmonization potential and the working behind it."""
+    base = HARMONIZATION_BASE[d.candidate_disposition]
+    fit = FIT_STEP * (d.gt_fit_rating - 2)
+    value = base + fit
+    cap = HARMONIZATION_CAP.get(d.localization_state)
+    capped = cap is not None and value > cap
+    if capped:
+        value = cap
+    value = max(0, min(100, value))
+    parts = [f"{DISPOSITION_SHORT[d.candidate_disposition]} {base}", f"GT fit {d.gt_fit_rating}/4 {fit:+d}"]
+    if capped:
+        parts.append(f"capped at {cap} ({CAP_REASON[d.localization_state]})")
+    return value, {"base": base, "disposition": d.candidate_disposition, "fit_adjustment": fit,
+                   "cap": cap if capped else None, "localization_state": d.localization_state,
+                   "value": value, "formula": " · ".join(parts) + f" = {value}"}
+
+
+def apply_harmonization(analysis: Analysis) -> Analysis:
+    """Set every deviation's harmonization potential from the rule above.
+
+    Run after the quality gates, because they can change what it depends on:
+    an unsupported statutory claim is demoted to SUSPECTED, and an extension
+    proposed without standard options becomes REQUIRES_DECISION."""
+    for d in analysis.deviations:
+        d.harmonization_potential, d.harmonization_terms = harmonization(d)
+    return analysis
+
+
 def score(analysis: Analysis, subject=None) -> dict:
     """Every score, its working, and the counts a header needs (§16.1).
 
@@ -146,6 +213,13 @@ def score(analysis: Analysis, subject=None) -> dict:
         "pattern": _pattern(gt, bp),
         "subject": subject.key,
         "subject_label": subject.label,
+        "harmonization_rule": (
+            "Each deviation starts from its proposed disposition ("
+            + ", ".join(f"{DISPOSITION_SHORT[k]} {v}" for k, v in HARMONIZATION_BASE.items())
+            + f"), moves {FIT_STEP} points per GT-fit step above or below 2/4, and is capped at "
+            + ", ".join(f"{v} when {CAP_REASON[k]}" for k, v in HARMONIZATION_CAP.items())
+            + ". The run's figure is their materiality-weighted average."
+        ),
         "formula": (
             "Localization-adjusted = GT alignment + (100 − GT alignment) × the "
             "materiality-weighted share of deviations that are a confirmed statutory "

@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import rag  # noqa: E402
 from guardrails.contact import redact, redact_obj as _clean  # noqa: E402
+from rollout import decisions  # noqa: E402
 
 # Every write below goes through `_clean`: no e-mail address or phone number
 # is stored, whatever the attached documents contained. The HTTP boundary
@@ -112,6 +114,85 @@ def create_schema(conn=None) -> None:
         )
         conn.execute("CREATE INDEX IF NOT EXISTS rollout_decisions_run_idx"
                      " ON rollout_decisions (run_id)")
+        # rollout_decisions above is the old log: no longer written, kept so
+        # nothing already recorded is lost, and copied into workshop_decisions
+        # by _backfill. Its ON DELETE CASCADE was right for a run's working
+        # notes and wrong for what an organization agreed, which is why the
+        # tables below use SET NULL and copy the context onto every row.
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS workshop_sessions (
+                id          text PRIMARY KEY,
+                run_id      text REFERENCES rollout_runs(id) ON DELETE SET NULL,
+                source_run  text NOT NULL DEFAULT '',
+                facilitator text NOT NULL,
+                attendees   jsonb NOT NULL DEFAULT '[]'::jsonb,
+                country     text NOT NULL DEFAULT '',
+                scope_bpml  text NOT NULL DEFAULT '',
+                scope_label text NOT NULL DEFAULT '',
+                started_at  timestamptz NOT NULL DEFAULT now()
+            )"""
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS workshop_decisions (
+                id          bigserial PRIMARY KEY,
+                -- Null once the run is deleted; source_run keeps its id.
+                run_id      text REFERENCES rollout_runs(id) ON DELETE SET NULL,
+                source_run  text NOT NULL,
+                session_id  text REFERENCES workshop_sessions(id) ON DELETE SET NULL,
+                gap_id      text NOT NULL,
+
+                -- What was decided about, as the run described it at the time.
+                subject     text NOT NULL DEFAULT '',
+                country     text NOT NULL DEFAULT '',
+                scope_bpml  text NOT NULL DEFAULT '',
+                scope_label text NOT NULL DEFAULT '',
+                template_process text NOT NULL DEFAULT '',
+                sap_release text NOT NULL DEFAULT '',
+                gt_version  text NOT NULL DEFAULT '',
+                model       text NOT NULL DEFAULT '',
+                prompt_hash text NOT NULL DEFAULT '',
+                as_is_step_id text NOT NULL DEFAULT '',
+                gt_step_ref text NOT NULL DEFAULT '',
+                primary_type text NOT NULL DEFAULT '',
+                dimension   text NOT NULL DEFAULT '',
+                materiality text NOT NULL DEFAULT '',
+                localization_state text NOT NULL DEFAULT '',
+                candidate_disposition text NOT NULL DEFAULT '',
+                workshop_bucket text NOT NULL DEFAULT '',
+                exact_difference text NOT NULL DEFAULT '',
+                as_is_statement text NOT NULL DEFAULT '',
+                gt_statement text NOT NULL DEFAULT '',
+                sap_bp_reference text NOT NULL DEFAULT '',
+                question    text NOT NULL DEFAULT '',
+                options     jsonb NOT NULL DEFAULT '[]'::jsonb,
+                decision_owner jsonb NOT NULL DEFAULT '[]'::jsonb,
+                evidence    jsonb NOT NULL DEFAULT '[]'::jsonb,
+
+                -- What the workshop decided.
+                verdict     text NOT NULL CHECK (verdict IN ('accept', 'reject', 'defer')),
+                option_index int,
+                option_text text NOT NULL DEFAULT '',
+                rationale   text NOT NULL DEFAULT '',
+                disposition text NOT NULL DEFAULT '',
+                decided_by  text NOT NULL,
+                decided_at  timestamptz NOT NULL DEFAULT now(),
+
+                -- Append-only: a changed mind is a new row that points at the
+                -- one it replaces, never an update of the verdict.
+                supersedes  bigint REFERENCES workshop_decisions(id),
+                is_current  boolean NOT NULL DEFAULT true,
+                legacy_id   bigint UNIQUE
+            )"""
+        )
+        # Set when facilitator mode submits the sitting's answers in one go.
+        conn.execute("ALTER TABLE workshop_sessions ADD COLUMN IF NOT EXISTS submitted_at timestamptz")
+        conn.execute("CREATE INDEX IF NOT EXISTS workshop_decisions_run_idx"
+                     " ON workshop_decisions (source_run, gap_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS workshop_decisions_memory_idx"
+                     " ON workshop_decisions (country, scope_bpml, primary_type) WHERE is_current")
+        _backfill(conn)
 
 
 def start_run(conn, run: dict) -> None:
@@ -251,12 +332,14 @@ def _row(r) -> dict:
     }
 
 
-def get_run(conn, run_id: str) -> dict | None:
+def get_run(conn, run_id: str, decisions_too: bool = True) -> dict | None:
     r = conn.execute(f"SELECT {_COLUMNS} FROM rollout_runs WHERE id = %s", (run_id,)).fetchone()
     if not r:
         return None
     run = _row(r)
-    run["decisions"] = get_decisions(conn, run_id)
+    if decisions_too:
+        run["decisions"] = get_decisions(conn, run_id)
+        run["sessions"] = get_sessions(conn, run_id)
     return run
 
 
@@ -285,24 +368,197 @@ def list_runs(conn, limit: int = 40) -> list[dict]:
     return out
 
 
-def save_decision(conn, run_id: str, gap_id: str, reviewer: str, verdict: str,
-                  disposition: str = "", comment: str = "") -> dict:
+_DECISION_COLUMNS = (
+    "id, run_id, source_run, session_id, gap_id, verdict, option_index, option_text, rationale,"
+    " disposition, decided_by, decided_at, supersedes, is_current, question, options,"
+    " decision_owner, country, scope_bpml, scope_label, template_process, primary_type,"
+    " materiality, localization_state, exact_difference, as_is_step_id, legacy_id")
+
+
+def _decision(r) -> dict:
+    (id_, run_id, source_run, session_id, gap_id, verdict, option_index, option_text, rationale,
+     disposition, decided_by, decided_at, supersedes, is_current, question, options, owner,
+     country, scope_bpml, scope_label, template_process, primary_type, materiality,
+     localization_state, exact_difference, as_is_step_id, legacy_id) = r
+    label = decisions.option_label(option_index, option_text)
+    return {
+        "id": id_, "run_id": run_id, "source_run": source_run, "session_id": session_id,
+        "gap_id": gap_id, "verdict": verdict,
+        "option_index": option_index, "option_text": option_text, "rationale": rationale,
+        "disposition": disposition,
+        # The names the page and the exports have always read.
+        "reviewer": decided_by,
+        "comment": " — ".join(x for x in (label, rationale) if x),
+        "decided_at": decided_at.isoformat() if decided_at else None,
+        "supersedes": supersedes, "is_current": is_current, "legacy": legacy_id is not None,
+        "question": question, "options": options or [], "decision_owner": owner or [],
+        "country": country, "scope_bpml": scope_bpml, "scope_label": scope_label,
+        "template_process": template_process, "primary_type": primary_type,
+        "materiality": materiality, "localization_state": localization_state,
+        "exact_difference": exact_difference, "as_is_step_id": as_is_step_id,
+    }
+
+
+def _insert_decision(conn, run_id: str | None, source_run: str, gap_id: str, ctx: dict, *,
+                     verdict: str, option_index: int | None, option_text: str, rationale: str,
+                     disposition: str, decided_by: str, session_id: str | None = None,
+                     decided_at=None, legacy_id: int | None = None) -> int:
+    """One row, marking the verdict it replaces as no longer current."""
+    prev = conn.execute(
+        "UPDATE workshop_decisions SET is_current = false"
+        " WHERE source_run = %s AND gap_id = %s AND is_current RETURNING id",
+        (source_run, gap_id)).fetchone()
+    cols = (["run_id", "source_run", "session_id", "gap_id", *decisions.RUN_FIELDS, "template_process",
+             *decisions.DEVIATION_FIELDS, "question", "options", "decision_owner", "evidence",
+             "verdict", "option_index", "option_text", "rationale", "disposition", "decided_by",
+             "supersedes", "legacy_id"])
+    vals = [run_id, source_run, session_id, gap_id,
+            *[ctx[k] for k in decisions.RUN_FIELDS], ctx["template_process"],
+            *[ctx[k] for k in decisions.DEVIATION_FIELDS],
+            ctx["question"], json.dumps(ctx["options"]), json.dumps(ctx["decision_owner"]),
+            json.dumps(ctx["evidence"]),
+            verdict, option_index, option_text, redact(rationale), disposition, decided_by,
+            prev[0] if prev else None, legacy_id]
+    if decided_at is not None:
+        cols.append("decided_at"); vals.append(decided_at)
     row = conn.execute(
-        """INSERT INTO rollout_decisions (run_id, gap_id, reviewer, verdict, disposition, comment)
-           VALUES (%s, %s, %s, %s, %s, %s) RETURNING id, decided_at""",
-        (run_id, gap_id, reviewer, verdict, disposition, redact(comment)),
-    ).fetchone()
-    comment = redact(comment)
+        f"INSERT INTO workshop_decisions ({', '.join(cols)})"
+        f" VALUES ({', '.join(['%s'] * len(vals))}) RETURNING id", vals).fetchone()
+    return row[0]
+
+
+def save_decision(conn, run_id: str, gap_id: str, reviewer: str, verdict: str,
+                  disposition: str = "", comment: str = "", *, option_index: int | None = None,
+                  rationale: str = "", session_id: str | None = None) -> dict:
+    """Record one verdict, with the context it was made in copied beside it.
+
+    `comment` is the old free-text field. A comment in the "Option B: ..."
+    form the page used to send is split into the option and the rationale,
+    so a caller that has not moved to `option_index` still records one."""
+    run = get_run(conn, run_id, decisions_too=False)
+    ctx = _clean(decisions.snapshot(run, gap_id))
+    if option_index is None and comment:
+        option_index, _, legacy_rationale = decisions.from_legacy_comment(comment, ctx["options"])
+        rationale = rationale or legacy_rationale
+    text = decisions.option_text(ctx["options"], option_index)
+    with conn.transaction():
+        new_id = _insert_decision(
+            conn, run_id, run_id, gap_id, ctx, verdict=verdict, option_index=option_index,
+            option_text=text, rationale=rationale.strip(), disposition=disposition,
+            decided_by=reviewer, session_id=session_id)
     conn.commit()
-    return {"id": row[0], "run_id": run_id, "gap_id": gap_id, "reviewer": reviewer,
-            "verdict": verdict, "disposition": disposition, "comment": comment,
-            "decided_at": row[1].isoformat()}
+    return get_decision(conn, new_id)
+
+
+def get_decision(conn, decision_id: int) -> dict | None:
+    r = conn.execute(f"SELECT {_DECISION_COLUMNS} FROM workshop_decisions WHERE id = %s",
+                     (decision_id,)).fetchone()
+    return _decision(r) if r else None
+
+
+def _backfill(conn) -> int:
+    """Copy decisions from the old log that have not been copied yet.
+
+    Run from create_schema, so it happens once per database and then finds
+    nothing. The context comes from the run as it stands, which is why this
+    has to happen while those runs still exist."""
+    rows = conn.execute(
+        """SELECT d.id, d.run_id, d.gap_id, d.reviewer, d.verdict, d.disposition, d.comment, d.decided_at
+           FROM rollout_decisions d
+           WHERE NOT EXISTS (SELECT 1 FROM workshop_decisions w WHERE w.legacy_id = d.id)
+           ORDER BY d.decided_at, d.id""").fetchall()
+    runs: dict[str, dict | None] = {}
+    for legacy_id, run_id, gap_id, reviewer, verdict, disposition, comment, decided_at in rows:
+        if run_id not in runs:
+            runs[run_id] = get_run(conn, run_id, decisions_too=False)
+        ctx = _clean(decisions.snapshot(runs[run_id], gap_id))
+        index, text, rationale = decisions.from_legacy_comment(comment, ctx["options"])
+        _insert_decision(conn, run_id, run_id, gap_id, ctx, verdict=verdict, option_index=index,
+                         option_text=text, rationale=rationale, disposition=disposition,
+                         decided_by=reviewer, decided_at=decided_at, legacy_id=legacy_id)
+    return len(rows)
+
+
+def get_sessions(conn, run_id: str) -> list[dict]:
+    rows = conn.execute(
+        "SELECT id, facilitator, attendees, started_at, submitted_at FROM workshop_sessions"
+        " WHERE source_run = %s ORDER BY started_at", (run_id,)).fetchall()
+    return [{"id": r[0], "facilitator": r[1], "attendees": r[2] or [],
+             "started_at": r[3].isoformat() if r[3] else None,
+             "submitted_at": r[4].isoformat() if r[4] else None} for r in rows]
+
+
+def submit_workshop(conn, run_id: str, facilitator: str, attendees: list[str],
+                    answers: list[dict]) -> dict:
+    """Facilitator mode's Submit: the whole sitting in one transaction.
+
+    Every answer is checked before anything is written, so a bad one refuses
+    the lot with a reason instead of leaving half a workshop recorded. Each
+    answer is {gap_id, verdict, option_index?, rationale?}."""
+    run = get_run(conn, run_id, decisions_too=False)
+    if not run:
+        raise LookupError(run_id)
+    if not answers:
+        raise ValueError("Nothing to submit")
+    known = {d.get("gap_id") for d in (run.get("analysis") or {}).get("deviations") or []}
+    seen: set[str] = set()
+    rows = []
+    for a in answers:
+        gap, verdict = a.get("gap_id", ""), a.get("verdict", "")
+        rationale = (a.get("rationale") or "").strip()
+        if gap not in known:
+            raise ValueError(f"{gap} is not a deviation in this run")
+        if gap in seen:
+            raise ValueError(f"{gap} is answered twice")
+        seen.add(gap)
+        if verdict not in ("accept", "reject", "defer"):
+            raise ValueError(f"{gap}: verdict must be accept, reject or defer")
+        if verdict != "accept" and not rationale:
+            raise ValueError(f"{gap}: a deferred or rejected decision needs a rationale")
+        ctx = _clean(decisions.snapshot(run, gap))
+        index = a.get("option_index")
+        rows.append((gap, verdict, index, decisions.option_text(ctx["options"], index), rationale, ctx))
+
+    people = _clean([x.strip() for x in attendees if x and x.strip()])
+    session_id = "ws_" + uuid.uuid4().hex[:10]
+    with conn.transaction():
+        conn.execute(
+            """INSERT INTO workshop_sessions (id, run_id, source_run, facilitator, attendees,
+                                              country, scope_bpml, scope_label, submitted_at)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, now())""",
+            (session_id, run_id, run_id, redact(facilitator), json.dumps(people),
+             run.get("country", ""), run.get("scope_bpml", ""), run.get("scope_label", "")))
+        ids = [_insert_decision(conn, run_id, run_id, gap, ctx, verdict=verdict, option_index=index,
+                                option_text=text, rationale=rationale, disposition="",
+                                decided_by=facilitator, session_id=session_id)
+               for gap, verdict, index, text, rationale, ctx in rows]
+    conn.commit()
+    session = next(x for x in get_sessions(conn, run_id) if x["id"] == session_id)
+    return {"session": session, "decisions": [get_decision(conn, i) for i in ids]}
+
+
+def list_decisions(conn, *, country: str = "", scope_bpml: str = "", primary_type: str = "",
+                   verdict: str = "", current_only: bool = True, limit: int = 200) -> list[dict]:
+    """Decisions across every run: the query the decision memory will ask."""
+    where, args = [], []
+    if current_only:
+        where.append("is_current")
+    for col, val in (("country", country), ("primary_type", primary_type), ("verdict", verdict)):
+        if val:
+            where.append(f"lower({col}) = lower(%s)"); args.append(val)
+    if scope_bpml:
+        # A code and everything under it: 4.10 finds 4.10.2 and 4.10.2.2.
+        where.append("(scope_bpml = %s OR scope_bpml LIKE %s)"); args += [scope_bpml, scope_bpml + ".%"]
+    sql = (f"SELECT {_DECISION_COLUMNS} FROM workshop_decisions"
+           + (f" WHERE {' AND '.join(where)}" if where else "")
+           + " ORDER BY decided_at DESC LIMIT %s")
+    return [_decision(r) for r in conn.execute(sql, (*args, limit)).fetchall()]
 
 
 def delete_run(conn, run_id: str) -> bool:
-    """Remove one run. Its decisions go with it: rollout_decisions declares
-    ON DELETE CASCADE, so a verdict cannot outlive the analysis it was made
-    against and be reported against nothing."""
+    """Remove one run. Its workshop decisions stay: they carry their own
+    context, and what an organization agreed is not a run's working notes.
+    Their run_id becomes null and source_run keeps the id."""
     removed = conn.execute(
         "DELETE FROM rollout_runs WHERE id = %s RETURNING id", (run_id,)).fetchall()
     conn.commit()
@@ -310,20 +566,18 @@ def delete_run(conn, run_id: str) -> bool:
 
 
 def get_decisions(conn, run_id: str) -> list[dict]:
+    """Every verdict recorded against a run, oldest first. Read by source_run,
+    so the log of a deleted run can still be asked for by its id."""
     rows = conn.execute(
-        "SELECT id, gap_id, reviewer, verdict, disposition, comment, decided_at"
-        " FROM rollout_decisions WHERE run_id = %s ORDER BY decided_at",
-        (run_id,),
-    ).fetchall()
-    return [{"id": r[0], "gap_id": r[1], "reviewer": r[2], "verdict": r[3],
-             "disposition": r[4], "comment": r[5],
-             "decided_at": r[6].isoformat() if r[6] else None} for r in rows]
+        f"SELECT {_DECISION_COLUMNS} FROM workshop_decisions"
+        " WHERE source_run = %s ORDER BY decided_at, id", (run_id,)).fetchall()
+    return [_decision(r) for r in rows]
 
 
 def stats(conn=None) -> dict[str, Any]:
     conn = conn or connect()
     create_schema(conn)
     runs = conn.execute("SELECT count(*) FROM rollout_runs").fetchone()[0]
-    decisions = conn.execute("SELECT count(*) FROM rollout_decisions").fetchone()[0]
+    decisions = conn.execute("SELECT count(*) FROM workshop_decisions").fetchone()[0]
     return {"runs": runs, "decisions": decisions,
             "database": rag.database_name(database_url())}

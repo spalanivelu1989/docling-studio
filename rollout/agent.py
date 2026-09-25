@@ -10,9 +10,9 @@ So: pass one reads only the attachments and submits a normalised process
 model. Pass two is handed that model as text and gets the corpus, the graph
 and the BPML sheet to compare it against.
 
-Nothing numeric comes out of the model except 0-4 dimension ratings and a
-0-100 harmonization potential per deviation. Every score is arithmetic over
-those, done in scoring.py.
+Nothing numeric comes out of the model except 0-4 ratings. Every score,
+and each deviation's harmonization potential, is arithmetic over those
+ratings and the model's classifications, done in scoring.py.
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ import tracing
 from guardrails import POLICY, web
 
 from . import tools
-from .schemas import SUBJECTS, Analysis, AsIsModel, Evidence, RunRequest, Subject
+from .schemas import SUBJECTS, Analysis, AsIsModel, Evidence, RunRequest, Subject, step_refs
 
 QUOTE_MAX = next(m.max_length for m in Evidence.model_fields["quote"].metadata if hasattr(m, "max_length"))
 HEADLINE_MAX = next(m.max_length for m in Analysis.model_fields["headline"].metadata if hasattr(m, "max_length"))
@@ -38,7 +38,7 @@ HEADLINE_MAX = next(m.max_length for m in Analysis.model_fields["headline"].meta
 MODEL = os.environ.get("ROLLOUT_MODEL") or os.environ.get("RAG_ANSWER_MODEL", "claude-opus-5")
 # The comparison reads two sides now -- the template and SAP Best Practice --
 # so it is given room for the second side's searches.
-MAX_TOOL_CALLS = {"asis": int(os.environ.get("ROLLOUT_MAX_TOOL_CALLS_ASIS", "14")),
+MAX_TOOL_CALLS = {"asis": int(os.environ.get("ROLLOUT_MAX_TOOL_CALLS_ASIS", "20")),
                   "compare": int(os.environ.get("ROLLOUT_MAX_TOOL_CALLS", "30"))}
 # Two different limits, because they guard two different things.
 #
@@ -51,7 +51,9 @@ MAX_TOOL_CALLS = {"asis": int(os.environ.get("ROLLOUT_MAX_TOOL_CALLS_ASIS", "14"
 # while the bill grows linearly. Counting cache reads here once cut this pass
 # off at turn fourteen -- it submitted an empty deviation register while its
 # own headline named three material divergences.
-MAX_INPUT_TOKENS = int(os.environ.get("ROLLOUT_MAX_INPUT_TOKENS", "90000"))
+# Raised from 90k when the comparison began reading both the template and SAP
+# Best Practice: a pass stopped at 19 of its 30 calls on this limit alone.
+MAX_INPUT_TOKENS = int(os.environ.get("ROLLOUT_MAX_INPUT_TOKENS", "150000"))
 MAX_TOTAL_INPUT_TOKENS = int(os.environ.get("ROLLOUT_MAX_BILLED_TOKENS", "220000"))
 # The register is the output. A budget that leaves no room to write it out is
 # not a budget, it is a way of producing a confident-looking empty analysis.
@@ -182,7 +184,9 @@ def system_compare(subject: Subject) -> str:
         )
         sap_dims = ", and 0-4 against SAP Best Practice in sap_bp_rating"
         localization = (
-            "decide the localization state honestly, "
+            "decide the localization state honestly -- and for every deviation you mark "
+            "CONFIRMED_STATUTORY, SAP_DELIVERED or SUSPECTED, add an item to the localization "
+            "list for the topic it raises -- "
         )
     else:
         # No country in the run, so no localization and no third side. Said
@@ -276,8 +280,9 @@ system, ticket or dash code to what is linked to it.
 point in the process; with an equivalent actor, business rule, threshold, system capability, \
 control, data and exception path?{sap_check} A step that matches the template is a \
 fit_area -- name it, so the workshop can confirm it in one batch instead of walking through it.
-6. For every material difference, write one deviation. Classify it with the taxonomy, say \
-exactly what the difference is in one sentence, {localization}assess materiality{sap_rating}. \
+6. For every material difference, write one deviation. Set its as_is_step_id to the step id(s) \
+it concerns, exactly as written in the process model below -- that is what places it on the \
+process. Classify it with the taxonomy, say exactly what the difference is in one sentence, {localization}assess materiality{sap_rating}. \
 Put the deviation on ONE of the seven scored dimensions -- the one it mostly loads onto.
 7. Decide the workshop bucket:
    - MUST_DISCUSS: the difference is material, or legal relevance is uncertain, or a business \
@@ -294,8 +299,9 @@ for each saying what drove the rating.
 need is visible. Every candidate names the gap it came from. A hypothesis is not scope.
 10. submit_analysis, once.
 
-You do not compute the scores. You supply the ratings and the harmonization potential per \
-deviation; the arithmetic is done for you and published with its formula.
+You do not compute the scores. You supply the ratings and each deviation's disposition and \
+localization state; the harmonization potential and every score are computed from them and \
+published with the formula. So choose the disposition you would defend in the workshop.
 
 The most important output is not the gap list -- it is the workshop focus list. A Must Discuss \
 item without a decision question makes a workshop rediscover instead of decide.
@@ -353,7 +359,10 @@ def _context(req: RunRequest, scope) -> str:
 
 def _run(system: str, user: str, stage: str, sess: tools.Session,
          submit: str, model_cls, on_tool: Callable | None,
-         on_note: Callable | None = None) -> tuple[Any, dict]:
+         on_note: Callable | None = None,
+         step_ids: list[str] | None = None,
+         need_advisory: bool = False,
+         min_sap_searches: int = 0) -> tuple[Any, dict]:
     """One bounded pass. Returns the submitted model (or None) and its cost.
 
     `on_note(kind, data)` receives what is not a tool call: the context the
@@ -375,6 +384,7 @@ def _run(system: str, user: str, stage: str, sess: tools.Session,
     in_tokens = out_tokens = last_in = 0
     submitted = None
     sent_back = False
+    sap_searches = 0
     started = time.time()
     turns = 0
     warned = False
@@ -447,20 +457,55 @@ def _run(system: str, user: str, stage: str, sess: tools.Session,
                     # stripped by the gates, so the agent is asked to find the
                     # quote or clear the rating while it still can.
                     unquoted = _unquoted_sap_ratings(candidate, sess)
-                    if unquoted and not sent_back and calls < MAX_TOOL_CALLS[stage]:
+                    unplaced = _unplaced_deviations(candidate, step_ids)
+                    unadvised = _unadvised_localization(candidate) if need_advisory else []
+                    sap_short = (isinstance(candidate, Analysis) and sap_searches < min_sap_searches
+                                 and calls + (min_sap_searches - sap_searches) <= MAX_TOOL_CALLS[stage])
+                    if (unquoted or unplaced or unadvised or sap_short) and not sent_back \
+                            and calls < MAX_TOOL_CALLS[stage]:
                         sent_back = True
                         calls += 1
-                        text = ("These deviations carry an sap_bp_fit_rating with no SAP Best Practice "
+                        asks, titles = [], []
+                        if unquoted:
+                            asks.append(
+                                "These deviations carry an sap_bp_fit_rating with no SAP Best Practice "
                                 f"quote in their evidence: {', '.join(unquoted)}. A rating without a quote "
                                 "is removed automatically. For each one, either run "
                                 "search_sap_best_practice and add a verbatim quote with side sap_bp, or "
                                 "set sap_bp_fit_rating to null and say in sap_bp_reference that the SAP "
-                                f"documents do not cover it. Then call {submit} again.")
+                                "documents do not cover it.")
+                            titles.append(f"{len(unquoted)} SAP rating(s) without an SAP quote")
+                        if unplaced:
+                            asks.append(
+                                "These deviations name no As-Is step: "
+                                f"{', '.join(unplaced)}. Set as_is_step_id to the step id(s) each one "
+                                "concerns, exactly as written in the process model (for example "
+                                f"{step_ids[0]!r}); leave it empty only for a deviation that concerns "
+                                "no single step.")
+                            titles.append(f"{len(unplaced)} deviation(s) with no As-Is step")
+                        if unadvised:
+                            asks.append(
+                                "The localization list is empty, but these deviations are marked as a "
+                                f"possible or confirmed localization: {', '.join(unadvised)}. Add one "
+                                "localization item for each topic they raise -- status Confirmed only "
+                                "where an explicit statutory source says so, otherwise Candidate -- with "
+                                "the requirement, what SAP and the template offer, and an owner.")
+                            titles.append(f"{len(unadvised)} localization deviation(s) with no advisory")
+                        if sap_short:
+                            asks.append(
+                                f"You searched SAP Best Practice {sap_searches} time(s); this process needs "
+                                f"at least {min_sap_searches} -- one per stage of the As-Is (request and "
+                                "order, approval, delivery and receipt, inspection, refund or credit, "
+                                "closure). Run search_sap_best_practice for the stages you have not "
+                                "searched, and rate or quote SAP from what they return.")
+                            titles.append(f"only {sap_searches} SAP Best Practice search(es)")
+                        text = " ".join(asks) + f" Then call {submit} again."
                         results.append({"type": "tool_result", "tool_use_id": use.id, "is_error": True,
                                         "content": text})
-                        note("note", {"kind": "rejected",
-                                      "title": f"Sent back: {len(unquoted)} SAP rating(s) without an SAP quote",
-                                      "text": text, "detail": {"gaps": unquoted}})
+                        note("note", {"kind": "rejected", "title": "Sent back: " + "; ".join(titles),
+                                      "text": text, "detail": {"gaps": unquoted, "unplaced": unplaced,
+                                                               "unadvised": unadvised,
+                                                               "sap_searches": sap_searches}})
                         continue
                     submitted = candidate
                     results.append({"type": "tool_result", "tool_use_id": use.id,
@@ -478,6 +523,8 @@ def _run(system: str, user: str, stage: str, sess: tools.Session,
                 continue
 
             calls += 1
+            if use.name == "search_sap_best_practice":
+                sap_searches += 1
             t0 = time.time()
             fn = tools.DISPATCH.get(use.name)
             args = dict(use.input)
@@ -540,6 +587,30 @@ def _submitted_title(model) -> str:
     return "Submitted"
 
 
+def _unplaced_deviations(model, step_ids: list[str] | None) -> list[str]:
+    """Deviations whose as_is_step_id names none of the run's As-Is steps. The
+    Process alignment tab places a finding by that id alone, and runs had
+    left it empty on every deviation."""
+    if not isinstance(model, Analysis) or not step_ids:
+        return []
+    known = {s.upper() for s in step_ids}
+    return [d.gap_id for d in model.deviations if not step_refs(d.as_is_step_id) & known]
+
+
+# Localization states that mean "this may be the law, or SAP delivers it" --
+# each one belongs in the localization advisory, where it is given a status,
+# a requirement and an owner. Runs marked five deviations SUSPECTED and left
+# the advisory empty, so the Localization tab said there was nothing to see.
+_LOCALIZATION_STATES = {"CONFIRMED_STATUTORY", "SAP_DELIVERED", "SUSPECTED"}
+
+
+def _unadvised_localization(model) -> list[str]:
+    """Localization-flagged deviations when the advisory is empty."""
+    if not isinstance(model, Analysis) or model.localization:
+        return []
+    return [d.gap_id for d in model.deviations if d.localization_state in _LOCALIZATION_STATES]
+
+
 def _unquoted_sap_ratings(model, sess: tools.Session) -> list[str]:
     """Deviations rated against SAP Best Practice with no quote from an SAP
     Best Practice chunk this run retrieved -- exactly what gates QG5 would
@@ -593,7 +664,12 @@ def compare(req: RunRequest, scope, asis: AsIsModel, sess: tools.Session,
           f"read_sources to re-read any {subject.label} detail you need to quote."
     )
     return _run(system_compare(subject), user, "compare", sess, "submit_analysis",
-                Analysis, on_tool, on_note)
+                Analysis, on_tool, on_note, step_ids=[s.step_id for s in asis.steps],
+                need_advisory=subject.localization,
+                # One SAP search per stage of the process, capped: six covers the
+                # stages of a returns process and leaves the template its budget.
+                min_sap_searches=(min(6, max(3, len(asis.steps) // 2))
+                                  if subject.score_b and tools.sap_bp_indexed(sess) else 0))
 
 
 def _step_line(s) -> str:

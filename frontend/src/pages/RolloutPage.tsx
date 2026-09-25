@@ -28,8 +28,9 @@ import AgentLogDrawer from "../components/AgentLogDrawer";
 import AgentTraceDrawer from "../components/AgentTraceDrawer";
 import ScrollRunway from "../components/ScrollRunway";
 import BriefView from "../components/rollout/BriefView";
+import type { DecisionExtra } from "../components/rollout/decision";
 import DeviationRegisterView from "../components/rollout/DeviationRegisterView";
-import FacilitatorView from "../components/rollout/FacilitatorView";
+import FacilitatorView, { type WorkshopDraft } from "../components/rollout/FacilitatorView";
 import WorkshopAgendaView from "../components/rollout/WorkshopAgendaView";
 import ObjectHeader, { BandButton } from "../components/rollout/ObjectHeader";
 import { MONO, RADIUS, usePremium } from "../components/rollout/premium";
@@ -734,7 +735,7 @@ function PastAnalysis({ run, showModel = true }: { run: RolloutRunDetail; showMo
       {scores && (
         <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: "wrap" }}>
           <ScoreTile label="GT alignment" value={scores.gt_alignment} band={scores.gt_band} accent={sem.fit} />
-          <ScoreTile label="Harmonization" value={scores.harmonization_potential}
+          <ScoreTile label="Standardisation outlook" value={scores.harmonization_potential}
                      band={scores.harmonization_band} accent={sem.localization} />
         </Stack>
       )}
@@ -917,6 +918,11 @@ export default function RolloutPage({ active, showTechDetails = true }: Props) {
   const [composing, setComposing] = useState(false);
   // Which agenda item facilitator mode opens on; null while it is closed.
   const [facilitating, setFacilitating] = useState<number | null>(null);
+  // Facilitator mode's answers, held until Submit. Kept per run in the
+  // browser too, so closing the window or reloading mid-workshop does not
+  // lose what the room has already said.
+  const [attendees, setAttendees] = useState("");
+  const [drafts, setDrafts] = useState<Record<string, WorkshopDraft>>({});
   const [history, setHistory] = useState<RolloutRunSummary[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [reviewer, setReviewer] = useState(() => {
@@ -1163,7 +1169,38 @@ export default function RolloutPage({ active, showTechDetails = true }: Props) {
     }
   }
 
-  async function decide(gapId: string, verdict: "accept" | "reject" | "defer", comment?: string) {
+  useEffect(() => {
+    if (!runId) { setDrafts({}); return; }
+    try { setDrafts(JSON.parse(localStorage.getItem(`fitgap.drafts.${runId}`) ?? "{}")); } catch { setDrafts({}); }
+  }, [runId]);
+
+  function draft(gapId: string, d: WorkshopDraft) {
+    setDrafts((prev) => {
+      const next = { ...prev, [gapId]: d };
+      try { if (runId) localStorage.setItem(`fitgap.drafts.${runId}`, JSON.stringify(next)); } catch { /* private mode */ }
+      return next;
+    });
+  }
+
+  async function submitWorkshop(): Promise<{ saved: number; session: string }> {
+    if (!runId || !scores) throw new Error("No analysis loaded");
+    const answers = scores.agenda.map((a) => {
+      const d = drafts[a.gap_id];
+      return { gap_id: a.gap_id, verdict: d?.verdict ?? "", option_index: d?.option,
+               rationale: d?.rationale.trim() || undefined };
+    });
+    const out = await rollout.submitWorkshop(runId, {
+      facilitator: reviewer.trim(),
+      attendees: attendees.split(",").map((x) => x.trim()).filter(Boolean),
+      answers,
+    });
+    setDecisions((prev) => [...prev, ...out.decisions]);
+    setDrafts({});
+    try { localStorage.removeItem(`fitgap.drafts.${runId}`); } catch { /* private mode */ }
+    return { saved: out.decisions.length, session: out.session.id };
+  }
+
+  async function decide(gapId: string, verdict: "accept" | "reject" | "defer", extra?: DecisionExtra) {
     // No anonymous verdicts. This used to fall back to "unnamed", which meant
     // a click with an empty name field wrote a row nobody could be asked
     // about -- the opposite of what a decision log is for. The buttons are
@@ -1172,7 +1209,9 @@ export default function RolloutPage({ active, showTechDetails = true }: Props) {
     setDeciding((d) => ({ ...d, [gapId]: verdict }));
     try {
       const saved = await rollout.decide(runId, {
-        gap_id: gapId, reviewer: reviewer.trim(), verdict, ...(comment ? { comment } : {}),
+        gap_id: gapId, reviewer: reviewer.trim(), verdict,
+        ...(extra?.option !== undefined ? { option_index: extra.option } : {}),
+        ...(extra?.rationale ? { rationale: extra.rationale } : {}),
       });
       setDecisions((prev) => [...prev, saved]);
     } catch (e) {
@@ -1233,10 +1272,13 @@ export default function RolloutPage({ active, showTechDetails = true }: Props) {
   const templateName = scope ? `${scope.code} ${scope.name}`
     : (analysis?.template_process ?? "").split(" (")[0] || "Global Template";
   const decided = new Set(decisions.map((d) => d.gap_id)).size;
-  const TABS: { key: string; label: string }[] = analysis ? [
+  // The agenda is complete when every Must-discuss item has a decision on
+  // record, from facilitator mode or any tab. Drafts do not count.
+  const agendaDone = !!scores?.agenda.length && scores.agenda.every((a) => decisionsByGap[a.gap_id]?.length);
+  const TABS: { key: string; label: string; done?: boolean }[] = analysis ? [
     { key: "summary", label: "Summary" },
     { key: "brief", label: "Brief" },
-    { key: "workshop", label: `Workshop agenda (${scores?.agenda.length ?? must.length})` },
+    { key: "workshop", label: `Workshop agenda (${scores?.agenda.length ?? must.length})`, done: agendaDone },
     { key: "deviations", label: `Deviations (${analysis.deviations.length})` },
     ...(asis ? [{ key: "process", label: `Process alignment (${asis.steps.length})` }] : []),
     { key: "localization", label: subject.localization ? `Localization (${analysis.localization.length})` : "Localization — n/a" },
@@ -1296,7 +1338,14 @@ export default function RolloutPage({ active, showTechDetails = true }: Props) {
                   sx={{ flex: 1, minWidth: 0, minHeight: 46,
                         "& .MuiTab-root": { minHeight: 46, textTransform: "none", fontSize: 13.5, fontWeight: 500, px: 1.75 },
                         "& .Mui-selected": { fontWeight: 600 } }}>
-              {TABS.map((t) => <Tab key={t.key} value={t.key} label={t.label} />)}
+              {TABS.map((t) => (
+                <Tab key={t.key} value={t.key} label={t.label}
+                     {...(t.done ? {
+                       icon: <CheckCircle2 size={16} aria-label="completed" color={theme.palette.success.main} />,
+                       iconPosition: "end" as const,
+                       title: "Every agenda item has a decision",
+                     } : {})} />
+              ))}
             </Tabs>
             {runId && (
               <Stack direction="row" spacing={1} sx={{ alignItems: "center", py: 0.75 }}>
@@ -1327,7 +1376,7 @@ export default function RolloutPage({ active, showTechDetails = true }: Props) {
             {tab === "process" && asis && (
               <ProcessAlignmentView asis={asis} analysis={analysis} scores={scores} subject={subject}
                                     decisions={decisionsByGap} reviewer={reviewer} deciding={deciding}
-                                    onDecide={runId ? (g, v) => void decide(g, v) : undefined} onOpenGap={openGap} />
+                                    onDecide={runId ? (g, v, x) => void decide(g, v, x) : undefined} onOpenGap={openGap} />
             )}
             {tab === "log" && (
               <Stack spacing={2}>
@@ -1454,21 +1503,23 @@ export default function RolloutPage({ active, showTechDetails = true }: Props) {
             {tab === "workshop" && (
               <WorkshopAgendaView analysis={analysis} scores={scores} subject={subject} types={types} states={states}
                                   decisions={decisionsByGap} reviewer={reviewer} deciding={deciding}
-                                  onDecide={runId ? (g, v, c) => void decide(g, v, c) : undefined}
-                                  onOpenGap={openGap} onFacilitate={setFacilitating} />
+                                  onDecide={runId ? (g, v, x) => void decide(g, v, x) : undefined}
+                                  onOpenGap={openGap} onFacilitate={setFacilitating} runId={runId} />
             )}
             {tab === "deviations" && (
               <DeviationRegisterView deviations={analysis.deviations} subject={subject} types={types}
                                      dispositions={dispositions} states={states} decisions={decisionsByGap}
                                      reviewer={reviewer} deciding={deciding}
-                                     onDecide={runId ? (g, v, c) => void decide(g, v, c) : undefined}
+                                     onDecide={runId ? (g, v, x) => void decide(g, v, x) : undefined}
                                      focusGap={highlightGap} fileStem={runId ?? "fit-gap"}
                                      renderEvidence={(e) => <EvidenceRow ev={e} chunk={sources?.chunks?.[e.chunk_id]} session={session} />} />
             )}
-            <FacilitatorView open={facilitating !== null} start={facilitating ?? 0} onClose={() => setFacilitating(null)}
+            <FacilitatorView open={facilitating !== null} start={facilitating ?? 0}
+                             onClose={() => setFacilitating(null)}
+                             attendees={attendees} onAttendees={setAttendees}
                              analysis={analysis} scores={scores} subject={subject} country={country}
-                             decisions={decisionsByGap} reviewer={reviewer} onReviewer={setReviewer} deciding={deciding}
-                             onDecide={runId ? (g, v, c) => void decide(g, v, c) : undefined} />
+                             decisions={decisionsByGap} reviewer={reviewer} onReviewer={setReviewer}
+                             drafts={drafts} onDraft={draft} onSubmit={runId ? submitWorkshop : undefined} runId={runId} />
             {["localization", "dimensions", "backlog", "asis", "gates", "sources"].includes(tab) && (
               <Paper variant="outlined" sx={{ borderRadius: RADIUS }}>
             <Box sx={{ p: 2 }}>

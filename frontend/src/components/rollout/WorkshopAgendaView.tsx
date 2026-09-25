@@ -10,18 +10,15 @@ import { useEffect, useMemo, useState } from "react";
 import type { Deviation, RolloutAnalysis, RolloutDecision, RolloutScores, RolloutSubject } from "../../api";
 import { DecisionButtons, StatusText, latest, useVerdictColour, type OnDecide } from "./decision";
 import MaterialityPill from "./MaterialityPill";
+import OutcomeDownloads from "./OutcomeDownloads";
 import { MONO, RADIUS, usePremium } from "./premium";
 import { Section } from "./SummaryView";
 
 export const clock = (m: number) => `${Math.floor(m / 60)}:${String(m % 60).padStart(2, "0")}`;
 const LETTERS = "ABCDEFGH";
 
-/** "Option B: …" -- what a chosen option is recorded as, beside the verdict. */
-export const optionComment = (options: string[], i: number | undefined) =>
-  i === undefined || !options[i] ? undefined : `Option ${LETTERS[i]}: ${options[i]}`;
-
 export default function WorkshopAgendaView({
-  analysis, scores, subject, types, states, decisions, reviewer, deciding, onDecide, onOpenGap, onFacilitate,
+  analysis, scores, subject, types, states, decisions, reviewer, deciding, onDecide, onOpenGap, onFacilitate, runId,
 }: {
   analysis: RolloutAnalysis;
   scores: RolloutScores;
@@ -34,6 +31,8 @@ export default function WorkshopAgendaView({
   onDecide?: OnDecide;
   onOpenGap: (gapId: string) => void;
   onFacilitate: (index: number) => void;
+  /** Set once the run is saved, which is when there is an outcome to download. */
+  runId?: string | null;
 }) {
   const theme = useTheme();
   const p = usePremium();
@@ -81,7 +80,7 @@ export default function WorkshopAgendaView({
 
   const confirmSelected = () => {
     if (!onDecide) return;
-    for (const d of tickedPending) onDecide(d.gap_id, "accept", "Confirmed without discussion (batch)");
+    for (const d of tickedPending) onDecide(d.gap_id, "accept", { rationale: "Confirmed without discussion (batch)" });
     setTicked(new Set());
   };
 
@@ -114,6 +113,7 @@ export default function WorkshopAgendaView({
                 {total % 60} min of floor time · legal and localization blockers first, then controls, then the rest by materiality
               </Typography>
             </Stack>
+            {runId && <OutcomeDownloads runId={runId} disabled={!Object.values(decisions).some((d) => d.length)} />}
             <Button variant="contained" disableElevation onClick={() => onFacilitate(Math.max(0, agenda.findIndex((a) => a.gap_id === open)))}
                     sx={{ textTransform: "none", borderRadius: RADIUS, bgcolor: p.accent, color: p.dark ? p.onAccent : "#ffffff",
                           "&:hover": { bgcolor: p.accent, filter: "brightness(1.08)" }, whiteSpace: "nowrap" }}>
@@ -229,7 +229,7 @@ export default function WorkshopAgendaView({
                       <Link component="button" onClick={() => onOpenGap(a.gap_id)} sx={{ fontSize: 13 }}>Open deviation</Link>
                     </Stack>
                     <DecisionButtons gapId={a.gap_id} reviewer={reviewer} deciding={deciding} onDecide={onDecide}
-                                     decisions={decisions[a.gap_id]} comment={optionComment(options, choice[a.gap_id])} />
+                                     decisions={decisions[a.gap_id]} option={choice[a.gap_id]} />
                   </Stack>
                 </Collapse>
               </Box>

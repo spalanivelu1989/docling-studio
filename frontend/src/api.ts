@@ -1597,6 +1597,8 @@ export interface Deviation {
   localization_state: LocalizationState; materiality: Materiality;
   impacts: { area: string; score: number; note: string }[];
   gt_fit_rating: number; sap_bp_fit_rating: number | null; harmonization_potential: number;
+  /** How harmonization_potential was computed; absent on runs from before it was. */
+  harmonization_terms?: { base: number; fit_adjustment: number; cap: number | null; value: number; formula: string };
   candidate_disposition: Disposition; standard_options_considered: string[];
   workshop_bucket: WorkshopBucket; decision_question: string; decision_options: string[];
   decision_owner: string[]; workshop_minutes: number; why_discussed: string;
@@ -1640,6 +1642,8 @@ export interface RolloutScores {
   sap_bp_alignment: number | null; sap_bp_band: string; sap_bp_note: string;
   localization_adjusted: number | null; localization_share: number;
   harmonization_potential: number | null; harmonization_band: string;
+  /** The rule each deviation's figure follows; absent on older runs. */
+  harmonization_rule?: string;
   pattern: string; formula: string;
   dimensions: { dimension: string; label: string; weight: number; rating: number | null; percent: number | null; note: string }[];
   sap_bp_dimensions: { dimension: string; label: string; weight: number; rating: number | null; percent: number | null; note: string }[];
@@ -1780,6 +1784,7 @@ export interface RolloutRunDetail extends RolloutRunSummary {
   scores: RolloutScores | Record<string, never>;
   gates: RolloutGates | Record<string, never>;
   decisions: RolloutDecision[];
+  sessions?: WorkshopSession[];
   /** The investigation log. Empty for runs recorded before it was kept. */
   log?: EvidenceLogEntry[];
 }
@@ -1789,7 +1794,21 @@ export interface RolloutRunDetail extends RolloutRunSummary {
  *  the record still shows that the view changed and when. */
 export interface RolloutDecision {
   id: number; gap_id: string; reviewer: string; verdict: "accept" | "reject" | "defer";
-  disposition: string; comment: string; decided_at: string | null;
+  disposition: string;
+  /** "Option B: … — rationale", composed by the server for display. */
+  comment: string;
+  decided_at: string | null;
+  option_index?: number | null; option_text?: string; rationale?: string;
+  session_id?: string | null; supersedes?: number | null; is_current?: boolean;
+  /** What was decided about, copied at the time so the row outlives the run. */
+  question?: string; options?: string[]; decision_owner?: string[];
+  country?: string; scope_bpml?: string; primary_type?: string; materiality?: string;
+}
+
+/** One sitting of the workshop: who ran the room and who was in it. */
+export interface WorkshopSession {
+  id: string; run_id?: string; facilitator: string; attendees: string[];
+  started_at: string | null; submitted_at?: string | null;
 }
 
 export interface RolloutHandlers {
@@ -1864,12 +1883,28 @@ export const rollout = {
     chunk.kind === "upload"
       ? (session ? `/api/uploads/${session}/files/${encodeURIComponent(chunk.document)}/markdown` : "")
       : (chunk.file ? `/api/kb/files/${encodeURIComponent(chunk.file)}` : ""),
-  decide: (runId: string, body: { gap_id: string; reviewer: string; verdict: string; disposition?: string; comment?: string }) =>
+  decide: (runId: string, body: {
+    gap_id: string; reviewer: string; verdict: string; disposition?: string; comment?: string;
+    option_index?: number; rationale?: string; session_id?: string;
+  }) =>
     fetch(`/api/rollout/runs/${runId}/decisions`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     }).then((r) => json<RolloutDecision>(r)),
+  /** The workshop outcome as md, pdf, docx or xlsx; one sitting when `session` is given. */
+  workshopExportUrl: (runId: string, format: string, session?: string) =>
+    `/api/rollout/runs/${runId}/workshop/export?format=${format}${session ? `&session=${encodeURIComponent(session)}` : ""}`,
+  /** Facilitator mode's Submit: the sitting and every answer, saved together or not at all. */
+  submitWorkshop: (runId: string, body: {
+    facilitator: string; attendees: string[];
+    answers: { gap_id: string; verdict: string; option_index?: number; rationale?: string }[];
+  }) =>
+    fetch(`/api/rollout/runs/${runId}/workshop`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }).then((r) => json<{ session: WorkshopSession; decisions: RolloutDecision[] }>(r)),
 };
 
 // --- the Answer Quality workspace ---------------------------------------------

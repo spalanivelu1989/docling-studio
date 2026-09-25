@@ -321,6 +321,7 @@ def run(req: RunRequest) -> Iterator[Event]:
         yield "stage", {"stage": "gates", "status": "done",
                         "detail": f"{gate_summary['hard']} hard, {gate_summary['soft']} soft"}
 
+        analysis = scoring.apply_harmonization(analysis)
         scores = scoring.score(analysis, subject)
         scores["heatmap"] = scoring.heatmap(analysis)
         scores["agenda"] = scoring.agenda(analysis)

@@ -11,10 +11,12 @@ the validator enforces.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic.json_schema import SkipJsonSchema
 
 
 # --- what the run is about ----------------------------------------------------
@@ -48,6 +50,14 @@ class Subject:
     score_b: bool
     reading: str          # prompt fragment: what pass one is reading
     finding: str          # prompt fragment: what a deviation means here
+
+
+def step_refs(ref: str | None) -> set[str]:
+    """The step ids a reference names -- "5.1, 5.14", "IN-RET-030", "(5.3)" --
+    upper-cased, punctuation stripped. One splitter for everything that reads
+    an as_is_step_id, so the completeness gate and the send-back cannot
+    disagree about which steps a finding covers."""
+    return {t.strip("()[].:").upper() for t in re.split(r"[,;/\s]+", ref or "") if t.strip("()[].:")}
 
 
 SUBJECTS: dict[str, Subject] = {
@@ -257,7 +267,15 @@ class Deviation(BaseModel):
     """§24 — the machine-readable gap object."""
 
     gap_id: str
-    as_is_step_id: str = ""
+    # What places the finding on the Process alignment tab. Optional in the
+    # schema, and so left empty in four runs of six until the prompt, this
+    # description and the send-back in agent.py all asked for it.
+    as_is_step_id: str = Field(
+        default="",
+        description=("The As-Is step id(s) this deviation is about, exactly as written in the "
+                     "process model you were given (e.g. \"5.3\" or \"5.3, 5.4\"). Empty only "
+                     "when it concerns no single step."),
+    )
     gt_step_ref: str = ""
     sap_bp_reference: str | None = Field(
         default=None,
@@ -283,7 +301,13 @@ class Deviation(BaseModel):
     # None, not 0: "no SAP Best Practice source was available" and "the country
     # is fundamentally mismatched with SAP standard" are different answers.
     sap_bp_fit_rating: int | None = Field(default=None, ge=0, le=4)
-    harmonization_potential: int = Field(ge=0, le=100)
+    # Computed, not rated: scoring.harmonization() sets both after the quality
+    # gates, from the disposition, the localization state and the GT fit. The
+    # agent used to supply a bare 0-100 with no rubric, so two gaps with the
+    # same fit and opposite dispositions could score backwards. Hidden from the
+    # submit tool's schema so it is not asked for.
+    harmonization_potential: SkipJsonSchema[int] = Field(default=0, ge=0, le=100)
+    harmonization_terms: SkipJsonSchema[dict] = Field(default_factory=dict)
 
     candidate_disposition: Disposition
     # §26 / QG5: standard configuration, SAP localization and existing template
@@ -358,7 +382,10 @@ class FitArea(BaseModel):
     """A step that matched. Named so the workshop can batch-confirm them
     instead of walking through them (§22)."""
 
-    as_is_step_id: str = ""
+    as_is_step_id: str = Field(
+        default="",
+        description="The As-Is step id(s) that fit, exactly as written in the process model.",
+    )
     gt_step_ref: str = ""
     statement: str
     evidence: list[Evidence] = Field(default_factory=list)

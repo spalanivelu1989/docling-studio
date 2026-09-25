@@ -22,7 +22,7 @@ from rollout import gates, scoring, tools as rtools  # noqa: E402
 from rollout.schemas import (DEVIATION_TYPES, DIMENSIONS, DISPOSITIONS,  # noqa: E402
                              SUBJECTS,
                              LOCALIZATION_STATES, Analysis, AsIsModel, AsIsStep,
-                             BacklogCandidate, Deviation, DimensionRating, Evidence,
+                             BacklogCandidate, Deviation, DimensionRating, Evidence, LocalizationItem,
                              FitArea)
 
 
@@ -143,6 +143,42 @@ def test_harmonization_is_weighted_by_materiality():
     # (5*0 + 2*100) / 7 = 28.6 -- the critical gap that cannot be harmonised
     # outweighs the low one that can.
     assert scoring.score(a)["harmonization_potential"] == 28.6
+
+
+def test_harmonization_follows_the_disposition_not_a_guess():
+    """Same fit, opposite dispositions: the gap proposed for the template must
+    score higher than the one proposed to stay a local exception. The agent's
+    own numbers had these backwards (80 and 85)."""
+    adopt, _ = scoring.harmonization(dev(candidate_disposition="ADOPT_GT", gt_fit_rating=3,
+                                         localization_state="NOT_LOCALIZATION"))
+    keep, terms = scoring.harmonization(dev(candidate_disposition="RETAIN_LOCAL_EXCEPTION", gt_fit_rating=3,
+                                            localization_state="CORPORATE_POLICY"))
+    assert (adopt, keep) == (95, 35)
+    assert terms["formula"] == "Keep a local exception 30 · GT fit 3/4 +5 = 35"
+
+
+def test_a_legal_obligation_caps_harmonization():
+    statutory, terms = scoring.harmonization(dev(candidate_disposition="ADOPT_GT", gt_fit_rating=4,
+                                                 localization_state="CONFIRMED_STATUTORY"))
+    assert statutory == 15 and terms["cap"] == 15 and "capped at 15" in terms["formula"]
+    suspected, _ = scoring.harmonization(dev(candidate_disposition="CONFIGURE_STANDARD", gt_fit_rating=2,
+                                             localization_state="SUSPECTED"))
+    assert suspected == 50
+    low, _ = scoring.harmonization(dev(candidate_disposition="EXTEND_STANDARD", gt_fit_rating=0,
+                                       localization_state="NOT_LOCALIZATION"))
+    assert low == 10
+
+
+def test_harmonization_is_not_asked_of_the_agent():
+    """Hidden from the submit tool's schema, and whatever the agent sends is
+    replaced by the computed value."""
+    schema = str(Analysis.model_json_schema())
+    assert "harmonization_potential" not in schema and "harmonization_terms" not in schema
+    a = analysis(deviations=[dev(candidate_disposition="ADOPT_GT", gt_fit_rating=2,
+                                 localization_state="NOT_LOCALIZATION", harmonization_potential=5)])
+    scoring.apply_harmonization(a)
+    assert a.deviations[0].harmonization_potential == 90
+    assert a.deviations[0].harmonization_terms["value"] == 90
 
 
 def test_the_four_score_patterns():
@@ -876,7 +912,8 @@ def test_no_contact_detail_is_stored_whatever_the_documents_contained():
                          sources={"chunks": {"UPLOAD:19": {"snippet": f"{mail} / {phone}"}}})
         store.save_decision(conn, "ro_pii", "IN-RET-GAP-01", "A reviewer", "accept", comment=f"ask {mail}")
         row = conn.execute("SELECT row_to_json(r)::text FROM rollout_runs r WHERE id = 'ro_pii'").fetchone()[0]
-        row += conn.execute("SELECT string_agg(comment, ' ') FROM rollout_decisions").fetchone()[0]
+        row += conn.execute("SELECT string_agg(rationale || ' ' || as_is_statement, ' ')"
+                            " FROM workshop_decisions").fetchone()[0]
         assert mail not in row and "98765" not in row, row
         assert "[contact removed]" in row
         # Ids, codes and figures are not contact details and must survive.
@@ -1063,6 +1100,145 @@ def test_the_prompts_state_the_limits_the_schema_enforces():
             assert f"at most {agent.HEADLINE_MAX} characters" in text
 
 
+def test_a_deviation_with_no_as_is_step_is_sent_back_once():
+    """Four runs of six left as_is_step_id empty on every deviation, and the
+    Process alignment tab then placed none of them. The ids are the run's own
+    -- "5.10" here, taken from the document's numbering."""
+    import types
+
+    from rollout import agent
+
+    steps = ["5.1", "5.2", "5.10"]
+    a = analysis(deviations=[dev(gap_id="G1", as_is_step_id="5.10"),
+                             dev(gap_id="G2", as_is_step_id="5.1 / 5.2"),
+                             dev(gap_id="G3", as_is_step_id=""),
+                             dev(gap_id="G4", as_is_step_id="5.99")])
+    assert agent._unplaced_deviations(a, steps) == ["G3", "G4"]
+    assert agent._unplaced_deviations(a, None) == []
+
+    def block(**kw):
+        return types.SimpleNamespace(**kw)
+
+    def sub(ref):
+        return analysis(deviations=[dev(gap_id="G1", as_is_step_id=ref)]).model_dump()
+
+    turns = [[block(type="tool_use", id="t1", name="submit_analysis", input=sub(""))],
+             [block(type="tool_use", id="t2", name="submit_analysis", input=sub("5.2"))]]
+    usage = types.SimpleNamespace(input_tokens=10, output_tokens=5)
+
+    class Stream:
+        def __init__(self, content):
+            self.content = content
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            return False
+        def get_final_message(self):
+            return types.SimpleNamespace(content=self.content, usage=usage)
+
+    class Client:
+        class messages:
+            @staticmethod
+            def stream(**kw):
+                return Stream(turns.pop(0))
+
+    notes = []
+    real = agent._client
+    agent._client = lambda: Client()
+    try:
+        out, _ = agent._run("sys", "ctx", "compare", ftools.Session(), "submit_analysis", Analysis,
+                            None, lambda kind, data: notes.append(data), step_ids=steps)
+    finally:
+        agent._client = real
+    sent = [n for n in notes if n.get("kind") == "rejected"]
+    assert len(sent) == 1 and sent[0]["detail"]["unplaced"] == ["G1"], sent
+    assert "'5.1'" in sent[0]["text"]
+    assert out.deviations[0].as_is_step_id == "5.2"
+
+
+def test_the_comparison_prompt_asks_for_the_as_is_step():
+    from rollout import agent
+
+    assert "Set its as_is_step_id" in agent.system_compare(SUBJECTS["country_as_is"])
+    assert agent.MAX_TOOL_CALLS["asis"] >= 20 and agent.MAX_INPUT_TOKENS >= 150_000
+
+
+def test_a_step_named_among_several_counts_as_covered():
+    """QG1 compared the whole as_is_step_id, so "5.1, 5.14" covered neither 5.1
+    nor 5.14 and a fully mapped run was reported as three steps short."""
+    from rollout.schemas import step_refs
+
+    assert step_refs("5.1, 5.14") == {"5.1", "5.14"}
+    assert step_refs("(5.3); IN-RET-030 / 5.4.") == {"5.3", "IN-RET-030", "5.4"}
+    asis = AsIsModel(steps=[AsIsStep(step_id=i, name=i) for i in ("5.1", "5.13", "5.14")])
+    a = analysis(deviations=[dev(gap_id="G1", as_is_step_id="5.1, 5.14"),
+                             dev(gap_id="G2", as_is_step_id="5.13, 5.14")])
+    _, issues = gates.check(a, asis, session_with(), has_sap_bp_source=False)
+    assert not [i for i in issues if i.gate == "QG1"], issues
+
+
+def test_a_localization_deviation_needs_an_advisory_item():
+    from rollout import agent
+
+    flagged = analysis(deviations=[dev(gap_id="G1", localization_state="SUSPECTED"),
+                                   dev(gap_id="G2", localization_state="LOCAL_PREFERENCE")])
+    assert agent._unadvised_localization(flagged) == ["G1"]
+    advised = analysis(deviations=flagged.deviations, localization=[
+        LocalizationItem(topic="e-way bill", status="Candidate")])
+    assert agent._unadvised_localization(advised) == []
+    assert "add an item to the localization" in agent.system_compare(SUBJECTS["country_as_is"])
+
+
+def test_too_few_sap_searches_are_sent_back_while_there_is_budget():
+    """Runs searched SAP Best Practice twice for a fourteen-step process, the
+    instruction to search per stage notwithstanding."""
+    import types
+
+    from rollout import agent
+
+    def block(**kw):
+        return types.SimpleNamespace(**kw)
+
+    ok = analysis(deviations=[dev(gap_id="G1", as_is_step_id="5.1")]).model_dump()
+    turns = [
+        [block(type="tool_use", id="t1", name="submit_analysis", input=ok)],
+        [block(type="tool_use", id="t2", name="search_sap_best_practice", input={"query": "q"})],
+        [block(type="tool_use", id="t3", name="submit_analysis", input=ok)],
+    ]
+    usage = types.SimpleNamespace(input_tokens=10, output_tokens=5)
+
+    class Stream:
+        def __init__(self, content):
+            self.content = content
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            return False
+        def get_final_message(self):
+            return types.SimpleNamespace(content=self.content, usage=usage)
+
+    class Client:
+        class messages:
+            @staticmethod
+            def stream(**kw):
+                return Stream(turns.pop(0))
+
+    notes = []
+    real_client, real_search = agent._client, agent.tools.DISPATCH["search_sap_best_practice"]
+    agent._client = lambda: Client()
+    agent.tools.DISPATCH["search_sap_best_practice"] = lambda session, **kw: {"results": []}
+    try:
+        out, _ = agent._run("sys", "ctx", "compare", ftools.Session(), "submit_analysis", Analysis,
+                            None, lambda kind, data: notes.append(data), step_ids=["5.1"],
+                            min_sap_searches=1)
+    finally:
+        agent._client = real_client
+        agent.tools.DISPATCH["search_sap_best_practice"] = real_search
+    sent = [n for n in notes if n.get("kind") == "rejected"]
+    assert len(sent) == 1 and "SAP Best Practice search" in sent[0]["title"], sent
+    assert out is not None and not turns
+
+
 def test_the_prompt_asks_the_agent_to_narrate():
     from rollout import agent
     from rollout.schemas import SUBJECTS
@@ -1085,24 +1261,177 @@ def test_a_log_entry_keeps_the_shape_the_console_reads():
 
 
 
-def test_a_run_can_be_deleted_and_takes_its_decisions_with_it():
-    """A verdict must not outlive the analysis it was made against.
+def _decided_run(store, conn, run_id="ro_ws", country="India", scope="4.10.2"):
+    store.start_run(conn, {"id": run_id, "subject": "country_as_is", "scope_bpml": scope,
+                           "scope_label": "Process Returns", "country": country, "country_context": "",
+                           "sap_release": "", "gt_version": "", "question": "",
+                           "model": "m", "prompt_hash": "h", "categories": [],
+                           "uploads": {}, "corpus_fingerprint": ""})
+    store.finish_run(conn, run_id,
+                     {"template_process": "4.10.2 Process Returns",
+                      "deviations": [{"gap_id": "GAP-01", "primary_type": "AP", "materiality": "High",
+                                      "localization_state": "NOT_LOCALIZATION", "as_is_step_id": "5.3",
+                                      "exact_difference": "Two-level approval above INR 100,000",
+                                      "decision_question": "Keep the second approval?",
+                                      "decision_options": ["Keep it", "Drop it"],
+                                      "decision_owner": ["Sales lead"],
+                                      "evidence": [{"chunk_id": "UPLOAD:3", "doc": "as-is", "side": "as_is",
+                                                    "quote": "Finance approves above INR 100,000"}]}]},
+                     {"gt_alignment": 50.0, "agenda": []}, {"items": []}, (1, 1))
 
-    rollout_decisions declares ON DELETE CASCADE; this checks the declaration
-    is actually doing something, because a decision left behind would be
-    reported against a run nobody can open."""
+
+def test_a_decision_carries_its_own_context():
+    """Read years later, with the run gone, a row must still say what was
+    asked, what was offered and which option was chosen."""
     def check(store, conn):
-        store.start_run(conn, {"id": "ro_del", "subject": "country_as_is", "scope_bpml": "4.5",
-                               "scope_label": "x", "country": "", "country_context": "",
-                               "sap_release": "", "gt_version": "", "question": "",
-                               "model": "m", "prompt_hash": "h", "categories": [],
-                               "uploads": {}, "corpus_fingerprint": ""})
-        store.save_decision(conn, "ro_del", "gap-1", "tester", "accept", "", "")
-        assert len(store.get_decisions(conn, "ro_del")) == 1
+        _decided_run(store, conn)
+        d = store.save_decision(conn, "ro_ws", "GAP-01", "Asha", "accept", option_index=1,
+                                rationale="Template approval is enough")
+        assert d["question"] == "Keep the second approval?"
+        assert d["options"] == ["Keep it", "Drop it"]
+        assert (d["option_index"], d["option_text"]) == (1, "Drop it")
+        assert d["country"] == "India" and d["scope_bpml"] == "4.10.2"
+        assert d["primary_type"] == "AP" and d["materiality"] == "High" and d["as_is_step_id"] == "5.3"
+        assert d["template_process"] == "4.10.2 Process Returns"
+        assert d["comment"] == "Option B: Drop it — Template approval is enough"
+        ev = conn.execute("SELECT evidence FROM workshop_decisions WHERE id = %s", (d["id"],)).fetchone()[0]
+        assert ev[0]["chunk_id"] == "UPLOAD:3"
+        try:
+            store.save_decision(conn, "ro_ws", "GAP-01", "Asha", "accept", option_index=5)
+        except ValueError:
+            conn.rollback()
+        else:
+            raise AssertionError("an option that was never offered was recorded")
+    _with_store(check)
 
+
+def test_a_changed_mind_is_a_new_row_that_supersedes_the_old():
+    def check(store, conn):
+        _decided_run(store, conn)
+        first = store.save_decision(conn, "ro_ws", "GAP-01", "Asha", "defer", rationale="Ask finance")
+        second = store.save_decision(conn, "ro_ws", "GAP-01", "Asha", "accept", option_index=0)
+        log = store.get_decisions(conn, "ro_ws")
+        assert [x["id"] for x in log] == [first["id"], second["id"]]
+        assert [x["is_current"] for x in log] == [False, True]
+        assert log[1]["supersedes"] == first["id"]
+        current = store.list_decisions(conn, country="india")
+        assert [x["id"] for x in current] == [second["id"]]
+        assert len(store.list_decisions(conn, current_only=False)) == 2
+    _with_store(check)
+
+
+def test_deleting_a_run_keeps_its_workshop_decisions():
+    """What an organization agreed is not a run's working notes. The run goes;
+    the decision stays, with the run's id and its own copy of the context."""
+    def check(store, conn):
+        _decided_run(store, conn, "ro_del")
+        s = store.submit_workshop(conn, "ro_del", "Asha", ["Ravi", " ", "Meera"],
+                                  [{"gap_id": "GAP-01", "verdict": "accept", "option_index": 0}])["session"]
+        assert s["attendees"] == ["Ravi", "Meera"]
         assert store.delete_run(conn, "ro_del") is True
         assert store.get_run(conn, "ro_del") is None
-        assert store.get_decisions(conn, "ro_del") == []
+        kept = store.get_decisions(conn, "ro_del")
+        assert len(kept) == 1 and kept[0]["run_id"] is None and kept[0]["source_run"] == "ro_del"
+        assert kept[0]["question"] == "Keep the second approval?" and kept[0]["session_id"] == s["id"]
+        assert store.list_decisions(conn, scope_bpml="4.10")[0]["gap_id"] == "GAP-01"
+        assert store.get_sessions(conn, "ro_del")[0]["facilitator"] == "Asha"
+    _with_store(check)
+
+
+def test_old_decisions_are_copied_once_with_their_option():
+    """Before the option had a column, the page wrote it into the comment."""
+    def check(store, conn):
+        _decided_run(store, conn)
+        conn.execute("INSERT INTO rollout_decisions (run_id, gap_id, reviewer, verdict, comment)"
+                     " VALUES ('ro_ws', 'GAP-01', 'Ravi', 'accept', 'Option B: Drop it'),"
+                     "        ('ro_ws', 'GAP-01', 'Ravi', 'defer', 'Option A: Not what was offered')")
+        conn.commit()
+        store.create_schema(conn)
+        store.create_schema(conn)
+        log = store.get_decisions(conn, "ro_ws")
+        assert len(log) == 2, log
+        assert (log[0]["option_index"], log[0]["option_text"], log[0]["legacy"]) == (1, "Drop it", True)
+        # The letter is not trusted when the text does not match what was offered.
+        assert log[1]["option_index"] is None and log[1]["rationale"] == "Option A: Not what was offered"
+        assert [x["is_current"] for x in log] == [False, True]
+        assert log[0]["question"] == "Keep the second approval?"
+    _with_store(check)
+
+
+def test_a_submitted_workshop_is_saved_whole_or_not_at_all():
+    """Facilitator mode submits every answer at the end. One bad answer must
+    refuse the lot, not leave half a workshop in the record."""
+    def check(store, conn):
+        _decided_run(store, conn)
+        for bad, why in (([{"gap_id": "GAP-01", "verdict": "defer"}], "rationale"),
+                         ([{"gap_id": "GAP-99", "verdict": "accept"}], "not a deviation"),
+                         ([{"gap_id": "GAP-01", "verdict": "accept", "option_index": 7}], "offered"),
+                         ([{"gap_id": "GAP-01", "verdict": "accept"}] * 2, "twice"),
+                         ([], "Nothing")):
+            try:
+                store.submit_workshop(conn, "ro_ws", "Asha", [], bad)
+            except ValueError as e:
+                conn.rollback()
+                assert why in str(e), e
+            else:
+                raise AssertionError(f"accepted: {bad}")
+        assert store.get_decisions(conn, "ro_ws") == [] and store.get_sessions(conn, "ro_ws") == []
+
+        out = store.submit_workshop(conn, "ro_ws", "Asha", ["Ravi"],
+                                    [{"gap_id": "GAP-01", "verdict": "accept", "option_index": 1,
+                                      "rationale": "Template approval is enough"}])
+        assert out["session"]["submitted_at"] and out["session"]["attendees"] == ["Ravi"]
+        (d,) = out["decisions"]
+        assert d["session_id"] == out["session"]["id"] and d["reviewer"] == "Asha"
+        assert d["option_text"] == "Drop it" and d["question"] == "Keep the second approval?"
+    _with_store(check)
+
+
+def test_the_workshop_outcome_downloads_in_four_formats():
+    """One outcome, four files. A replaced verdict is history, not the
+    outcome; one sitting's download holds only what that sitting submitted."""
+    import io
+    import zipfile
+
+    from rollout import pdf as ro_pdf
+    from rollout import workshop_export as wx
+
+    def check(store, conn):
+        _decided_run(store, conn)
+        store.save_decision(conn, "ro_ws", "GAP-01", "Asha", "defer", rationale="Ask finance")
+        sitting = store.submit_workshop(conn, "ro_ws", "Asha", ["Ravi"],
+                                        [{"gap_id": "GAP-01", "verdict": "accept", "option_index": 1,
+                                          "rationale": "Template approval is enough"}])["session"]
+        run = store.get_run(conn, "ro_ws")
+        whole = wx.outcome(run, run["decisions"], run["sessions"])
+        assert [r["Decision"] for r in whole["rows"]] == ["Accepted"], "a replaced verdict was reported"
+        assert whole["rows"][0]["Option chosen"] == "B: Drop it"
+        one = wx.outcome(run, run["decisions"], run["sessions"], sitting["id"])
+        assert ("In the room", "Ravi") in one["facts"] and len(one["rows"]) == 1
+        try:
+            wx.outcome(run, run["decisions"], run["sessions"], "ws_nope")
+        except LookupError:
+            pass
+        else:
+            raise AssertionError("an unknown sitting was exported")
+
+        md = wx.render(run, whole, "md").decode()
+        assert "Keep the second approval?" in md and "Template approval is enough" in md
+        for fmt, part in (("docx", "word/document.xml"), ("xlsx", "xl/worksheets/sheet1.xml")):
+            blob = wx.render(run, whole, fmt)
+            xml = zipfile.ZipFile(io.BytesIO(blob)).read(part).decode()
+            assert "Keep the second approval?" in xml, fmt
+        if ro_pdf.available()[0]:
+            assert wx.render(run, whole, "pdf")[:5] == b"%PDF-"
+        assert wx.filename(run, "docx").endswith(".docx")
+    _with_store(check)
+
+
+def test_an_old_style_comment_still_records_the_option():
+    def check(store, conn):
+        _decided_run(store, conn)
+        d = store.save_decision(conn, "ro_ws", "GAP-01", "Asha", "accept", comment="Option A: Keep it")
+        assert (d["option_index"], d["rationale"]) == (0, "")
     _with_store(check)
 
 

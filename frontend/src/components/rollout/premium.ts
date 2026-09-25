@@ -52,18 +52,24 @@ export function ratingColour(theme: Theme, accent: string, rating: number | null
 export const ALIGNMENT_BANDS = [40, 20, 15, 15, 10];
 
 /** A step reference as the agent writes it -- "AS-04, AS-13", "AS-03 to
- *  AS-11", "IN-RET-030", "n/a" -- as the step ids it names. The prefix is the
- *  agent's choice and may have more than one part, so any run of letter
- *  groups ending in a number is an id. A range is returned as
- *  `spans`, not expanded: a deviation about the whole middle of a process is
- *  not a finding about each of its steps. */
+ *  AS-11", "IN-RET-030", "5.10", "n/a" -- as the step ids it names. The ids
+ *  are the agent's own choice and change shape from run to run, so when the
+ *  run's step ids are known a reference is matched against them, not against
+ *  a guess at their shape; `STEP_ID` is only the fallback without them. A
+ *  range is returned as `spans`, not expanded: a deviation about the whole
+ *  middle of a process is not a finding about each of its steps. */
 export const STEP_ID = /^[A-Z][A-Z0-9]*(?:-[A-Z][A-Z0-9]*)*-\d+/i;
 
-export function stepsOf(ref: string | null | undefined): { ids: string[]; spans: boolean } {
+export function stepsOf(ref: string | null | undefined, known?: readonly string[]): { ids: string[]; spans: boolean } {
   const text = (ref || "").trim();
   if (!text || /^n\/?a$/i.test(text)) return { ids: [], spans: false };
   if (/\bto\b|–|—/.test(text)) return { ids: [], spans: true };
-  return { ids: text.split(/[,;\s]+/).filter((t) => STEP_ID.test(t)).map((t) => t.toUpperCase()), spans: false };
+  const tokens = text.split(/[,;\s]+/).map((t) => t.replace(/^[^\w]+|[^\w]+$/g, "").toUpperCase()).filter(Boolean);
+  if (known?.length) {
+    const ids = new Set(known.map((k) => k.toUpperCase()));
+    return { ids: tokens.filter((t) => ids.has(t)), spans: false };
+  }
+  return { ids: tokens.filter((t) => STEP_ID.test(t)), spans: false };
 }
 
 /** The deviations in the order a reader should meet them: must-discuss first,

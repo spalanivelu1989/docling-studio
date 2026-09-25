@@ -35,7 +35,7 @@ export default function BriefView({ analysis, scores, subject, country, onGap }:
   const c = scores.counts;
   const total = scores.agenda.reduce((n, a) => n + a.minutes, 0);
   const stats = [
-    { v: scores.harmonization_potential === null ? "—" : `${scores.harmonization_potential}%`, l: "harmonization potential" },
+    { v: scores.harmonization_potential === null ? "—" : `${scores.harmonization_potential}%`, l: "standardisation outlook" },
     { v: String(c.deviations), l: `deviations, ${c.by_materiality?.High ?? 0} of them high materiality` },
     { v: String(scores.agenda.length), l: "decisions for the workshop" },
     { v: String(c.fit_areas), l: "areas that already fit the template" },

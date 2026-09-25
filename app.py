@@ -2163,7 +2163,11 @@ class RolloutDecision(BaseModel):
     reviewer: str = Field(min_length=1, max_length=120)
     verdict: str
     disposition: str = ""
-    comment: str = ""
+    # The old free-text field; "Option B: ..." in it is still read as a choice.
+    comment: str = Field(default="", max_length=2000)
+    option_index: int | None = Field(default=None, ge=0)
+    rationale: str = Field(default="", max_length=2000)
+    session_id: str | None = Field(default=None, max_length=40)
 
 
 def _rollout_request(req: "RolloutRun"):
@@ -2328,12 +2332,109 @@ def rollout_decide(run_id: str, body: "RolloutDecision") -> dict:
 
     if body.verdict not in ("accept", "reject", "defer"):
         raise HTTPException(400, "verdict must be accept, reject or defer")
+    # A deferral or a rejection that says nothing about why cannot be picked
+    # up again later, which is the whole point of keeping it.
+    if body.verdict != "accept" and not (body.rationale.strip() or body.comment.strip()):
+        raise HTTPException(400, "Say why: a deferred or rejected decision needs a rationale")
     conn = ro_store.connect()
     ro_store.create_schema(conn)
-    if not ro_store.get_run(conn, run_id):
+    run = ro_store.get_run(conn, run_id, decisions_too=False)
+    if not run:
         raise HTTPException(404, "Run not found")
-    return ro_store.save_decision(conn, run_id, body.gap_id, body.reviewer,
-                                  body.verdict, body.disposition, body.comment)
+    if not any(d.get("gap_id") == body.gap_id for d in (run.get("analysis") or {}).get("deviations") or []):
+        raise HTTPException(400, f"{body.gap_id} is not a deviation in this run")
+    if body.session_id and body.session_id not in {x["id"] for x in ro_store.get_sessions(conn, run_id)}:
+        raise HTTPException(400, f"{body.session_id} is not a workshop session of this run")
+    try:
+        return ro_store.save_decision(conn, run_id, body.gap_id, body.reviewer, body.verdict,
+                                      body.disposition, body.comment, option_index=body.option_index,
+                                      rationale=body.rationale, session_id=body.session_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+class WorkshopAnswer(BaseModel):
+    gap_id: str = Field(min_length=1, max_length=40)
+    verdict: str
+    option_index: int | None = Field(default=None, ge=0)
+    rationale: str = Field(default="", max_length=2000)
+
+
+class WorkshopSubmit(BaseModel):
+    facilitator: str = Field(min_length=1, max_length=120)
+    attendees: list[str] = Field(default_factory=list, max_length=60)
+    answers: list[WorkshopAnswer] = Field(min_length=1, max_length=200)
+
+
+@app.post("/api/rollout/runs/{run_id}/workshop")
+def rollout_workshop_submit(run_id: str, body: WorkshopSubmit) -> dict:
+    """Facilitator mode's Submit: one workshop sitting and every answer given
+    in it, saved together or not at all."""
+    from rollout import store as ro_store
+
+    conn = ro_store.connect()
+    ro_store.create_schema(conn)
+    try:
+        return ro_store.submit_workshop(conn, run_id, body.facilitator.strip(), body.attendees,
+                                        [a.model_dump() for a in body.answers])
+    except LookupError:
+        raise HTTPException(404, "Run not found")
+    except ValueError as e:
+        conn.rollback()
+        raise HTTPException(400, str(e))
+
+
+@app.get("/api/rollout/runs/{run_id}/workshop/export")
+def rollout_workshop_export(run_id: str, format: str = "pdf", session: str = "") -> Response:
+    """The workshop's outcome as Markdown, PDF, Word or Excel. With `session`,
+    what one sitting of facilitator mode submitted; without it, the current
+    decision on every gap."""
+    from rollout import store as ro_store
+    from rollout import workshop_export as wx
+
+    if format not in wx.FORMATS:
+        raise HTTPException(400, f"format must be one of {', '.join(wx.FORMATS)}")
+    conn = ro_store.connect()
+    ro_store.create_schema(conn)
+    run = ro_store.get_run(conn, run_id)
+    if not run:
+        raise HTTPException(404, "Run not found")
+    # Binary formats bypass the middleware's redaction, so redact the source.
+    from guardrails import contact
+    run = contact.redact_obj(run)
+    try:
+        o = wx.outcome(run, run["decisions"], run["sessions"], session)
+    except LookupError:
+        raise HTTPException(404, f"{session} is not a workshop session of this run")
+    if format == "pdf":
+        from rollout import pdf as ro_pdf
+
+        ok, why = ro_pdf.available()
+        if not ok:
+            raise HTTPException(503, f"This server cannot render PDFs. {why}")
+    try:
+        blob = wx.render(run, o, format)
+    except Exception as exc:
+        raise HTTPException(500, f"Export failed: {type(exc).__name__}: {exc}") from None
+    media, _ = wx.FORMATS[format]
+    return Response(content=blob, media_type=media, headers={
+        "Content-Disposition": f'attachment; filename="{wx.filename(run, format, session)}"'})
+
+
+@app.get("/api/rollout/decisions")
+def rollout_decisions_all(country: str = "", scope: str = "", type: str = "", verdict: str = "",
+                          history: bool = False, limit: int = 200) -> dict:
+    """Workshop decisions across every run, the current one per gap unless
+    `history=1`. Each row carries its own context, so this still answers for
+    runs that have since been deleted."""
+    from rollout import store as ro_store
+
+    conn = ro_store.connect()
+    ro_store.create_schema(conn)
+    rows = ro_store.list_decisions(conn, country=country, scope_bpml=scope, primary_type=type,
+                                   verdict=verdict, current_only=not history,
+                                   limit=max(1, min(limit, 1000)))
+    return {"decisions": rows, "count": len(rows)}
 
 
 @app.get("/api/rollout/runs/{run_id}/export")

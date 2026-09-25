@@ -53,3 +53,6 @@ langchain-community<0.4
 # them the import fails, the page says so and offers Markdown instead. The
 # Markdown-to-HTML step uses markdown-it-py, already present via docling.
 weasyprint
+# rollout/workshop_export.py: the workshop outcome as Word. Pulled in by docling
+# too, listed because it is imported directly. Excel uses openpyxl, above.
+python-docx

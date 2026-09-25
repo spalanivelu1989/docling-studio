@@ -25,7 +25,24 @@ if (m) {
     check(`"${not}" is not a step id`, !STEP_ID.test(not));
   }
 }
-check("stepsOf filters with STEP_ID", /\.filter\(\(t\) => STEP_ID\.test\(t\)\)/.test(src));
+// Run stepsOf itself: its source, stripped of types by the TypeScript compiler.
+const ts = (await import("typescript")).default;
+const fn = src.slice(src.indexOf("export const STEP_ID"), src.indexOf("\n}\n", src.indexOf("export function stepsOf")) + 3);
+const js = ts.transpileModule(fn.replace(/export /g, ""), { compilerOptions: { target: ts.ScriptTarget.ES2020 } }).outputText;
+const stepsOf = new Function(`${js}; return stepsOf;`)();
+const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+
+// The shapes runs have produced, matched against that run's own ids.
+check("IN-RET ids", same(stepsOf("IN-RET-030", ["IN-RET-010", "IN-RET-030"]).ids, ["IN-RET-030"]));
+const doc = ["5.1", "5.2", "5.3", "5.10", "5.14"];
+check("the document's own numbers (5.10 is not 5.1)", same(stepsOf("5.10", doc).ids, ["5.10"]));
+check("several, with punctuation", same(stepsOf("5.1, 5.3; (5.14).", doc).ids, ["5.1", "5.3", "5.14"]));
+check("a range is a span, not each step", stepsOf("5.3 to 5.10", doc).spans && !stepsOf("5.3 to 5.10", doc).ids.length);
+check("n/a is nothing", same(stepsOf("n/a", doc).ids, []));
+check("an id the run does not have is not matched", same(stepsOf("5.99", doc).ids, []));
+check("without known ids, the old shapes still match", same(stepsOf("AS-04, AS-13").ids, ["AS-04", "AS-13"]));
+check("the view passes this run's ids", /stepsOf\(d\.as_is_step_id, known\)/.test(
+  readFileSync(new URL("../src/components/rollout/ProcessAlignmentView.tsx", import.meta.url), "utf8")));
 
 console.log(failed ? `\n${failed} failed` : "\nall passed");
 process.exit(failed ? 1 : 0);

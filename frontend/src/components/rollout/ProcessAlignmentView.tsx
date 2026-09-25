@@ -8,10 +8,11 @@
  *  a finding that names a range of steps, or none, is listed under the table
  *  rather than smeared across every step it spans.
  */
-import { Box, Button, ButtonBase, Link, Stack, Typography, useTheme } from "@mui/material";
+import { Box, ButtonBase, Link, Stack, Typography, useTheme } from "@mui/material";
 import { useMemo, useState } from "react";
 
 import type { AsIsModel, Deviation, RolloutAnalysis, RolloutDecision, RolloutScores, RolloutSubject } from "../../api";
+import { DecisionButtons, type OnDecide } from "./decision";
 import { BUCKET_LABEL, MONO, RADIUS, idColumn, materialityColour, stepsOf, usePremium } from "./premium";
 
 type Mark = "fit" | "partial" | "dev" | "none";
@@ -26,28 +27,30 @@ export default function ProcessAlignmentView({
   decisions: Record<string, RolloutDecision[]>;
   reviewer: string;
   deciding: Record<string, string>;
-  onDecide?: (gapId: string, verdict: "accept" | "reject" | "defer") => void;
+  onDecide?: OnDecide;
   onOpenGap: (gapId: string) => void;
 }) {
   const theme = useTheme();
   const p = usePremium();
 
+  // This run's own step ids -- "AS-04", "IN-RET-030" or the document's "5.10".
+  const known = useMemo(() => asis.steps.map((st) => st.step_id), [asis]);
   const { byStep, fitByStep, spanning } = useMemo(() => {
     const byStep: Record<string, Deviation[]> = {};
     const fitByStep: Record<string, string[]> = {};
     const spanning: Deviation[] = [];
     for (const d of analysis.deviations) {
-      const s = stepsOf(d.as_is_step_id);
+      const s = stepsOf(d.as_is_step_id, known);
       if (!s.ids.length) { spanning.push(d); continue; }
       for (const id of s.ids) (byStep[id] ??= []).push(d);
     }
     for (const f of analysis.fit_areas) {
-      for (const id of stepsOf(f.as_is_step_id).ids) (fitByStep[id] ??= []).push(f.statement);
+      for (const id of stepsOf(f.as_is_step_id, known).ids) (fitByStep[id] ??= []).push(f.statement);
     }
     return { byStep, fitByStep, spanning };
-  }, [analysis]);
+  }, [analysis, known]);
 
-  const firstGap = analysis.deviations.find((d) => stepsOf(d.as_is_step_id).ids.length)?.gap_id
+  const firstGap = analysis.deviations.find((d) => stepsOf(d.as_is_step_id, known).ids.length)?.gap_id
     ?? analysis.deviations[0]?.gap_id ?? "";
   const [picked, setPicked] = useState<{ step?: string; gap?: string }>({ gap: firstGap });
 
@@ -64,7 +67,8 @@ export default function ProcessAlignmentView({
     fit: "Fits the template", partial: "Fits, with a deviation", dev: "Deviation", none: "Not mapped",
   };
   const markOf = (id: string): Mark => {
-    const f = !!fitByStep[id], d = !!byStep[id];
+    const k = id.toUpperCase();
+    const f = !!fitByStep[k], d = !!byStep[k];
     return f && d ? "partial" : f ? "fit" : d ? "dev" : "none";
   };
   const counts = asis.steps.reduce((acc, s) => ({ ...acc, [markOf(s.step_id)]: (acc[markOf(s.step_id)] ?? 0) + 1 }),
@@ -74,7 +78,6 @@ export default function ProcessAlignmentView({
   const fitStep = !gap && picked.step ? picked.step : null;
   const agenda = gap ? scores.agenda.find((a) => a.gap_id === gap.gap_id) : undefined;
   const past = gap ? decisions[gap.gap_id] ?? [] : [];
-  const last = past[past.length - 1];
   // Wide enough for this run's longest step id ("AS-04" or "IN-RET-030").
   const grid = `${idColumn(asis.steps.map((st) => st.step_id))} 6px minmax(0, 1fr) 190px 150px`;
 
@@ -98,7 +101,7 @@ export default function ProcessAlignmentView({
             </Box>
             {asis.steps.map((s) => {
               const m = markOf(s.step_id);
-              const devs = byStep[s.step_id] ?? [];
+              const devs = byStep[s.step_id.toUpperCase()] ?? [];
               const on = gap ? devs.some((d) => d.gap_id === gap.gap_id) : fitStep === s.step_id;
               return (
                 <ButtonBase key={s.step_id} aria-pressed={on}
@@ -194,27 +197,8 @@ export default function ProcessAlignmentView({
               </Typography>
             )}
             <Stack spacing={1} sx={{ borderTop: 1, borderColor: "divider", pt: 1.75 }}>
-              {last && (
-                <Typography sx={{ fontSize: 12.5 }}>
-                  <b>{last.verdict === "accept" ? "Accepted" : last.verdict === "reject" ? "Rejected" : "Deferred"}</b> by {last.reviewer}
-                  {past.length > 1 ? ` (${past.length} verdicts)` : ""}
-                </Typography>
-              )}
-              {onDecide ? (
-                <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: "wrap", alignItems: "center" }}>
-                  {(["accept", "defer", "reject"] as const).map((v) => (
-                    <Button key={v} size="small" variant={v === "accept" ? "contained" : "outlined"} disableElevation
-                            disabled={!reviewer.trim() || !!deciding[gap.gap_id]}
-                            onClick={() => onDecide(gap.gap_id, v)}
-                            sx={{ textTransform: "none", borderRadius: RADIUS, minWidth: 76 }}>
-                      {deciding[gap.gap_id] === v ? "Saving…" : v[0].toUpperCase() + v.slice(1)}
-                    </Button>
-                  ))}
-                  {!reviewer.trim() && (
-                    <Typography sx={{ fontSize: 12, color: "error.main" }}>Name yourself above to decide.</Typography>
-                  )}
-                </Stack>
-              ) : null}
+              <DecisionButtons gapId={gap.gap_id} reviewer={reviewer} deciding={deciding}
+                               onDecide={onDecide} decisions={past} />
               <Link component="button" onClick={() => onOpenGap(gap.gap_id)} sx={{ fontSize: 12.5, alignSelf: "flex-start" }}>
                 Open with its evidence in the Deviations tab
               </Link>
@@ -226,8 +210,8 @@ export default function ProcessAlignmentView({
             <Typography component="h2" sx={{ fontSize: 17, fontWeight: 600 }}>
               {asis.steps.find((s) => s.step_id === fitStep)?.name}
             </Typography>
-            {(fitByStep[fitStep] ?? []).length ? (
-              fitByStep[fitStep].map((t, i) => (
+            {(fitByStep[fitStep.toUpperCase()] ?? []).length ? (
+              fitByStep[fitStep.toUpperCase()].map((t, i) => (
                 <Typography key={i} sx={{ fontSize: 13, lineHeight: 1.55 }}>
                   <Box component="span" sx={{ color: p.accent, fontWeight: 600 }}>Fits. </Box>{t}
                 </Typography>
