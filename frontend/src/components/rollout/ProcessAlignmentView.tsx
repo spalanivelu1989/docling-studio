@@ -12,7 +12,7 @@ import { Box, Button, ButtonBase, Link, Stack, Typography, useTheme } from "@mui
 import { useMemo, useState } from "react";
 
 import type { AsIsModel, Deviation, RolloutAnalysis, RolloutDecision, RolloutScores, RolloutSubject } from "../../api";
-import { BUCKET_LABEL, MONO, RADIUS, materialityColour, stepsOf, usePremium } from "./premium";
+import { BUCKET_LABEL, MONO, RADIUS, idColumn, materialityColour, stepsOf, usePremium } from "./premium";
 
 type Mark = "fit" | "partial" | "dev" | "none";
 
@@ -54,6 +54,12 @@ export default function ProcessAlignmentView({
   const colour: Record<Mark, string> = {
     fit: p.accent, partial: theme.palette.warning.main, dev: theme.palette.error.main, none: theme.palette.action.disabled,
   };
+  // "Fits, with a deviation" is drawn as both marks at once -- half fit, half
+  // deviation -- rather than as a third colour: amber beside red was too close
+  // to tell apart at a glance.
+  const fill = (m: Mark, angle = "to bottom") => m === "partial"
+    ? `linear-gradient(${angle}, ${colour.fit} 0 50%, ${colour.dev} 50% 100%)`
+    : colour[m];
   const label: Record<Mark, string> = {
     fit: "Fits the template", partial: "Fits, with a deviation", dev: "Deviation", none: "Not mapped",
   };
@@ -69,7 +75,8 @@ export default function ProcessAlignmentView({
   const agenda = gap ? scores.agenda.find((a) => a.gap_id === gap.gap_id) : undefined;
   const past = gap ? decisions[gap.gap_id] ?? [] : [];
   const last = past[past.length - 1];
-  const grid = "58px 6px minmax(0, 1fr) 190px 150px";
+  // Wide enough for this run's longest step id ("AS-04" or "IN-RET-030").
+  const grid = `${idColumn(asis.steps.map((st) => st.step_id))} 6px minmax(0, 1fr) 190px 150px`;
 
   return (
     <Box sx={{ display: "grid", gap: 3, alignItems: "start", gridTemplateColumns: { xs: "1fr", lg: "minmax(0, 1fr) 440px" } }}>
@@ -77,7 +84,7 @@ export default function ProcessAlignmentView({
         <Stack direction="row" spacing={2.5} useFlexGap sx={{ flexWrap: "wrap" }}>
           {(["fit", "partial", "dev", "none"] as Mark[]).map((m) => (
             <Stack key={m} direction="row" spacing={1} sx={{ alignItems: "center" }}>
-              <Box sx={{ width: 12, height: 12, bgcolor: colour[m] }} />
+              <Box sx={{ width: 12, height: 12, background: fill(m, "135deg") }} />
               <Typography sx={{ fontSize: 12.5, color: "text.secondary" }}>{label[m]}</Typography>
               <Typography sx={{ fontFamily: MONO, fontSize: 12.5 }}>{counts[m] ?? 0}</Typography>
             </Stack>
@@ -100,7 +107,7 @@ export default function ProcessAlignmentView({
                                   textAlign: "left", px: 1.5, minHeight: 38, borderBottom: 1, borderColor: "divider",
                                   bgcolor: on ? "action.selected" : "transparent", "&:hover": { bgcolor: "action.hover" } }}>
                   <Typography sx={{ fontFamily: MONO, fontSize: 12, color: "text.secondary" }}>{s.step_id}</Typography>
-                  <Box sx={{ height: 26, bgcolor: colour[m] }} title={label[m]} />
+                  <Box sx={{ height: 26, background: fill(m) }} title={label[m]} />
                   <Typography sx={{ fontSize: 13, fontWeight: devs.length ? 500 : 400, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
                               title={s.name}>{s.name}</Typography>
                   <Typography sx={{ fontSize: 12, color: "text.secondary", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}

@@ -105,11 +105,11 @@ export default function DeviationRegisterView({
   const gap = all.find((d) => d.gap_id === sel) ?? null;
 
   const exportCsv = () => {
-    const head = ["gap_id", "materiality", "primary_type", "dimension", "workshop", "gt_fit", "harmonisation", "disposition",
+    const head = ["gap_id", "materiality", "primary_type", "dimension", "workshop", "gt_fit", "sap_bp_fit", "harmonisation", "disposition",
                   "as_is_step", "template_step", "finding", "status", "decided_by"];
     const lines = rows.map((d) => {
       const last = latest(decisions[d.gap_id]);
-      return [d.gap_id, d.materiality, d.primary_type, d.dimension, d.workshop_bucket, d.gt_fit_rating, d.harmonization_potential,
+      return [d.gap_id, d.materiality, d.primary_type, d.dimension, d.workshop_bucket, d.gt_fit_rating, d.sap_bp_fit_rating ?? "", d.harmonization_potential,
               d.candidate_disposition, d.as_is_step_id, d.gt_step_ref, d.exact_difference, last?.verdict ?? "open", last?.reviewer ?? ""]
         .map(csvCell).join(",");
     });
@@ -120,7 +120,26 @@ export default function DeviationRegisterView({
   };
 
   const fitColour = (r: number) => r <= 1 ? theme.palette.error.main : r === 2 ? theme.palette.warning.main : p.accent;
-  const grid = `${idColumn(all.map((d) => d.gap_id))} minmax(0, 1fr) 44px 64px 96px 104px 76px`;
+  // Why an SAP fit is blank: the agent found the point outside the SAP
+  // documents and said so, or no SAP passage was ever quoted for it (runs
+  // before the rule, where the quality gate removed the rating).
+  const sapBlank = (d: Deviation) => d.sap_bp_reference?.trim()
+    ? { short: "Not covered", why: d.sap_bp_reference.trim() }
+    : { short: "Not rated", why: "Not rated: no SAP Best Practice passage was quoted for this deviation." };
+  // An SAP Best Practice fit column only where the run can have one.
+  const sapCol = !!subject.score_b;
+  const grid = `${idColumn(all.map((d) => d.gap_id))} minmax(0, 1fr) 44px 64px ${sapCol ? "64px " : ""}96px 104px 76px`;
+  // Four segments and "n/4"; null (no SAP source quoted) is a dash, not a 0.
+  const fitCell = (r: number | null, what: string, blank?: string) => (
+    <Stack spacing={0.5} title={r === null ? blank ?? `Not rated against ${what}` : `Fit with ${what} ${r}/4`}>
+      <Box sx={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: "2px", mt: 0.5 }}>
+        {[1, 2, 3, 4].map((i) => (
+          <Box key={i} sx={{ height: 8, bgcolor: r !== null && i <= r ? fitColour(r) : "action.selected" }} />
+        ))}
+      </Box>
+      <Typography sx={{ fontFamily: MONO, fontSize: 12, color: "text.secondary" }}>{r === null ? "—" : `${r}/4`}</Typography>
+    </Stack>
+  );
 
   const toolbar = (
     <Box sx={{ bgcolor: "background.paper", border: 1, borderColor: "divider", borderRadius: RADIUS, px: 2, py: 1.5,
@@ -184,10 +203,10 @@ export default function DeviationRegisterView({
       {toolbar}
       <Box sx={{ display: "grid", gap: 2.5, alignItems: "start", gridTemplateColumns: { xs: "1fr", lg: "minmax(0, 1fr) 460px" } }}>
         <Box sx={{ bgcolor: "background.paper", border: 1, borderColor: "divider", borderRadius: RADIUS, overflowX: "auto", minWidth: 0 }}>
-          <Box sx={{ minWidth: 720 }}>
+          <Box sx={{ minWidth: sapCol ? 790 : 720 }}>
             <Box sx={{ display: "grid", gridTemplateColumns: grid, columnGap: 1.75, px: 2.25, py: 1.1, bgcolor: "action.hover",
                        borderBottom: 1, borderColor: "divider", "& > *": { fontSize: 12, fontWeight: 600, color: "text.secondary" } }}>
-              <span>ID</span><span>Finding</span><span>Type</span><span>GT fit</span><span>Materiality</span><span>Workshop</span><span>Status</span>
+              <span>ID</span><span>Finding</span><span>Type</span><span>GT fit</span>{sapCol && <span>SAP fit</span>}<span>Materiality</span><span>Workshop</span><span>Status</span>
             </Box>
             {rows.map((d) => {
               const on = d.gap_id === sel;
@@ -209,14 +228,8 @@ export default function DeviationRegisterView({
                   <Tooltip title={types[d.primary_type] ?? d.primary_type}>
                     <Typography sx={{ fontFamily: MONO, fontSize: 12, color: "text.secondary" }}>{d.primary_type}</Typography>
                   </Tooltip>
-                  <Stack spacing={0.5} title={`Fit with the Global Template ${d.gt_fit_rating}/4`}>
-                    <Box sx={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: "2px", mt: 0.5 }}>
-                      {[1, 2, 3, 4].map((i) => (
-                        <Box key={i} sx={{ height: 8, bgcolor: i <= d.gt_fit_rating ? fitColour(d.gt_fit_rating) : "action.selected" }} />
-                      ))}
-                    </Box>
-                    <Typography sx={{ fontFamily: MONO, fontSize: 12, color: "text.secondary" }}>{d.gt_fit_rating}/4</Typography>
-                  </Stack>
+                  {fitCell(d.gt_fit_rating, "the Global Template")}
+                  {sapCol && fitCell(d.sap_bp_fit_rating, "SAP Best Practice", sapBlank(d).why)}
                   <Box><MaterialityPill value={d.materiality} /></Box>
                   <Typography sx={{ fontSize: 12.5, fontWeight: must ? 600 : 400, color: must ? "text.primary" : "text.secondary" }}>
                     {BUCKET_LABEL[d.workshop_bucket] ?? d.workshop_bucket}
@@ -256,13 +269,15 @@ export default function DeviationRegisterView({
                   {[
                     { l: "GT fit", v: `${gap.gt_fit_rating}/4`, mono: true },
                     // Null is "no SAP source was read", not a mismatch, so it is a dash.
-                    ...(subject.score_b ? [{ l: "SAP BP fit", v: gap.sap_bp_fit_rating === null ? "—" : `${gap.sap_bp_fit_rating}/4`, mono: true }] : []),
+                    ...(subject.score_b ? [{ l: "SAP BP fit", v: gap.sap_bp_fit_rating === null ? "—" : `${gap.sap_bp_fit_rating}/4`, mono: true,
+                                             note: gap.sap_bp_fit_rating === null ? sapBlank(gap).short : undefined }] : []),
                     { l: "Harmonisation", v: `${gap.harmonization_potential}%`, mono: true },
                     { l: "Evidence confidence", v: gap.evidence_confidence, mono: false },
                   ].map((k, i) => (
                     <Stack key={k.l} spacing={0.25} sx={{ px: 1.5, py: 1.1, borderLeft: i ? 1 : 0, borderColor: "divider" }}>
                       <Typography sx={{ fontSize: 12, color: "text.secondary" }}>{k.l}</Typography>
                       <Typography sx={{ fontFamily: k.mono ? MONO : undefined, fontSize: k.mono ? 18 : 15, fontWeight: 500 }}>{k.v}</Typography>
+                      {"note" in k && k.note && <Typography sx={{ fontSize: 11.5, color: "text.secondary" }}>{k.note}</Typography>}
                     </Stack>
                   ))}
                 </Box>
@@ -281,10 +296,10 @@ export default function DeviationRegisterView({
                   </Typography>
                   <Typography sx={{ fontSize: 13, lineHeight: 1.55 }}>{gap.gt_statement || "—"}</Typography>
                 </Stack>
-                {gap.sap_bp_reference && (
+                {(gap.sap_bp_reference || (subject.score_b && gap.sap_bp_fit_rating === null)) && (
                   <Stack spacing={0.5}>
                     <Typography sx={{ fontSize: 12, fontWeight: 600, color: "text.secondary" }}>SAP Best Practice</Typography>
-                    <Typography sx={{ fontSize: 13, lineHeight: 1.55 }}>{gap.sap_bp_reference}</Typography>
+                    <Typography sx={{ fontSize: 13, lineHeight: 1.55 }}>{gap.sap_bp_reference || sapBlank(gap).why}</Typography>
                   </Stack>
                 )}
               </Block>

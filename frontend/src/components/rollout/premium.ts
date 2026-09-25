@@ -52,14 +52,18 @@ export function ratingColour(theme: Theme, accent: string, rating: number | null
 export const ALIGNMENT_BANDS = [40, 20, 15, 15, 10];
 
 /** A step reference as the agent writes it -- "AS-04, AS-13", "AS-03 to
- *  AS-11", "n/a" -- as the step ids it names. A range is returned as
+ *  AS-11", "IN-RET-030", "n/a" -- as the step ids it names. The prefix is the
+ *  agent's choice and may have more than one part, so any run of letter
+ *  groups ending in a number is an id. A range is returned as
  *  `spans`, not expanded: a deviation about the whole middle of a process is
  *  not a finding about each of its steps. */
+export const STEP_ID = /^[A-Z][A-Z0-9]*(?:-[A-Z][A-Z0-9]*)*-\d+/i;
+
 export function stepsOf(ref: string | null | undefined): { ids: string[]; spans: boolean } {
   const text = (ref || "").trim();
   if (!text || /^n\/?a$/i.test(text)) return { ids: [], spans: false };
   if (/\bto\b|–|—/.test(text)) return { ids: [], spans: true };
-  return { ids: text.split(/[,;\s]+/).filter((t) => /^[A-Z]{1,4}-\d+/i.test(t)).map((t) => t.toUpperCase()), spans: false };
+  return { ids: text.split(/[,;\s]+/).filter((t) => STEP_ID.test(t)).map((t) => t.toUpperCase()), spans: false };
 }
 
 /** The deviations in the order a reader should meet them: must-discuss first,

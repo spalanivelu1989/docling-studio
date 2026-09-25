@@ -1248,6 +1248,8 @@ export default function RolloutPage({ active, showTechDetails = true }: Props) {
     { key: "log", label: `Investigation${calls.length ? ` (${calls.length})` : ""}` },
   ] : [];
   const openGap = (gapId: string) => { setTab("deviations"); setHighlightGap(gapId); };
+  // Whether this run rated its dimensions against SAP Best Practice too.
+  const sapRated = !!subject.score_b && !!scores?.sap_bp_dimensions?.some((d) => d.rating !== null);
   const setupStep = !(uploads?.files ?? []).some((f) => f.role === subject.role) ? 1 : ready ? 3 : 2;
 
   const historyButton = (
@@ -1518,7 +1520,9 @@ export default function RolloutPage({ active, showTechDetails = true }: Props) {
                 <Stack spacing={2}>
                   <Typography sx={{ fontSize: 12, color: "text.secondary", fontStyle: "italic" }}>{scores.formula}</Typography>
                   <Box>
-                    <SectionLabel icon={<Scale size={14} />}>Alignment by dimension</SectionLabel>
+                    <SectionLabel icon={<Scale size={14} />}>
+                      {sapRated ? "Alignment by dimension — Global Template and SAP Best Practice" : "Alignment by dimension"}
+                    </SectionLabel>
                     <Stack spacing={1.25}>
                       {scores.dimensions.map((row) => (
                         <AlignmentRow key={row.dimension}
@@ -1533,14 +1537,29 @@ export default function RolloutPage({ active, showTechDetails = true }: Props) {
                             <Typography sx={{ fontSize: 12, color: "text.secondary", minWidth: 34 }}>
                               {row.weight}%
                             </Typography>
-                            <Box sx={{ flex: 1, height: 7, borderRadius: 4, bgcolor: "divider", overflow: "hidden" }}>
-                              <Box sx={{ width: `${row.percent ?? 0}%`, height: "100%",
-                                         bgcolor: (row.percent ?? 0) >= 75 ? semantic.fit
-                                           : (row.percent ?? 0) >= 50 ? semantic.minor : semantic.material }} />
-                            </Box>
-                            <Typography sx={{ fontSize: 12.5, fontWeight: 700, minWidth: 54, textAlign: "right" }}>
-                              {row.rating === null ? "—" : `${row.rating}/4`}
-                            </Typography>
+                            {/* Template, and SAP Best Practice beneath it when the
+                                run rated against both: one bar per side. */}
+                            <Stack spacing={0.6} sx={{ flex: 1, minWidth: 0 }}>
+                              {[
+                                { side: "Global Template", r: row },
+                                ...(sapRated ? [{ side: "SAP Best Practice",
+                                                  r: scores.sap_bp_dimensions.find((b) => b.dimension === row.dimension) }] : []),
+                              ].map(({ side, r }) => (
+                                <Stack key={side} direction="row" spacing={1.25} sx={{ alignItems: "center" }}>
+                                  {sapRated && (
+                                    <Typography sx={{ fontSize: 11.5, color: "text.secondary", width: 112, flex: "none" }}>{side}</Typography>
+                                  )}
+                                  <Box sx={{ flex: 1, height: 7, borderRadius: 4, bgcolor: "divider", overflow: "hidden" }}>
+                                    <Box sx={{ width: `${r?.percent ?? 0}%`, height: "100%",
+                                               bgcolor: (r?.percent ?? 0) >= 75 ? semantic.fit
+                                                 : (r?.percent ?? 0) >= 50 ? semantic.minor : semantic.material }} />
+                                  </Box>
+                                  <Typography sx={{ fontSize: 12.5, fontWeight: 700, minWidth: 54, textAlign: "right" }}>
+                                    {r?.rating == null ? "—" : `${r.rating}/4`}
+                                  </Typography>
+                                </Stack>
+                              ))}
+                            </Stack>
                           </Stack>
                           {row.note && (
                             <Typography sx={{ fontSize: 12, color: "text.secondary", ml: "228px" }}>{row.note}</Typography>
