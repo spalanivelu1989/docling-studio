@@ -1895,10 +1895,13 @@ export default function RolloutPage({ active, showTechDetails = true }: Props) {
                     </Typography>
                     <Stack spacing={0.6}>
                       <Typography component="label" htmlFor="rollout-question" sx={{ fontSize: 12, color: "text.secondary" }}>
-                        Anything specific the rollout team needs (optional)
+                        Additional Instructions (optional)
                       </Typography>
                       <TextField
                         id="rollout-question" fullWidth multiline minRows={2} maxRows={4} value={question}
+                        placeholder={subject.value === "country_as_is"
+                          ? "e.g. Focus on GST e-invoicing and the approval thresholds for credit notes, and flag anything that needs a legal sign-off."
+                          : "e.g. Focus on where the template's approval workflow departs from SAP standard, and which of those changes we could drop."}
                         onChange={(e) => setQuestion(e.target.value)}
                         sx={{ "& .MuiOutlinedInput-root": { borderRadius: RADIUS, fontSize: 13.5 } }}
                         slotProps={{ input: {
