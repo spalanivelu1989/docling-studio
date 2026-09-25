@@ -30,7 +30,10 @@ import tracing
 from guardrails import POLICY, web
 
 from . import tools
-from .schemas import SUBJECTS, Analysis, AsIsModel, RunRequest, Subject
+from .schemas import SUBJECTS, Analysis, AsIsModel, Evidence, RunRequest, Subject
+
+QUOTE_MAX = next(m.max_length for m in Evidence.model_fields["quote"].metadata if hasattr(m, "max_length"))
+HEADLINE_MAX = next(m.max_length for m in Analysis.model_fields["headline"].metadata if hasattr(m, "max_length"))
 
 MODEL = os.environ.get("ROLLOUT_MODEL") or os.environ.get("RAG_ANSWER_MODEL", "claude-opus-5")
 # The comparison reads two sides now -- the template and SAP Best Practice --
@@ -96,6 +99,15 @@ from two or more explicit facts), E3 hypothesis (plausible, not established), E4
 # Shown to the analyst, not written into the analysis. The Evidence Agent has
 # the same rule, and it is what lets the investigation log say WHY a call was
 # made rather than only that it was.
+# The schema's own limits, said up front. A submission over them is sent back,
+# and every send-back re-sends the whole analysis: a turn and thousands of
+# output tokens spent on a length the model could have kept to.
+LIMITS = f"""\
+Length limits, checked on submission: every evidence quote at most {QUOTE_MAX} characters -- \
+quote the sentence that proves the point, not the paragraph -- and the headline at most \
+{HEADLINE_MAX} characters.
+"""
+
 NARRATION = """\
 Say what you are doing, in one sentence, before each tool call. Name what you are looking for \
 and why that tool: "The template's returns guide should say who releases the billing block, so \
@@ -119,7 +131,7 @@ def system_subject(subject: Subject) -> str:
     copies of sixty lines of prompt would drift apart within a month."""
     body = SYSTEM_ASIS_TEMPLATE.format(reading=subject.reading, side=subject.side)
     return (
-        f"{body}\n{EVIDENCE_RULES}\n{GUARDRAILS}\n{NARRATION}\n"
+        f"{body}\n{EVIDENCE_RULES}\n{LIMITS}\n{GUARDRAILS}\n{NARRATION}\n"
         f'Answer in British English. The documents attached under the role "{subject.label}" '
         f"are the subject of this run.\n\n{POLICY}"
     )
@@ -146,9 +158,12 @@ def system_compare(subject: Subject) -> str:
         sap_side = (
             "\n   Then establish the SAP Best Practice side the same way: search_sap_best_practice "
             "for SAP's standard version of this process -- the scope item and its process steps, "
-            "roles, approvals and documents. Search more than once, by step, not only by the "
-            "process name. Say which SAP Best Practice process you compared against in "
-            "sap_bp_note."
+            "roles, approvals and documents. Do not stop at the process name: run "
+            "search_sap_best_practice at least once for EACH stage of the As-Is (for a returns "
+            "process, for example: the return request and order, approval, delivery and goods "
+            "receipt, inspection, refund or replacement, credit memo), so that every deviation you "
+            "rate against SAP has an SAP passage to quote. Say which SAP Best Practice process you "
+            "compared against in sap_bp_note."
         )
         sap_check = (
             " Then ask the same questions of SAP Best Practice: does SAP's standard process "
@@ -160,7 +175,9 @@ def system_compare(subject: Subject) -> str:
             ", rate the template fit 0-4 AND the SAP Best Practice fit 0-4 (sap_bp_fit_rating). "
             "In sap_bp_reference say, in one sentence, what SAP standard does at this point and "
             "which SAP Best Practice document says so, and quote that document verbatim with "
-            "side sap_bp. Where the country follows SAP standard and the template departs from "
+            "side sap_bp. Give a sap_bp_fit_rating ONLY with that quote in the deviation's "
+            "evidence -- a rating without one is removed. When the SAP documents do not cover the "
+            "point, leave sap_bp_fit_rating null and say so in sap_bp_reference. Where the country follows SAP standard and the template departs from "
             "it, say so in exact_difference: that is a template finding, not a country failure"
         )
         sap_dims = ", and 0-4 against SAP Best Practice in sap_bp_rating"
@@ -191,7 +208,7 @@ def system_compare(subject: Subject) -> str:
         finding=subject.finding, frame=frame, sources=sources, localization=localization,
         sap_side=sap_side, sap_check=sap_check, sap_rating=sap_rating, sap_dims=sap_dims,
     )
-    return (f"{body}\n{EVIDENCE_RULES}\n{GUARDRAILS}\n{NARRATION}\n"
+    return (f"{body}\n{EVIDENCE_RULES}\n{LIMITS}\n{GUARDRAILS}\n{NARRATION}\n"
             "Answer in British English. Keep every statement short enough for a business "
             "analyst to read.\n\n" + POLICY)
 
@@ -208,7 +225,13 @@ Work like this:
 1. list_sources, to see what is attached and in which role.
 2. read_sources with side="{side}", several times, with different queries. Read the whole \
 process, not the first chunk that matches. Use get_chunk when an excerpt is cut off.
-3. Break the process into atomic steps in the order they actually happen. For each step \
+3. Break the process into steps in the order they actually happen, following the document's \
+own structure. When the document numbers or heads its process steps (5.1, 5.2 ... or Step 1, \
+Step 2 ...), take exactly ONE step per numbered step: do not split one into several, do not \
+merge several into one, and do not turn material from other sections -- systems, business \
+rules, controls, reports, pain points -- into steps of their own; record it in the attributes \
+of the step it belongs to. Only when the document does not structure its process, break it \
+into atomic steps yourself. The same document must always give the same steps. For each step \
 capture, where the document states it: trigger, actor/role, action, system, input, business \
 rule (thresholds, tolerances, calculations), decision/branching, control (approval, \
 segregation, audit), output, exception path, integration, timing/SLA and volume.
@@ -351,6 +374,7 @@ def _run(system: str, user: str, stage: str, sess: tools.Session,
     calls = 0
     in_tokens = out_tokens = last_in = 0
     submitted = None
+    sent_back = False
     started = time.time()
     turns = 0
     warned = False
@@ -417,7 +441,28 @@ def _run(system: str, user: str, stage: str, sess: tools.Session,
         for use in uses:
             if use.name == submit:
                 try:
-                    submitted = model_cls(**dict(use.input))
+                    candidate = model_cls(**dict(use.input))
+                    # Once per pass, and only while there is budget to act on
+                    # it: an SAP rating with no SAP quote behind it would be
+                    # stripped by the gates, so the agent is asked to find the
+                    # quote or clear the rating while it still can.
+                    unquoted = _unquoted_sap_ratings(candidate, sess)
+                    if unquoted and not sent_back and calls < MAX_TOOL_CALLS[stage]:
+                        sent_back = True
+                        calls += 1
+                        text = ("These deviations carry an sap_bp_fit_rating with no SAP Best Practice "
+                                f"quote in their evidence: {', '.join(unquoted)}. A rating without a quote "
+                                "is removed automatically. For each one, either run "
+                                "search_sap_best_practice and add a verbatim quote with side sap_bp, or "
+                                "set sap_bp_fit_rating to null and say in sap_bp_reference that the SAP "
+                                f"documents do not cover it. Then call {submit} again.")
+                        results.append({"type": "tool_result", "tool_use_id": use.id, "is_error": True,
+                                        "content": text})
+                        note("note", {"kind": "rejected",
+                                      "title": f"Sent back: {len(unquoted)} SAP rating(s) without an SAP quote",
+                                      "text": text, "detail": {"gaps": unquoted}})
+                        continue
+                    submitted = candidate
                     results.append({"type": "tool_result", "tool_use_id": use.id,
                                     "content": "Accepted."})
                     note("note", {"kind": "submitted", "title": _submitted_title(submitted),
@@ -493,6 +538,22 @@ def _submitted_title(model) -> str:
         return (f"Analysis submitted: {len(model.deviations)} deviations, "
                 f"{len(model.fit_areas)} fit areas")
     return "Submitted"
+
+
+def _unquoted_sap_ratings(model, sess: tools.Session) -> list[str]:
+    """Deviations rated against SAP Best Practice with no quote from an SAP
+    Best Practice chunk this run retrieved -- exactly what gates QG5 would
+    strip, checked while the agent can still fix it."""
+    if not isinstance(model, Analysis):
+        return []
+    out = []
+    for d in model.deviations:
+        if d.sap_bp_fit_rating is None:
+            continue
+        if not any(e.side == "sap_bp" and tools.is_sap_bp_chunk(sess.retrieved.get(e.chunk_id, {}))
+                   for e in d.evidence):
+            out.append(d.gap_id)
+    return out
 
 
 def read_asis(req: RunRequest, scope, sess: tools.Session,

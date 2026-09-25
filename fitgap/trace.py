@@ -63,7 +63,13 @@ MAX_DESC = 240
 # attached to one session rather than the corpus. The `sources` label on the
 # call already says which database answered; what matters here is that it comes
 # back as passages a reader can check.
-RAG_TOOLS = ("search_corpus", "search_uploads", "get_chunk", "read_sources", "web_search")
+# search_sap_best_practice is the Fit-Gap Copilot's search over the SAP
+# category alone; left off this list, its calls were recorded with no trace and
+# the SAP passages behind a rating could not be opened from the investigation.
+RAG_TOOLS = ("search_corpus", "search_uploads", "get_chunk", "read_sources", "web_search",
+             "search_sap_best_practice")
+# Tools that search one fixed side and category, whatever their arguments say.
+_FIXED_SCOPE = {"search_sap_best_practice": {"side": "sap_bp", "categories": ["SAP"]}}
 GRAPH_TOOLS = ("graph_entity", "graph_neighbors", "graph_path", "graph_enumerate",
                "compare_entities")
 
@@ -124,11 +130,14 @@ def _rag(tool: str, args: dict, result: dict) -> dict | None:
             "provenance": list(r.get("provenance") or []),
             "provenance_note": r.get("provenance_note") or "",
         })
-    filters = args.get("filters") or {}
+    filters = dict(args.get("filters") or {})
+    fixed = _FIXED_SCOPE.get(tool, {})
+    if fixed.get("categories"):
+        filters["categories"] = fixed["categories"]
     return {
         "kind": "rag",
         "op": tool,
-        "side": str(args.get("side") or ""),
+        "side": str(args.get("side") or fixed.get("side") or ""),
         "query": str(args.get("query") or args.get("chunk_id") or ""),
         "k": args.get("k"),
         "mode": filters.get("mode") or ("hybrid" if tool != "get_chunk" else "direct"),

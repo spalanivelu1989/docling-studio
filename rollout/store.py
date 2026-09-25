@@ -22,6 +22,14 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import rag  # noqa: E402
+from guardrails.contact import redact, redact_obj as _clean  # noqa: E402
+
+# Every write below goes through `_clean`: no e-mail address or phone number
+# is stored, whatever the attached documents contained. The HTTP boundary
+# redacts too, but that only governs what leaves the server -- this governs
+# what the database holds, as the Evidence Agent already does for its runs.
+# Writing is after the quality gates, which check each quote against the
+# text as written, so masking here cannot fail a quote.
 
 def database_url() -> str:
     """Where the runs and decisions live: the main database, beside the corpus
@@ -116,15 +124,15 @@ def start_run(conn, run: dict) -> None:
                    %(model)s, %(prompt_hash)s,
                    %(categories)s, %(uploads)s, %(corpus_fingerprint)s)
            ON CONFLICT (id) DO NOTHING""",
-        {"subject": "country_as_is", **run,
+        {"subject": "country_as_is", **_clean(run),
          "categories": json.dumps(run.get("categories") or []),
-         "uploads": json.dumps(run.get("uploads") or {})},
+         "uploads": json.dumps(_clean(run.get("uploads") or {}))},
     )
     conn.commit()
 
 
 def save_asis(conn, run_id: str, asis: dict) -> None:
-    conn.execute("UPDATE rollout_runs SET asis = %s WHERE id = %s", (json.dumps(asis), run_id))
+    conn.execute("UPDATE rollout_runs SET asis = %s WHERE id = %s", (json.dumps(_clean(asis)), run_id))
     conn.commit()
 
 
@@ -135,14 +143,14 @@ def save_calls(conn, run_id: str, calls: list[dict]) -> None:
     a dropped connection should still leave the row holding everything that
     happened up to the drop."""
     conn.execute("UPDATE rollout_runs SET calls = %s WHERE id = %s",
-                 (json.dumps(calls, default=str), run_id))
+                 (json.dumps(_clean(calls), default=str), run_id))
     conn.commit()
 
 
 def save_log(conn, run_id: str, log: list[dict]) -> None:
     """The investigation log so far, rewritten in full, like `save_calls`."""
     conn.execute("UPDATE rollout_runs SET log = %s WHERE id = %s",
-                 (json.dumps(log, default=str), run_id))
+                 (json.dumps(_clean(log), default=str), run_id))
     conn.commit()
 
 
@@ -177,6 +185,8 @@ def finish_run(conn, run_id: str, analysis: dict, scores: dict, gates: dict,
     named a process keeps the analyst's label, and only a run that did not
     borrows the agent's. Either way the row says what was compared against,
     which is what makes an unscoped run auditable at all."""
+    analysis, scores, gates, sources = (_clean(analysis), _clean(scores), _clean(gates),
+                                        _clean(sources or {}))
     matched = _short_label(analysis.get("template_process") or "")
     conn.execute(
         """UPDATE rollout_runs SET analysis = %s, scores = %s, gates = %s, status = %s,
@@ -194,7 +204,7 @@ def fail_run(conn, run_id: str, message: str) -> None:
     conn.execute(
         "UPDATE rollout_runs SET status = 'failed', finished_at = now(),"
         " gates = %s WHERE id = %s",
-        (json.dumps({"error": message}), run_id),
+        (json.dumps({"error": redact(message)}), run_id),
     )
     conn.commit()
 
@@ -280,8 +290,9 @@ def save_decision(conn, run_id: str, gap_id: str, reviewer: str, verdict: str,
     row = conn.execute(
         """INSERT INTO rollout_decisions (run_id, gap_id, reviewer, verdict, disposition, comment)
            VALUES (%s, %s, %s, %s, %s, %s) RETURNING id, decided_at""",
-        (run_id, gap_id, reviewer, verdict, disposition, comment),
+        (run_id, gap_id, reviewer, verdict, disposition, redact(comment)),
     ).fetchone()
+    comment = redact(comment)
     conn.commit()
     return {"id": row[0], "run_id": run_id, "gap_id": gap_id, "reviewer": reviewer,
             "verdict": verdict, "disposition": disposition, "comment": comment,

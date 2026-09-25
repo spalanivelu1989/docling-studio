@@ -571,6 +571,26 @@ def test_the_sap_best_practice_search_reads_only_the_sap_category():
     assert "error" in refused
 
 
+def test_an_sap_best_practice_search_leaves_a_trace_the_investigation_can_open():
+    """Its calls were stored with an empty trace: the query and the SAP
+    passages it returned could not be opened from the Investigation tab or
+    the log, and the sources label claimed every category was searched."""
+    from fitgap import trace
+
+    args = {"query": "returns order inspection", "k": 2}
+    result = {"query": args["query"], "results": [
+        {"chunk_id": "SAP:10005645", "doc": "BKP1_CRM", "heading_path": "Process steps",
+         "text": "Create Returns Order", "score": 0.03, "side": "sap_bp",
+         "side_label": "SAP Best Practice (indexed)"}]}
+    t = trace.of("search_sap_best_practice", args, result)
+    assert t and t["kind"] == "rag" and t["query"] == "returns order inspection"
+    assert t["side"] == "sap_bp" and t["filters"] == {"categories": ["SAP"]}
+    assert [h["chunk_id"] for h in t["hits"]] == ["SAP:10005645"]
+    assert t["hits"][0]["category"] == "SAP" and t["hits"][0]["text"] == "Create Returns Order"
+    src = rtools.describe_sources("search_sap_best_practice", args, result, ftools.Session())
+    assert src["searched"] == ["SAP"], src
+
+
 def test_the_source_note_points_at_indexed_sap_best_practice():
     note = rtools._source_note({"as_is": [{}]}, [{"category": "SAP"}], sap_bp_docs=3)
     assert "search_sap_best_practice" in note
@@ -831,6 +851,40 @@ def test_a_rollout_call_event_carries_the_engine_and_the_trace():
     assert event["stage"] == "compare"
 
 
+def test_no_contact_detail_is_stored_whatever_the_documents_contained():
+    """The HTTP boundary masked contact details on the way out, but the row
+    itself held them as the As-Is document wrote them. Read back here as raw
+    SQL, so nothing on the read side can hide a leak."""
+    mail, phone = "ravi.k@example.com", "+91 98765 43210"
+
+    def check(store, conn):
+        store.start_run(conn, {"id": "ro_pii", "subject": "country_as_is", "scope_bpml": "",
+                               "scope_label": "", "country": "India",
+                               "country_context": f"Escalations to {mail}",
+                               "sap_release": "", "gt_version": "", "question": f"Call {phone}",
+                               "model": "m", "prompt_hash": "h", "categories": [],
+                               "uploads": {}, "corpus_fingerprint": ""})
+        store.save_asis(conn, "ro_pii", {"steps": [{"step_id": "IN-RET-030", "actor": f"Supervisor ({mail})"}]})
+        store.save_calls(conn, "ro_pii", [{"tool": "read_sources", "trace": {"hits": [
+            {"chunk_id": "UPLOAD:19", "text": f"Contact {phone} for approval"}]}}])
+        store.save_log(conn, "ro_pii", [{"seq": 0, "kind": "thinking", "text": f"Found {mail}"}])
+        store.finish_run(conn, "ro_pii",
+                         {"template_process": "4.10.2 Process Returns",
+                          "deviations": [{"gap_id": "IN-RET-GAP-01", "as_is_statement": f"Email {mail}",
+                                          "evidence": [{"chunk_id": "SAP:10005660", "quote": f"ring {phone}"}]}]},
+                         {"gt_alignment": 52.5}, {"items": []}, (1, 1),
+                         sources={"chunks": {"UPLOAD:19": {"snippet": f"{mail} / {phone}"}}})
+        store.save_decision(conn, "ro_pii", "IN-RET-GAP-01", "A reviewer", "accept", comment=f"ask {mail}")
+        row = conn.execute("SELECT row_to_json(r)::text FROM rollout_runs r WHERE id = 'ro_pii'").fetchone()[0]
+        row += conn.execute("SELECT string_agg(comment, ' ') FROM rollout_decisions").fetchone()[0]
+        assert mail not in row and "98765" not in row, row
+        assert "[contact removed]" in row
+        # Ids, codes and figures are not contact details and must survive.
+        for kept in ("IN-RET-030", "IN-RET-GAP-01", "SAP:10005660", "UPLOAD:19", "4.10.2", "52.5"):
+            assert kept in row, kept
+    _with_store(check)
+
+
 def test_the_log_survives_a_reopened_run():
     """Rollout kept none of this: the log streamed to the browser and was gone
     on reload, so a reopened run showed its conclusions with no working."""
@@ -915,6 +969,98 @@ def test_a_pass_reports_its_reasoning_rejections_and_submission():
     assert kinds[-1] == ("note", "submitted")
     assert all(d["stage"] == "asis" for _, d in notes)
     assert tool_calls == ["no_such_tool"]
+
+
+def test_an_sap_rating_without_an_sap_quote_is_sent_back_once():
+    """A run rated 12 deviations against SAP and quoted SAP for 5; the gates
+    then stripped 7 ratings. The pass now hands such a submission back once,
+    while the agent can still search, and accepts the corrected one."""
+    import types
+
+    from rollout import agent
+
+    sess = session_with("country does X")
+    sess.retrieved["SAP:7"] = {"full_text": "SAP standard does Z", "category": "SAP"}
+
+    def submission(with_quote: bool):
+        d = dev(sap_bp_fit_rating=3, evidence=[ev("country does X")]
+                + ([ev("SAP standard does Z", side="sap_bp", chunk="SAP:7")] if with_quote else []))
+        return analysis(deviations=[d]).model_dump()
+
+    def block(**kw):
+        return types.SimpleNamespace(**kw)
+
+    turns = [
+        [block(type="tool_use", id="t1", name="submit_analysis", input=submission(False))],
+        [block(type="tool_use", id="t2", name="submit_analysis", input=submission(False))],
+    ]
+    fixed = [[block(type="tool_use", id="t3", name="submit_analysis", input=submission(True))]]
+    usage = types.SimpleNamespace(input_tokens=10, output_tokens=5)
+    seen = []
+
+    class Stream:
+        def __init__(self, content):
+            self.content = content
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            return False
+        def get_final_message(self):
+            return types.SimpleNamespace(content=self.content, usage=usage)
+
+    def client(script):
+        class Client:
+            class messages:
+                @staticmethod
+                def stream(**kw):
+                    seen.append(kw["messages"][-1])
+                    return Stream(script.pop(0))
+        return Client()
+
+    notes = []
+    real = agent._client
+    try:
+        # Unfixed twice: sent back once, then accepted -- the gates take over.
+        agent._client = lambda: client(turns)
+        out, _ = agent._run("sys", "ctx", "compare", sess, "submit_analysis", Analysis, None,
+                            lambda kind, data: notes.append(data))
+        sent = [n for n in notes if n.get("kind") == "rejected"]
+        assert len(sent) == 1 and sent[0]["detail"]["gaps"] == ["GAP-01"], sent
+        assert out.deviations[0].sap_bp_fit_rating == 3
+        # Fixed on the first try: nothing to send back.
+        notes.clear()
+        agent._client = lambda: client(fixed)
+        out, _ = agent._run("sys", "ctx", "compare", sess, "submit_analysis", Analysis, None,
+                            lambda kind, data: notes.append(data))
+        assert not [n for n in notes if n.get("kind") == "rejected"]
+    finally:
+        agent._client = real
+    assert agent._unquoted_sap_ratings(Analysis(**submission(True)), sess) == []
+    assert agent._unquoted_sap_ratings(Analysis(**submission(False)), sess) == ["GAP-01"]
+
+
+def test_the_first_pass_keeps_the_documents_own_steps():
+    """Three runs on one document gave 14, 15 and 17 steps, and the step count
+    drives the Process flow rating -- a quarter of the score. The first pass
+    now follows the document's numbering rather than choosing a granularity."""
+    from rollout import agent
+
+    for s in SUBJECTS.values():
+        text = agent.system_subject(s)
+        assert "exactly ONE step per numbered step" in text
+        assert "same document must always give the same steps" in text
+
+
+def test_the_prompts_state_the_limits_the_schema_enforces():
+    # Stated from the schema, so the prompt cannot drift from the check that
+    # sends a submission back.
+    from rollout import agent
+
+    assert agent.QUOTE_MAX == 400 and agent.HEADLINE_MAX == 600
+    for s in SUBJECTS.values():
+        for text in (agent.system_subject(s), agent.system_compare(s)):
+            assert f"at most {agent.QUOTE_MAX} characters" in text
+            assert f"at most {agent.HEADLINE_MAX} characters" in text
 
 
 def test_the_prompt_asks_the_agent_to_narrate():

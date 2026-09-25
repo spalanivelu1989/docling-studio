@@ -446,7 +446,9 @@ def describe_sources(name: str, args: dict, result: dict, session: Session) -> d
         return {"kind": "session-graph", "categories": [uploads.CATEGORY],
                 "label": f"session store ({where})"}
     if name == "search_sap_best_practice":
-        return ftools.describe_sources("search_corpus", args, result, session)
+        # Said as what it searched -- the SAP category -- not as the run's whole scope.
+        return ftools.describe_sources(
+            "search_corpus", {**args, "filters": {"categories": [SAP_BP_CATEGORY]}}, result, session)
     return ftools.describe_sources(name, args, result, session)
 
 
