@@ -54,6 +54,7 @@ Configuration, all optional:
 
 from __future__ import annotations
 
+import asyncio
 import os
 import threading
 import time
@@ -108,19 +109,37 @@ def configured() -> bool:
 
 
 def _make(attr: str, timeout: float):
-    """This thread's client for `attr`, made on first use here. See _local."""
+    """This thread's client for `attr`, made on first use here. See _local.
+
+    Each client also owns an event loop, and that loop is made the thread's
+    current one every time the client is handed out. Per-thread clients were
+    not enough on their own: the client runs each call on "the thread's event
+    loop", and other code on the same server thread -- anything that calls
+    asyncio.run() -- closes that loop and leaves a different one (or none)
+    behind. The client's session still belonged to the closed loop, so every
+    later call failed with the same "Timeout context manager" error, and
+    memory showed as unreachable against a healthy server until a restart.
+    """
     if not configured():
         return None
     client = getattr(_local, attr, None)
+    loop = getattr(_local, f"{attr}_loop", None)
+    if client is not None and (loop is None or loop.is_closed()):
+        # Its loop was closed from under it; the session cannot be saved.
+        client = None
     if client is None:
         try:
             from hindsight_client import Hindsight
         except ImportError:
             return None
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
         client = Hindsight(base_url=URL, api_key=API_KEY, timeout=timeout)
         setattr(_local, attr, client)
+        setattr(_local, f"{attr}_loop", loop)
         with _clients_lock:
             _all_clients.append(client)
+    asyncio.set_event_loop(loop)
     return client
 
 

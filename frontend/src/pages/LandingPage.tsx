@@ -29,8 +29,16 @@ import { frappe, surface, type Mode } from "../theme";
 
 type Page = "extract" | "batch" | "add-kb" | "review" | "viewer" | "ask" | "landing";
 
-export default function LandingPage({ onNavigate }: { onNavigate: (page: Page) => void }) {
+export default function LandingPage({ onNavigate, reachable }: {
+  onNavigate: (page: Page) => void;
+  /** The pages this host can open. Omitted, every link is live -- the
+   *  application. Demo Mode passes the few it shows, and a link to anywhere
+   *  else is left out rather than drawn as a button that does nothing. */
+  reachable?: Page[];
+}) {
   const theme = useTheme();
+  const can = (page: Page) => !reachable || reachable.includes(page);
+  const to = (page: Page) => (can(page) ? () => onNavigate(page) : undefined);
   return (
     <Box
       sx={{
@@ -127,6 +135,7 @@ export default function LandingPage({ onNavigate }: { onNavigate: (page: Page) =
           {/* Quick CTA Buttons */}
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, delay: 0.3 }}>
             <Stack direction="row" spacing={2} sx={{ pt: 1, flexWrap: "wrap", justifyContent: "center", gap: 1.5 }}>
+              {can("extract") && (
               <Button
                 variant="contained"
                 size="large"
@@ -136,6 +145,8 @@ export default function LandingPage({ onNavigate }: { onNavigate: (page: Page) =
               >
                 Start Converting
               </Button>
+              )}
+              {can("batch") && (
               <Button
                 variant="outlined"
                 size="large"
@@ -145,6 +156,8 @@ export default function LandingPage({ onNavigate }: { onNavigate: (page: Page) =
               >
                 Batch Upload & Convert
               </Button>
+              )}
+              {can("ask") && (
               <Button
                 variant="outlined"
                 color="secondary"
@@ -155,6 +168,7 @@ export default function LandingPage({ onNavigate }: { onNavigate: (page: Page) =
               >
                 Ask Knowledge Base
               </Button>
+              )}
             </Stack>
           </motion.div>
         </Stack>
@@ -192,7 +206,7 @@ export default function LandingPage({ onNavigate }: { onNavigate: (page: Page) =
                 "Tesseract optical OCR fallback",
               ]}
               buttonText="Open Convert"
-              onClick={() => onNavigate("extract")}
+              onClick={to("extract")}
             />
 
             {/* Service 2: Batch Convert */}
@@ -210,7 +224,7 @@ export default function LandingPage({ onNavigate }: { onNavigate: (page: Page) =
                 "Bulk .zip export & 1-click pgvector ingestion",
               ]}
               buttonText="Open Batch Convert"
-              onClick={() => onNavigate("batch")}
+              onClick={to("batch")}
             />
 
             {/* Service 3: Doc vs MD */}
@@ -228,7 +242,7 @@ export default function LandingPage({ onNavigate }: { onNavigate: (page: Page) =
                 "Direct markdown preview with live stats",
               ]}
               buttonText="Open Doc vs MD"
-              onClick={() => onNavigate("review")}
+              onClick={to("review")}
             />
 
             {/* Service 4: MD Viewer */}
@@ -246,7 +260,7 @@ export default function LandingPage({ onNavigate }: { onNavigate: (page: Page) =
                 "Live word, character, and line count stats",
               ]}
               buttonText="Open MD Viewer"
-              onClick={() => onNavigate("viewer")}
+              onClick={to("viewer")}
             />
 
             {/* Service 5: Ask */}
@@ -264,7 +278,7 @@ export default function LandingPage({ onNavigate }: { onNavigate: (page: Page) =
                 "Claude answer synthesis with source links",
               ]}
               buttonText="Open Ask"
-              onClick={() => onNavigate("ask")}
+              onClick={to("ask")}
             />
 
             {/* Platform Overview Tile */}
@@ -319,70 +333,7 @@ export default function LandingPage({ onNavigate }: { onNavigate: (page: Page) =
         </Box>
 
         {/* Technical Pipeline Flowchart */}
-        <Box sx={{ mb: { xs: 8, md: 12 } }}>
-          <Paper
-            sx={{
-              p: { xs: 3, md: 5 },
-              borderRadius: 4,
-              bgcolor: "background.paper",
-              border: 1,
-              borderColor: "divider",
-              overflow: "hidden",
-            }}
-          >
-            <Stack spacing={1.5} sx={{ textAlign: "center", mb: 4 }}>
-              <Typography variant="overline" sx={{ color: "primary.main", fontWeight: 700, letterSpacing: "0.1em" }}>
-                How It Works
-              </Typography>
-              <Typography variant="h5" sx={{ fontWeight: 800 }}>
-                End-to-End Processing Architecture
-              </Typography>
-            </Stack>
-
-            <Box
-              sx={{
-                display: "grid",
-                // Five steps. Four columns would leave the last one alone on a
-                // row of its own, which reads as an afterthought rather than
-                // the stage it is.
-                gridTemplateColumns: { xs: "1fr", sm: "repeat(2, 1fr)",
-                                       md: "repeat(3, 1fr)", lg: "repeat(5, 1fr)" },
-                gap: 2.5,
-              }}
-            >
-              <PipelineStep
-                number="01"
-                title="Ingestion & Normalization"
-                icon={<FileSpreadsheet size={20} />}
-                desc="Upload PPTX, DOCX, XLSX, PDF, or images. LibreOffice and Poppler render visual pages for preview while raw OOXML/PDF DOMs are queued for extraction."
-              />
-              <PipelineStep
-                number="02"
-                title="Structure Extraction"
-                icon={<Cpu size={20} />}
-                desc="Docling engine extracts semantic hierarchies. OpenPyXL reads spreadsheet tables. Specialized parser resolves native PPTX connector arrows into Mermaid diagrams."
-              />
-              <PipelineStep
-                number="03"
-                title="Vision AI & OCR Augmentation"
-                icon={<Sparkles size={20} />}
-                desc="Multimodal AI (Claude 3.7 / GPT-4o) transcribes flattened infographics and complex visuals. Tesseract OCR handles scanned document text."
-              />
-              <PipelineStep
-                number="04"
-                title="pgvector Ingestion & RAG"
-                icon={<DatabaseZap size={20} />}
-                desc="Converted Markdown is chunked with header preservation, embedded with Ollama BGE-M3 (1024d), and stored in PostgreSQL pgvector for hybrid semantic and keyword search."
-              />
-              <PipelineStep
-                number="05"
-                title="Agent Memory & Recall"
-                icon={<Brain size={20} />}
-                desc="The Evidence Agent keeps what each investigation established in Hindsight, an open-source agent memory service running locally. A later run is handed those notes before its first search, so it knows where to look instead of rediscovering it. Memory steers the search; it can never be cited, because a claim still needs a quote retrieved in that run."
-              />
-            </Box>
-          </Paper>
-        </Box>
+        <ArchitectureSection />
 
         {/* Supported Formats & Tech Badges */}
         <Box sx={{ textAlign: "center", mb: 6 }}>
@@ -409,17 +360,94 @@ export default function LandingPage({ onNavigate }: { onNavigate: (page: Page) =
   );
 }
 
+
+/** "How It Works": the end-to-end processing architecture. Its own component
+ *  so the Demo Mode landing page shows the same section -- with `hideModels`,
+ *  which names what each step does rather than the AI models it runs on. */
+export function ArchitectureSection({ hideModels = false }: { hideModels?: boolean }) {
+  return (
+    <Box sx={{ mb: { xs: 8, md: 12 } }}>
+      <Paper
+        sx={{
+          p: { xs: 3, md: 5 },
+          borderRadius: 4,
+          bgcolor: "background.paper",
+          border: 1,
+          borderColor: "divider",
+          overflow: "hidden",
+        }}
+      >
+        <Stack spacing={1.5} sx={{ textAlign: "center", mb: 4 }}>
+          <Typography variant="overline" sx={{ color: "primary.main", fontWeight: 700, letterSpacing: "0.1em" }}>
+            How It Works
+          </Typography>
+          <Typography variant="h5" sx={{ fontWeight: 800 }}>
+            End-to-End Processing Architecture
+          </Typography>
+        </Stack>
+
+        <Box
+          sx={{
+            display: "grid",
+            // Five steps. Four columns would leave the last one alone on a
+            // row of its own, which reads as an afterthought rather than
+            // the stage it is.
+            gridTemplateColumns: { xs: "1fr", sm: "repeat(2, 1fr)",
+                                   md: "repeat(3, 1fr)", lg: "repeat(5, 1fr)" },
+            gap: 2.5,
+          }}
+        >
+          <PipelineStep
+            number="01"
+            title="Ingestion & Normalization"
+            icon={<FileSpreadsheet size={20} />}
+            desc="Upload PPTX, DOCX, XLSX, PDF, or images. LibreOffice and Poppler render visual pages for preview while raw OOXML/PDF DOMs are queued for extraction."
+          />
+          <PipelineStep
+            number="02"
+            title="Structure Extraction"
+            icon={<Cpu size={20} />}
+            desc="Docling engine extracts semantic hierarchies. OpenPyXL reads spreadsheet tables. Specialized parser resolves native PPTX connector arrows into Mermaid diagrams."
+          />
+          <PipelineStep
+            number="03"
+            title="Vision AI & OCR Augmentation"
+            icon={<Sparkles size={20} />}
+            desc={hideModels
+              ? "Multimodal vision AI transcribes flattened infographics and complex visuals. Tesseract OCR handles scanned document text."
+              : "Multimodal AI (Claude 3.7 / GPT-4o) transcribes flattened infographics and complex visuals. Tesseract OCR handles scanned document text."}
+          />
+          <PipelineStep
+            number="04"
+            title="pgvector Ingestion & RAG"
+            icon={<DatabaseZap size={20} />}
+            desc={hideModels
+              ? "Converted Markdown is chunked with header preservation, embedded with a locally hosted embedding model, and stored in PostgreSQL pgvector for hybrid semantic and keyword search."
+              : "Converted Markdown is chunked with header preservation, embedded with Ollama BGE-M3 (1024d), and stored in PostgreSQL pgvector for hybrid semantic and keyword search."}
+          />
+          <PipelineStep
+            number="05"
+            title="Agent Memory & Recall"
+            icon={<Brain size={20} />}
+            desc="The Evidence Agent keeps what each investigation established in Hindsight, an open-source agent memory service running locally. A later run is handed those notes before its first search, so it knows where to look instead of rediscovering it. Memory steers the search; it can never be cited, because a claim still needs a quote retrieved in that run."
+          />
+        </Box>
+      </Paper>
+    </Box>
+  );
+}
+
 // Subcomponent: Service Card
 /** A hue per service card. Five cards in a row need five colours that stay
  *  apart, and the set has to be redrawn for dark: the Tailwind-ish blues and
  *  greens the light cards use sit at about 3.7:1 on Frappé's Base, which is
  *  under the floor for the card title they colour. */
-const SERVICE_HUES: Record<Mode, string[]> = {
+export const SERVICE_HUES: Record<Mode, string[]> = {
   light: ["#3b82f6", "#8b5cf6", "#06b6d4", "#10b981", "#f59e0b"],
   dark: [frappe.blue, frappe.mauve, frappe.sky, frappe.green, frappe.yellow],
 };
 
-function ServiceCard({
+export function ServiceCard({
   icon,
   color,
   title,
@@ -438,7 +466,8 @@ function ServiceCard({
   description: string;
   features: string[];
   buttonText: string;
-  onClick: () => void;
+  /** Absent when the host cannot open this service: no button is drawn. */
+  onClick?: () => void;
 }) {
   return (
     <Paper
@@ -501,7 +530,7 @@ function ServiceCard({
         ))}
       </Stack>
 
-      <Button
+      {onClick && <Button
         variant="outlined"
         size="small"
         endIcon={<ArrowRight size={15} />}
@@ -517,7 +546,7 @@ function ServiceCard({
         }}
       >
         {buttonText}
-      </Button>
+      </Button>}
     </Paper>
   );
 }

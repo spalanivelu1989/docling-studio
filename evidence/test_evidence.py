@@ -1015,6 +1015,22 @@ def _drive(question, **kw):
 # by accident. recall() is deliberately left real: it only reads, and letting
 # it talk to a live server is the only thing here that exercises the
 # transport.
+# ═══ NOR MAY IT ASK THE SCOPE CLASSIFIER ═══
+#
+# guardrails.scope sends a question it cannot place by keywords to a model.
+# Here "the model" is _FakeAnthropic, whose replies are a script for the
+# agent: a classifier call would eat the agent's first turn and every test
+# after it would be reading the wrong page. The guardrail has suites of its
+# own (test_guardrails.py); this one tests the agent behind it.
+from guardrails import scope as _scope  # noqa: E402
+
+_scope._classify = lambda text: _scope.Verdict(True, "stub", "test suite: no classifier call")
+
+
+def test_the_suite_cannot_reach_the_scope_classifier():
+    assert _scope._classify("anything").method == "stub"
+
+
 _retained: list[dict] = []
 # Kept so the two tests that are about the transport itself can reach past the
 # stub. Nothing else may use it.

@@ -16,6 +16,7 @@ from typing import Any, Callable
 import pydantic
 
 import tracing
+from guardrails import POLICY, web
 
 from . import bpml, tools
 from .schemas import FitGapEntry, VerifiedEntry
@@ -108,6 +109,10 @@ against the corpus evidence for the template.
 {MODE_B_CLASSES}
 """
 
+# The guardrails, last, so they read as overriding what came before them.
+SYSTEM_A = SYSTEM_A + "\n" + POLICY
+SYSTEM_B = SYSTEM_B + "\n" + POLICY
+
 
 def prompt_hash() -> str:
     return hashlib.sha256((SYSTEM_A + SYSTEM_B + RUBRIC).encode()).hexdigest()[:12]
@@ -196,7 +201,7 @@ def run_step(
         {"role": "user", "content": _user_message(step, mode, country, question, sess.categories,
                                                   sess.uploads)}
     ]
-    tool_defs = tools.definitions(mode, has_uploads=bool(sess.uploads))
+    tool_defs = tools.definitions(mode, has_uploads=bool(sess.uploads)) + web.definitions(sess)
 
     calls = 0
     in_tokens = out_tokens = last_in_tokens = 0

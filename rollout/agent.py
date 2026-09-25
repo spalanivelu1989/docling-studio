@@ -27,6 +27,8 @@ import pydantic
 
 import tracing
 
+from guardrails import POLICY, web
+
 from . import tools
 from .schemas import SUBJECTS, Analysis, AsIsModel, RunRequest, Subject
 
@@ -89,6 +91,17 @@ from two or more explicit facts), E3 hypothesis (plausible, not established), E4
 (the information is needed and not available). Never present E3 as E1.
 """
 
+# Shown to the analyst, not written into the analysis. The Evidence Agent has
+# the same rule, and it is what lets the investigation log say WHY a call was
+# made rather than only that it was.
+NARRATION = """\
+Say what you are doing, in one sentence, before each tool call. Name what you are looking for \
+and why that tool: "The template's returns guide should say who releases the billing block, so \
+searching the workshop decks for it." One line, no preamble. This is for the person watching \
+the investigation; it does not change what the submission may contain -- a finding still needs \
+a quote.
+"""
+
 # --- the two passes, as templates -------------------------------------------
 # The shared blocks are appended after formatting rather than interpolated
 # into the template, so a brace appearing in the guardrails one day cannot
@@ -104,9 +117,9 @@ def system_subject(subject: Subject) -> str:
     copies of sixty lines of prompt would drift apart within a month."""
     body = SYSTEM_ASIS_TEMPLATE.format(reading=subject.reading, side=subject.side)
     return (
-        f"{body}\n{EVIDENCE_RULES}\n{GUARDRAILS}\n"
+        f"{body}\n{EVIDENCE_RULES}\n{GUARDRAILS}\n{NARRATION}\n"
         f'Answer in British English. The documents attached under the role "{subject.label}" '
-        f"are the subject of this run.\n"
+        f"are the subject of this run.\n\n{POLICY}"
     )
 
 
@@ -146,9 +159,9 @@ def system_compare(subject: Subject) -> str:
         reading=subject.reading, subject_label=subject.label, noun=subject.noun,
         finding=subject.finding, frame=frame, sources=sources, localization=localization,
     )
-    return (f"{body}\n{EVIDENCE_RULES}\n{GUARDRAILS}\n"
+    return (f"{body}\n{EVIDENCE_RULES}\n{GUARDRAILS}\n{NARRATION}\n"
             "Answer in British English. Keep every statement short enough for a business "
-            "analyst to read.\n")
+            "analyst to read.\n\n" + POLICY)
 
 
 SYSTEM_ASIS_TEMPLATE = """\
@@ -284,10 +297,22 @@ def _context(req: RunRequest, scope) -> str:
 
 
 def _run(system: str, user: str, stage: str, sess: tools.Session,
-         submit: str, model_cls, on_tool: Callable | None) -> tuple[Any, dict]:
-    """One bounded pass. Returns the submitted model (or None) and its cost."""
+         submit: str, model_cls, on_tool: Callable | None,
+         on_note: Callable | None = None) -> tuple[Any, dict]:
+    """One bounded pass. Returns the submitted model (or None) and its cost.
+
+    `on_note(kind, data)` receives what is not a tool call: the context the
+    pass was handed, the model's reasoning between calls, a submission sent
+    back for correction, the budget running out. The same kinds, with the same
+    shapes, as the Evidence Agent's log -- so one console reads both."""
+    def note(kind: str, data: dict) -> None:
+        if on_note:
+            try:
+                on_note(kind, {**data, "stage": stage})
+            except Exception:
+                pass  # the log is for watching; it must not stop the pass
     client = _client()
-    tool_defs = tools.definitions(stage)
+    tool_defs = tools.definitions(stage) + web.definitions(sess)
     messages: list[dict[str, Any]] = [{"role": "user", "content": user}]
     budget = MAX_TOOL_CALLS[stage]
 
@@ -295,10 +320,22 @@ def _run(system: str, user: str, stage: str, sess: tools.Session,
     in_tokens = out_tokens = last_in = 0
     submitted = None
     started = time.time()
+    turns = 0
+    warned = False
+    note("note", {"kind": "prompt", "title": f"Context handed to the agent ({_PASS_NAME.get(stage, stage)})",
+                  "text": user, "detail": {"model": MODEL, "tool_budget": budget,
+                                           "tools": [t["name"] for t in tool_defs]}})
 
     while submitted is None:
         over = (calls >= budget or last_in >= MAX_INPUT_TOKENS
                 or in_tokens >= MAX_TOTAL_INPUT_TOKENS)
+        if over and not warned:
+            warned = True
+            note("note", {"kind": "budget", "title": "Budget reached — the agent must submit now",
+                          "text": (f"{calls} of {budget} tool calls used; last turn read "
+                                   f"{last_in:,} input tokens, {in_tokens:,} billed so far."),
+                          "detail": {"calls": calls, "budget": budget, "last_input_tokens": last_in,
+                                     "billed_input_tokens": in_tokens}})
         if over:
             messages.append({"role": "user", "content": (
                 f"Your tool budget is exhausted. Call {submit} now with what you have actually "
@@ -324,8 +361,19 @@ def _run(system: str, user: str, stage: str, sess: tools.Session,
         out_tokens += response.usage.output_tokens
         messages.append({"role": "assistant", "content": response.content})
 
+        # What the model wrote beside its tool calls: the one line the
+        # NARRATION rule asks for, or a thinking block if a model returns one.
+        for block in response.content:
+            text = (getattr(block, "thinking", "") if block.type == "thinking"
+                    else getattr(block, "text", "") if block.type == "text" else "")
+            if text and text.strip():
+                note("thinking", {"turn": turns, "kind": block.type, "text": text.strip()})
+        turns += 1
+
         uses = [b for b in response.content if b.type == "tool_use"]
         if not uses:
+            note("note", {"kind": "nudged", "title": f"No tool called — told to call {submit}",
+                          "text": "", "detail": {"turn": turns}})
             messages.append({"role": "user",
                              "content": f"You did not call a tool. Call {submit} now."})
             if over:
@@ -340,10 +388,15 @@ def _run(system: str, user: str, stage: str, sess: tools.Session,
                     submitted = model_cls(**dict(use.input))
                     results.append({"type": "tool_result", "tool_use_id": use.id,
                                     "content": "Accepted."})
+                    note("note", {"kind": "submitted", "title": _submitted_title(submitted),
+                                  "text": "", "detail": {"turn": turns, "tool_calls": calls}})
                 except pydantic.ValidationError as exc:
                     results.append({"type": "tool_result", "tool_use_id": use.id, "is_error": True,
                                     "content": "Rejected:\n" + _errors(exc) +
                                                f"\nCorrect it and call {submit} again."})
+                    note("note", {"kind": "rejected",
+                                  "title": "Submission rejected, sent back for correction",
+                                  "text": _errors(exc), "detail": {"errors": len(exc.errors())}})
                     calls += 1
                 continue
 
@@ -398,8 +451,21 @@ def _run(system: str, user: str, stage: str, sess: tools.Session,
                        "output_tokens": out_tokens, "seconds": round(time.time() - started, 2)}
 
 
+_PASS_NAME = {"asis": "reading the subject", "compare": "comparing with the template"}
+
+
+def _submitted_title(model) -> str:
+    if isinstance(model, AsIsModel):
+        return f"As-Is model submitted: {len(model.steps)} steps, {len(model.evidence_gaps)} evidence gaps"
+    if isinstance(model, Analysis):
+        return (f"Analysis submitted: {len(model.deviations)} deviations, "
+                f"{len(model.fit_areas)} fit areas")
+    return "Submitted"
+
+
 def read_asis(req: RunRequest, scope, sess: tools.Session,
-              on_tool: Callable | None = None) -> tuple[AsIsModel | None, dict]:
+              on_tool: Callable | None = None,
+              on_note: Callable | None = None) -> tuple[AsIsModel | None, dict]:
     """Pass one. Named for the country case it was written for; it reads
     whatever the run's subject is."""
     subject = SUBJECTS[req.subject]
@@ -410,11 +476,13 @@ def read_asis(req: RunRequest, scope, sess: tools.Session,
           "the template process above, if one is named, says what the analysis is about -- it "
           "does not limit which parts of the document you may read."
     )
-    return _run(system_subject(subject), user, "asis", sess, "submit_asis", AsIsModel, on_tool)
+    return _run(system_subject(subject), user, "asis", sess, "submit_asis", AsIsModel, on_tool,
+                on_note)
 
 
 def compare(req: RunRequest, scope, asis: AsIsModel, sess: tools.Session,
-            on_tool: Callable | None = None) -> tuple[Analysis | None, dict]:
+            on_tool: Callable | None = None,
+            on_note: Callable | None = None) -> tuple[Analysis | None, dict]:
     steps = "\n".join(_step_line(s) for s in asis.steps) or "(no steps were extracted)"
     notes = ""
     if asis.normalisation_notes:
@@ -432,7 +500,7 @@ def compare(req: RunRequest, scope, asis: AsIsModel, sess: tools.Session,
           f"read_sources to re-read any {subject.label} detail you need to quote."
     )
     return _run(system_compare(subject), user, "compare", sess, "submit_analysis",
-                Analysis, on_tool)
+                Analysis, on_tool, on_note)
 
 
 def _step_line(s) -> str:

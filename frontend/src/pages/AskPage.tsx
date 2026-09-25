@@ -1,22 +1,29 @@
 import {
-  Alert, Box, Button, Chip, Fade, IconButton, InputAdornment, MenuItem, Paper, Popper, Select,
-  Skeleton, Stack, TextField, ToggleButton, ToggleButtonGroup, Tooltip, Typography,
+  Alert, Autocomplete, Box, Button, ButtonBase, Chip, Fade, IconButton, Link, MenuItem, Paper, Popper, Select,
+  Skeleton, Stack, Tab, Tabs, TextField, ToggleButton, ToggleButtonGroup, Tooltip, Typography,
 } from "@mui/material";
 import { alpha, useTheme } from "@mui/material/styles";
-import { AnimatePresence, LayoutGroup, motion } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import {
-  Ban, Binary, BookOpen, BrainCircuit, Check, ChevronDown, CircleAlert, CircleCheck, Copy, Database, GitMerge, History as HistoryIcon, Lightbulb, LoaderCircle, MessageSquareText, Search, SendHorizontal, Sparkles, Square, TextSearch, Timer,
+  Ban, Binary, BookOpen, BrainCircuit, Check, ChevronDown, CircleAlert, CircleCheck, Copy, Dices, GitMerge, History as HistoryIcon, Lightbulb, LoaderCircle, MessageSquareText, SendHorizontal, Sparkles, Square, TextSearch,
 } from "lucide-react";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
-  ask, api, askHistory, type CategoryInfo, type Done, type RagStatus, type SearchMode, type Source,
-  type StepKey, type StepStatus,
+  ask, api, askHistory, type AskEvaluation, type CategoryInfo, type Done, type RagStatus,
+  type SearchMode, type Source, type StepKey, type StepStatus,
 } from "../api";
 import Markdown, { highlightRegex } from "../components/Markdown";
 import DocumentInspectorDrawer from "../components/DocumentInspectorDrawer";
-import SampleQuestionsDrawer from "../components/SampleQuestionsDrawer";
+import { ASK_SAMPLES } from "../data/askSamples";
+import type { SampleQuestion } from "../data/evidenceSamples";
 import AskHistoryDrawer from "../components/AskHistoryDrawer";
-import { searchColors, surface } from "../theme";
+import QualityScorecard from "../components/QualityScorecard";
+import ScrollRunway from "../components/ScrollRunway";
+import SourcesView from "../components/ask/SourcesView";
+import ObjectHeader, { BandButton } from "../components/rollout/ObjectHeader";
+import { MONO, RADIUS, usePremium } from "../components/rollout/premium";
+import { Section } from "../components/rollout/SummaryView";
+import { surface } from "../theme";
 import { clearAdornment } from "../components/ClearAdornment";
 
 interface Step {
@@ -44,9 +51,15 @@ const freshSteps = (mode: SearchMode): Step[] =>
     return { ...s, status: skipped ? "skipped" : "pending", detail: skipped ? "Not used in this search mode" : s.idle };
   });
 
-type SortKey = "score" | "similarity" | "bm25";
 
-export default function AskPage({ active }: { active: boolean }) {
+export default function AskPage({ active, showTechDetails = true }: {
+  active: boolean;
+  /** Which models and how big a corpus: the line under the title, the model
+   *  names in the pipeline and the judge model in the evaluation. Demo Mode
+   *  turns it off -- a client is shown what the system does, not what it
+   *  runs on. */
+  showTechDetails?: boolean;
+}) {
   const theme = useTheme();
   const [status, setStatus] = useState<RagStatus | null>(null);
   const [question, setQuestion] = useState("");
@@ -60,15 +73,23 @@ export default function AskPage({ active }: { active: boolean }) {
   const [done, setDone] = useState<Done | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
-  const [sort, setSort] = useState<SortKey>("score");
-  const [flash, setFlash] = useState<{ n: number; at: number } | null>(null);
+  // Named tabs, as on the Fit-Gap Copilot. A citation opens its excerpt in the
+  // Sources register rather than scrolling a long page to a card.
+  const [tab, setTab] = useState("answer");
+  const [focusSource, setFocusSource] = useState<{ n: number; at: number } | null>(null);
   const [copied, setCopied] = useState(false);
-  const [samplesOpen, setSamplesOpen] = useState(false);
+  // The sample question picked, if the question box holds one.
+  const [picked, setPicked] = useState<SampleQuestion | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   // Bumped when a question finishes, so a reopened panel is never stale.
   const [historyKey, setHistoryKey] = useState(0);
   const [runId, setRunId] = useState<string | null>(null);
   const [notSaved, setNotSaved] = useState<string | null>(null);
+  // The Langfuse trace this question opened, and the judges' verdict on it.
+  // The verdict arrives long after the answer does, so it is polled rather
+  // than streamed -- see the effect below for why that is the right shape.
+  const [evaluation, setEvaluation] = useState<AskEvaluation | null>(null);
+  const [rescoring, setRescoring] = useState(false);
   // Set when the view is showing a recorded question rather than a live one.
   const [replay, setReplay] = useState<{ id: string; at: string | null; changed: boolean } | null>(null);
   const controller = useRef<AbortController | null>(null);
@@ -121,6 +142,8 @@ export default function AskPage({ active }: { active: boolean }) {
     setRunId(null);
     setNotSaved(null);
     setReplay(null);
+    setEvaluation(null);
+    setTab("answer");
     const ctrl = new AbortController();
     controller.current = ctrl;
     const fail = (message: string) => {
@@ -150,6 +173,10 @@ export default function AskPage({ active }: { active: boolean }) {
           done: (d) => {
             setDone(d);
             setHistoryKey((n) => n + 1);
+            // The server starts judging the moment the answer is finished, so
+            // the panel opens in its running state rather than appearing from
+            // nothing once the first poll comes back.
+            setEvaluation({ status: "running", metrics: {}, overall: null, safety: null, terms: {} });
           },
           error: fail,
         },
@@ -178,6 +205,7 @@ export default function AskPage({ active }: { active: boolean }) {
       const r = await askHistory.run(id);
       controller.current?.abort();
       setQuestion(r.question);
+      setPicked(ASK_SAMPLES.find((q) => q.question === r.question) ?? null);
       setAsked(r.question);
       setMode(r.mode);
       setK(r.k);
@@ -197,10 +225,60 @@ export default function AskPage({ active }: { active: boolean }) {
       setRunId(r.id);
       setNotSaved(null);
       setReplay({ id: r.id, at: r.started_at, changed: r.corpus_changed });
+      setTab("answer");
+      // A recorded question brings its scorecard with it, in the same paint as
+      // its answer. Nothing is polled here: this evaluation is already final.
+      setEvaluation(r.evaluation ?? null);
     } catch (e) {
       setError((e as Error).message);
     }
   }, []);
+
+  // Judging happens on the server after the answer has been streamed, so the
+  // SSE connection is already closed by the time there is a score. Polling
+  // rather than holding that connection open is deliberate: a question is
+  // answered in seconds and judged in tens of seconds, and a reader who closes
+  // the tab in between should still come back to a complete evaluation --
+  // which they do, because the result is written to Postgres either way.
+  useEffect(() => {
+    if (!runId || evaluation?.status !== "running") return;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      try {
+        const got = await askHistory.evaluation(runId);
+        if (stopped) return;
+        setEvaluation(got);
+        // Every other status is terminal. Without this the page would poll a
+        // finished evaluation for as long as it stayed open.
+        if (got.status === "running") timer = setTimeout(poll, 2500);
+        else setHistoryKey((n) => n + 1);
+      } catch {
+        if (!stopped) setEvaluation((e) => (e ? { ...e, status: "failed", error: "The score could not be read back." } : e));
+      }
+    };
+    timer = setTimeout(poll, 2500);
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
+  }, [runId, evaluation?.status]);
+
+  const rescore = useCallback(async () => {
+    if (!runId) return;
+    setRescoring(true);
+    try {
+      await askHistory.rescore(runId);
+      setEvaluation({ status: "running", metrics: {}, overall: null, safety: null, terms: {} });
+    } catch (e) {
+      setEvaluation((prev) => ({
+        ...(prev ?? { metrics: {}, overall: null, safety: null, terms: {} }),
+        status: "failed", error: (e as Error).message,
+      }));
+    } finally {
+      setRescoring(false);
+    }
+  }, [runId]);
 
   const askAgain = (q: string) => {
     setHistoryOpen(false);
@@ -210,21 +288,6 @@ export default function AskPage({ active }: { active: boolean }) {
   // Picking a sample question drops it in the box and hands the reader the
   // caret, so it can be edited before it is asked. The arrow on a sample runs
   // it as it stands.
-  const pickSample = (q: string) => {
-    setQuestion(q);
-    setSamplesOpen(false);
-    requestAnimationFrame(() => {
-      const el = questionField.current;
-      if (!el) return;
-      el.focus();
-      el.setSelectionRange(q.length, q.length);
-    });
-  };
-
-  const askSample = (q: string) => {
-    setSamplesOpen(false);
-    executeAsk(q);
-  };
 
   const titles = useMemo(() => new Map(sources.map((s) => [s.n, s.title])), [sources]);
   const cited = useMemo(() => {
@@ -233,17 +296,10 @@ export default function AskPage({ active }: { active: boolean }) {
     return set;
   }, [answer, titles]);
   const highlight = useMemo(() => highlightRegex(terms, asked), [terms, asked]);
-  const sorted = useMemo(
-    () => [...sources].sort((a, b) => (b[sort] ?? -Infinity) - (a[sort] ?? -Infinity)),
-    [sources, sort],
-  );
-  const maxScore = Math.max(0, ...sources.map((s) => s.score)) || 1;
-  const maxBm25 = Math.max(0, ...sources.map((s) => s.bm25 ?? 0)) || 1;
 
   const cite = useCallback((n: number) => {
-    const el = document.getElementById(`source-${n}`);
-    el?.scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "center" });
-    setFlash({ n, at: Date.now() });
+    setTab("sources");
+    setFocusSource({ n, at: Date.now() });
   }, []);
 
   // ---------- Document Inspector & Hover Card State ----------
@@ -314,192 +370,120 @@ export default function AskPage({ active }: { active: boolean }) {
 
   const answerModel = status?.answer_model ?? "Claude";
   const docsInSources = new Set(sources.map((s) => s.title)).size;
-  const sourceCategories = useMemo(() => [...new Set(sources.map((s) => s.category))].sort(), [sources]);
-  const colors = searchColors[theme.palette.mode];
+  const premium = usePremium();
+
+  const overall = evaluation?.status === "done" ? evaluation.overall : null;
+  const metric = (k: string) => evaluation?.metrics?.[k]?.value ?? null;
+  const TABS = [
+    { key: "answer", label: "Answer" },
+    { key: "evaluation", label: evaluation ? `Evaluation${overall != null ? ` (${overall.toFixed(2)})` : evaluation.status === "running" ? " (scoring…)" : ""}` : "Evaluation" },
+    { key: "sources", label: `Sources (${sources.length})` },
+  ];
 
   return (
-    <Box sx={{ height: "100%", overflow: "auto" }}>
-      <Stack spacing={2.5} sx={{ maxWidth: 1280, mx: "auto", p: { xs: 2, md: 3 } }}>
+    <Box sx={{ height: "100%", overflow: "auto", bgcolor: "background.default" }}>
+      <ObjectHeader
+        breadcrumb={`Ask RAG / Questions${runId ? ` / ${runId}` : ""}`}
+        title={asked ? (asked.length > 150 ? `${asked.slice(0, 150)}…` : asked) : "Ask the documents"}
+        badge={running ? "Answering…" : replay ? "Saved answer" : done ? "Answered" : undefined}
+        meta={!showTechDetails ? undefined : status && !status.error
+          ? `${scoped.chunks.toLocaleString()} chunks · ${scoped.documents} documents · embeddings Ollama ${status.embed_model} · answers ${answerModel}`
+          : "The answer is written only from the excerpts found in your documents, with numbered citations you can open."}
+        actions={
+          <>
+            <BandButton onClick={() => setHistoryOpen(true)} startIcon={<HistoryIcon size={14} />}>History</BandButton>
+            {answer && !running && (
+              <BandButton startIcon={copied ? <Check size={14} /> : <Copy size={14} />}
+                          onClick={async () => {
+                            await navigator.clipboard.writeText(answer);
+                            setCopied(true);
+                            setTimeout(() => setCopied(false), 1500);
+                          }}>
+                {copied ? "Copied" : "Copy answer"}
+              </BandButton>
+            )}
+          </>
+        }
+        kpis={asked ? [
+          { label: "Answer quality",
+            value: overall != null ? overall.toFixed(2) : "—",
+            sub: evaluation?.status === "running" ? "scoring…" : overall != null
+              ? `overall${evaluation?.safety != null ? ` · safety ${evaluation.safety.toFixed(2)}` : ""}`
+              : evaluation?.status === "failed" ? "scoring failed" : evaluation?.status === "skipped" ? "not scored" : "not scored yet" },
+          { label: "Faithfulness", value: metric("faithfulness") != null ? metric("faithfulness")!.toFixed(2) : "—",
+            sub: "claims backed by the excerpts" },
+          { label: "Sources", value: String(sources.length),
+            sub: `${docsInSources} document${docsInSources === 1 ? "" : "s"} · ${cited.size} cited` },
+          { label: "Time", value: done ? `${done.seconds}s` : running ? "…" : "—",
+            sub: done ? `${done.input_tokens.toLocaleString()} in · ${done.output_tokens.toLocaleString()} out` : `${mode} search · ${k} excerpts` },
+        ] : undefined}
+      />
+
+      <Paper square elevation={0} sx={{ borderBottom: 1, borderColor: "divider", px: { xs: 2, md: 4 }, py: 2 }}>
         {problems.length > 0 && (
-          <Alert severity="warning">
+          <Alert severity="warning" sx={{ mb: 1.5, borderRadius: RADIUS }}>
             {problems.map((p, i) => (
               <div key={i}>{p}</div>
             ))}
           </Alert>
         )}
-
-        {/* ---------- question ---------- */}
-        <Paper
-          elevation={0}
-          sx={{
-            p: { xs: 2, md: 2.5 },
-            borderRadius: 2.5,
-            border: 1,
-            borderColor: "divider",
-            bgcolor: "background.paper",
-            boxShadow: (t) =>
-              t.palette.mode === "dark"
-                ? "0 4px 20px -2px rgba(0, 0, 0, 0.4)"
-                : "0 2px 10px -2px rgba(0, 0, 0, 0.04)",
-            transition: "border-color 0.15s ease, box-shadow 0.15s ease",
-            "&:focus-within": {
-              borderColor: (t) => alpha(t.palette.primary.main, 0.4),
-              boxShadow: (t) =>
-                t.palette.mode === "dark"
-                  ? `0 6px 24px -2px rgba(0, 0, 0, 0.5), 0 0 0 2px ${alpha(t.palette.primary.main, 0.15)}`
-                  : `0 4px 16px -2px rgba(0, 0, 0, 0.08), 0 0 0 2px ${alpha(t.palette.primary.main, 0.1)}`,
-            },
-          }}
-        >
-          {/* Header Row: Icon + Title on left, Corpus metrics chip on right */}
-          <Stack direction="row" spacing={1.25} sx={{ alignItems: "center", mb: 1.5 }}>
-            <Box
-              sx={{
-                width: 28,
-                height: 28,
-                borderRadius: 1.5,
-                bgcolor: (t) => alpha(t.palette.primary.main, 0.1),
-                color: "primary.main",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-              }}
-            >
-              <MessageSquareText size={16} />
-            </Box>
-            <Typography sx={{ fontWeight: 700, fontSize: 15, letterSpacing: "-0.01em" }}>
-              Ask the documents
-            </Typography>
-            <Box sx={{ flex: 1 }} />
-            {status && !status.error && (
-              <Tooltip
-                title={
-                  <>
-                    Embeddings: Ollama {status.embed_model} ({status.embed_dimension || 1024}d) · Answers: {status.answer_model}
-                    {scope.length > 0 && (
-                      <>
-                        <br />
-                        {scope.map((c) => `${c.code}: ${c.documents} document${c.documents === 1 ? "" : "s"}`).join(" · ")}
-                      </>
-                    )}
-                  </>
-                }
-              >
-                <Chip
-                  size="small"
-                  variant="outlined"
-                  icon={<Database size={13} />}
-                  label={`${scoped.chunks.toLocaleString()} chunks · ${scoped.documents} documents`}
-                  sx={{
-                    fontVariantNumeric: "tabular-nums",
-                    fontWeight: 600,
-                    fontSize: 11.5,
-                    height: 26,
-                    borderRadius: 1.5,
-                    bgcolor: (t) => surface(t, 0.5),
-                    borderColor: "divider",
-                  }}
-                />
-              </Tooltip>
-            )}
-          </Stack>
-
-          {/* Question Input */}
+          {/* The same composer as the Evidence Agent's: the question, then one
+              row of settings with the action at its right-hand end. */}
           <TextField
-            fullWidth
-            multiline
-            minRows={2}
-            maxRows={8}
-            value={question}
+            fullWidth multiline maxRows={4} value={question}
             inputRef={questionField}
-            onChange={(e) => setQuestion(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-                e.preventDefault();
-                run();
-              }
-            }}
-            placeholder="Ask a question about the indexed documents..."
-            slotProps={{
-              input: {
-                startAdornment: (
-                  <InputAdornment position="start" sx={{ alignSelf: "flex-start", mt: 1.25, mr: 1 }}>
-                    <Search size={18} color={theme.palette.text.secondary} />
-                  </InputAdornment>
-                ),
-                endAdornment: clearAdornment(question, () => setQuestion(""),
-                                             { size: 16, label: "Clear question", top: true }),
-                sx: {
-                  fontSize: 15,
-                  alignItems: "flex-start",
-                  borderRadius: 2,
-                  bgcolor: (t) => (t.palette.mode === "dark" ? alpha(t.palette.background.default, 0.5) : "background.paper"),
-                  transition: "all 0.15s ease",
-                  "&.Mui-focused": {
-                    borderColor: "primary.main",
-                  },
-                },
-              },
-            }}
+            onChange={(e) => { setQuestion(e.target.value); if (picked) setPicked(null); }}
+            onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); run(); } }}
+            placeholder={`Ask anything about the indexed documents — or pick one of the ${ASK_SAMPLES.length} sample questions below`}
+            slotProps={{ input: {
+              sx: { fontSize: 15, alignItems: "flex-start" },
+              startAdornment: <Box sx={{ pt: 0.35, pr: 1.25, color: "primary.main" }}><MessageSquareText size={18} /></Box>,
+              endAdornment: clearAdornment(question, () => { setQuestion(""); setPicked(null); },
+                                           { size: 16, label: "Clear question", top: true }),
+            } }}
           />
 
-          {/* Action Row */}
-          <Stack direction="row" spacing={1.25} useFlexGap sx={{ alignItems: "center", flexWrap: "wrap", mt: 1.5 }}>
-            <Button
-              variant="contained"
-              onClick={run}
-              disabled={!question.trim()}
-              loading={running}
-              loadingPosition="end"
-              endIcon={<SendHorizontal size={15} />}
-              sx={{
-                borderRadius: 1.75,
-                fontWeight: 700,
-                fontSize: 13,
-                height: 34,
-                px: 2,
-                textTransform: "none",
-                boxShadow: (t) => `0 2px 8px ${alpha(t.palette.primary.main, 0.3)}`,
+          <Stack direction="row" spacing={1} useFlexGap sx={{ alignItems: "center", flexWrap: "wrap", mt: 1.5 }}>
+            <Autocomplete
+              openOnFocus size="small" sx={{ flex: 1, minWidth: 280 }} value={picked} options={ASK_SAMPLES}
+              isOptionEqualToValue={(a, b) => a.id === b.id}
+              getOptionLabel={(q) => q.question}
+              onChange={(_, q) => { setPicked(q); if (q) setQuestion(q.question); }}
+              filterOptions={(opts, { inputValue }) => {
+                const n = inputValue.trim().toLowerCase();
+                return n ? opts.filter((q) => `${q.id} ${q.shows} ${q.question}`.toLowerCase().includes(n)) : opts;
               }}
-            >
-              Ask
-            </Button>
-
-            <AnimatePresence>
-              {running && (
-                <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }}>
-                  <Button
-                    color="inherit"
-                    variant="outlined"
-                    size="small"
-                    startIcon={<Square size={13} />}
-                    onClick={() => controller.current?.abort()}
-                    sx={{ borderRadius: 1.75, height: 34, fontSize: 12.5, fontWeight: 650, textTransform: "none" }}
-                  >
-                    Stop
-                  </Button>
-                </motion.div>
+              renderInput={(params) => (
+                <TextField {...params} placeholder={`Sample questions — ${ASK_SAMPLES.length} to try, each showing something grounded search does`}
+                  slotProps={{ ...params.slotProps, input: { ...params.slotProps.input,
+                    startAdornment: (<><Box sx={{ pl: 0.5, pr: 0.75, display: "flex", color: "text.secondary" }}>
+                      <Lightbulb size={15} /></Box>{params.slotProps.input.startAdornment}</>) } }} />
               )}
-            </AnimatePresence>
-
-            <ToggleButtonGroup
-              size="small"
-              exclusive
-              value={mode}
-              onChange={(_, v) => v && setMode(v)}
-              disabled={running}
-              sx={{
-                height: 34,
-                borderRadius: 1.75,
-                "& .MuiToggleButton-root": {
-                  textTransform: "none",
-                  fontWeight: 650,
-                  fontSize: 12,
-                  px: 1.25,
-                  gap: 0.6,
-                },
+              renderOption={(props, q) => {
+                const { key, ...rest } = props as { key?: string } & Record<string, unknown>;
+                return (
+                  <Box component="li" key={q.id} {...rest} sx={{ display: "block !important", py: 1, px: 1.5, borderBottom: 1, borderColor: "divider" }}>
+                    <Stack direction="row" spacing={1} sx={{ alignItems: "center", mb: 0.35 }}>
+                      <Box component="span" sx={{ fontFamily: MONO, fontSize: 11, fontWeight: 700, color: "primary.main" }}>{q.id}</Box>
+                      <Typography sx={{ fontSize: 11, fontWeight: 700, color: "text.secondary", textTransform: "uppercase", letterSpacing: ".04em" }}>
+                        {q.shows}
+                      </Typography>
+                    </Stack>
+                    <Typography sx={{ fontSize: 13, lineHeight: 1.45 }}>{q.question}</Typography>
+                  </Box>
+                );
               }}
-            >
+              slotProps={{ paper: { sx: { width: { xs: "100%", md: 620 } } } }}
+            />
+            <Tooltip title="Pick one at random">
+              <span><IconButton size="small" disabled={running}
+                onClick={() => { const q = ASK_SAMPLES[Math.floor(Math.random() * ASK_SAMPLES.length)];
+                                 setPicked(q); setQuestion(q.question); }}>
+                <Dices size={16} /></IconButton></span>
+            </Tooltip>
+            <ToggleButtonGroup size="small" exclusive value={mode} onChange={(_, v) => v && setMode(v)} disabled={running}
+                               aria-label="Search mode"
+                               sx={{ "& .MuiToggleButton-root": { textTransform: "none", fontSize: 12.5, px: 1.25, gap: 0.6, py: 0.6 } }}>
               <ToggleButton value="hybrid" title="Vector and keyword search, merged">
                 <GitMerge size={14} /> Hybrid
               </ToggleButton>
@@ -511,75 +495,50 @@ export default function AskPage({ active }: { active: boolean }) {
               </ToggleButton>
             </ToggleButtonGroup>
 
-            <Stack direction="row" spacing={0.75} sx={{ alignItems: "center" }}>
-              <Typography variant="body2" sx={{ color: "text.secondary", fontWeight: 600, fontSize: 12.5 }}>
-                Excerpts
+            <Stack direction="row" spacing={0.75} sx={{ alignItems: "center", ml: 1 }}>
+              <Typography component="label" htmlFor="ask-excerpts" sx={{ fontSize: 12, color: "text.secondary" }}>
+                excerpts
               </Typography>
-              <Select
-                size="small"
-                value={k}
-                onChange={(e) => setK(Number(e.target.value))}
-                disabled={running}
-                sx={{
-                  height: 34,
-                  fontSize: 12.5,
-                  fontWeight: 700,
-                  borderRadius: 1.75,
-                  bgcolor: (t) => surface(t, 0.4),
-                  "& .MuiSelect-select": { py: 0.5, px: 1.25 },
-                }}
-              >
+              <Select size="small" value={k} onChange={(e) => setK(Number(e.target.value))} disabled={running}
+                      inputProps={{ id: "ask-excerpts" }}
+                      sx={{ fontSize: 12.5, "& .MuiSelect-select": { py: 0.6, px: 1.25 } }}>
                 {[5, 8, 12, 20].map((n) => (
-                  <MenuItem key={n} value={n} sx={{ fontSize: 12.5 }}>
-                    {n}
-                  </MenuItem>
+                  <MenuItem key={n} value={n} sx={{ fontSize: 12.5 }}>{n}</MenuItem>
                 ))}
               </Select>
             </Stack>
 
-            <Button
-              color="inherit"
-              variant="outlined"
-              size="small"
-              startIcon={<HistoryIcon size={14} />}
-              onClick={() => setHistoryOpen(true)}
-              sx={{ borderRadius: 1.75, height: 34, fontSize: 12.5, fontWeight: 650, textTransform: "none" }}
-            >
-              History
-            </Button>
-
-            <Button
-              color="inherit"
-              variant="outlined"
-              size="small"
-              startIcon={<Lightbulb size={14} />}
-              onClick={() => setSamplesOpen(true)}
-              sx={{ borderRadius: 1.75, height: 34, fontSize: 12.5, fontWeight: 650, textTransform: "none" }}
-            >
-              Sample questions
-            </Button>
-
-            <Box sx={{ flex: 1 }} />
-
-            <Box
-              sx={{
-                display: { xs: "none", sm: "flex" },
-                alignItems: "center",
-                px: 1,
-                py: 0.4,
-                borderRadius: 1.25,
-                border: 1,
-                borderColor: "divider",
-                bgcolor: (t) => surface(t, 0.5),
-              }}
-            >
-              <Typography variant="caption" sx={{ fontFamily: "monospace", fontSize: 10.5, fontWeight: 700, color: "text.secondary" }}>
-                ⌘/Ctrl + ↵ to ask
-              </Typography>
-            </Box>
+            {running ? (
+              <Button variant="outlined" color="error" startIcon={<Square size={15} />}
+                      onClick={() => controller.current?.abort()}>Stop</Button>
+            ) : (
+              <Tooltip title="⌘/Ctrl + ↵ also asks">
+                <span>
+                  <Button variant="contained" disabled={!question.trim()}
+                          startIcon={<SendHorizontal size={16} />} onClick={run}>Ask</Button>
+                </span>
+              </Tooltip>
+            )}
           </Stack>
-        </Paper>
 
+          {picked && (
+            <Typography sx={{ fontSize: 11.5, color: "text.secondary", mt: 1.25 }}>
+              <b>{picked.id} · {picked.shows}</b> — {picked.lookFor}
+            </Typography>
+          )}
+      </Paper>
+
+      {(asked || sources.length > 0) && (
+        <Paper square elevation={0} sx={{ borderBottom: 1, borderColor: "divider", px: { xs: 1, md: 3 } }}>
+          <Tabs value={tab} onChange={(_, v) => setTab(v)} variant="scrollable" scrollButtons="auto" allowScrollButtonsMobile
+                sx={{ minHeight: 46, "& .MuiTab-root": { minHeight: 46, textTransform: "none", fontSize: 13.5, fontWeight: 500, px: 1.75 },
+                      "& .Mui-selected": { fontWeight: 600 } }}>
+            {TABS.map((t) => <Tab key={t.key} value={t.key} label={t.label} />)}
+          </Tabs>
+        </Paper>
+      )}
+
+      <Stack spacing={2.5} sx={{ px: { xs: 2, md: 4 }, py: 3 }}>
         {/* A recorded question, reopened. Saying WHEN matters: the answer below
             is what the corpus said then, and if the corpus has been re-indexed
             since, asking again is not guaranteed to reproduce it. */}
@@ -591,7 +550,7 @@ export default function AskPage({ active }: { active: boolean }) {
                 Ask again
               </Button>
             }
-            sx={{ borderRadius: 2 }}
+            sx={{ borderRadius: RADIUS }}
           >
             Showing a saved answer from {replay.at ? new Date(replay.at).toLocaleString() : "an earlier session"}.
             {replay.changed
@@ -601,65 +560,16 @@ export default function AskPage({ active }: { active: boolean }) {
         )}
 
         {notSaved && (
-          <Alert severity="warning" sx={{ borderRadius: 2 }} onClose={() => setNotSaved(null)}>
+          <Alert severity="warning" sx={{ borderRadius: RADIUS }} onClose={() => setNotSaved(null)}>
             This question is being answered but not recorded in the history: {notSaved}
           </Alert>
         )}
 
-        {/* ---------- pipeline + answer ---------- */}
-        <Box sx={{ display: "grid", gap: 2.5, gridTemplateColumns: { xs: "minmax(0,1fr)", md: "340px minmax(0,1fr)" }, alignItems: "start" }}>
-          <Paper sx={{ overflow: "hidden" }}>
-            <CardHead title="Pipeline" />
-            <Box component="ol" sx={{ listStyle: "none", m: 0, p: 0, py: 1 }}>
-              {steps.map((s, i) => (
-                <PipelineStep key={s.key} step={{ ...s, tech: s.key === "embed" && status ? `Ollama ${status.embed_model} (${status.embed_dimension || 1024}d)` : s.key === "answer" ? answerModel : s.tech }} last={i === steps.length - 1} next={steps[i + 1]?.status} />
-              ))}
-            </Box>
-            <AnimatePresence>
-              {done && (
-                <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }}>
-                  <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: "wrap", px: 2, py: 1.25, borderTop: 1, borderColor: "divider" }}>
-                    <Chip size="small" icon={<Timer size={13} />} label={`${done.seconds}s total`} />
-                    <Chip size="small" label={`${done.input_tokens.toLocaleString()} in`} />
-                    <Chip size="small" label={`${done.output_tokens.toLocaleString()} out`} />
-                    {runId && (
-                      <Tooltip title="This question's id in the history. Saved automatically.">
-                        <Chip
-                          size="small"
-                          variant="outlined"
-                          icon={<HistoryIcon size={12} />}
-                          label={runId}
-                          onClick={() => setHistoryOpen(true)}
-                          sx={{ fontFamily: "monospace", fontSize: 10.5 }}
-                        />
-                      </Tooltip>
-                    )}
-                  </Stack>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </Paper>
 
-          <Paper sx={{ overflow: "hidden", minHeight: 260 }}>
-            <CardHead
-              title="Answer"
-              actions={
-                answer && !running ? (
-                  <Tooltip title={copied ? "Copied" : "Copy answer"}>
-                    <IconButton
-                      size="small"
-                      onClick={async () => {
-                        await navigator.clipboard.writeText(answer);
-                        setCopied(true);
-                        setTimeout(() => setCopied(false), 1500);
-                      }}
-                    >
-                      {copied ? <Check size={16} /> : <Copy size={16} />}
-                    </IconButton>
-                  </Tooltip>
-                ) : undefined
-              }
-            />
+        {tab === "answer" && (
+          <Box sx={{ display: "grid", gap: 3, gridTemplateColumns: { xs: "1fr", lg: "minmax(0, 2fr) minmax(0, 1fr)" }, alignItems: "start" }}>
+            <Section title="Answer" hint={asked ? `${cited.size} of ${sources.length} excerpts cited` : undefined}>
+              <Box sx={{ mx: -2.5, mb: -2.25 }}>
             <Box sx={{ p: 2.5 }}>
               {asked && (
                 <Typography variant="body2" sx={{ color: "text.secondary", mb: 1.5, fontStyle: "italic" }}>
@@ -692,7 +602,7 @@ export default function AskPage({ active }: { active: boolean }) {
               ) : running && !error ? (
                 <Stack spacing={1}>
                   <Typography variant="body2" sx={{ color: "text.secondary" }}>
-                    {sources.length ? `Waiting for ${answerModel}…` : "Retrieving excerpts…"}
+                    {sources.length ? `Waiting for ${showTechDetails ? answerModel : "the answer"}…` : "Retrieving excerpts…"}
                   </Typography>
                   {[92, 100, 78, 85].map((w, i) => (
                     <Skeleton key={i} variant="text" width={`${w}%`} />
@@ -719,54 +629,105 @@ export default function AskPage({ active }: { active: boolean }) {
                 )}
               </AnimatePresence>
             </Box>
-          </Paper>
-        </Box>
+              </Box>
+            </Section>
 
-        {/* ---------- sources ---------- */}
-        <AnimatePresence>
-          {sources.length > 0 && (
-            <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
-              <Paper sx={{ overflow: "hidden" }}>
-                <CardHead
-                  title="Sources"
-                  meta={`${sources.length} excerpts from ${docsInSources} document${docsInSources === 1 ? "" : "s"}${sourceCategories.length > 1 ? ` in ${sourceCategories.join(", ")}` : ""} · ${cited.size} cited`}
-                  actions={
-                    <ToggleButtonGroup size="small" exclusive value={sort} onChange={(_, v) => v && setSort(v)} aria-label="Sort sources">
-                      <ToggleButton value="score" sx={{ px: 1.25, py: 0.3 }}>Combined</ToggleButton>
-                      <ToggleButton value="similarity" sx={{ px: 1.25, py: 0.3 }}>Semantic</ToggleButton>
-                      <ToggleButton value="bm25" sx={{ px: 1.25, py: 0.3 }}>Keyword</ToggleButton>
-                    </ToggleButtonGroup>
-                  }
-                />
-                <Stack direction="row" spacing={2.5} useFlexGap sx={{ flexWrap: "wrap", px: 2.5, pt: 1.5, color: "text.secondary", fontSize: 12.5 }}>
-                  <Legend color={colors.combined} text="Combined: reciprocal rank fusion of both searches" />
-                  <Legend color={colors.vector} text="Semantic: cosine similarity to the question" />
-                  <Legend color={colors.keyword} text="Keyword: BM25 over the question's words" />
-                  <Box component="span" sx={{ ml: "auto" }}>Highest first</Box>
-                </Stack>
-                <LayoutGroup>
-                  <Box component="ol" sx={{ listStyle: "none", m: 0, p: 2.5, pt: 1.5, display: "grid", gap: 1.5 }}>
-                    {sorted.map((s, i) => (
-                      <SourceCard
-                        key={s.n}
-                        source={s}
-                        index={i}
-                        cited={cited.has(s.n)}
-                        maxScore={maxScore}
-                        maxBm25={maxBm25}
-                        highlight={highlight}
-                        flash={flash?.n === s.n ? flash.at : 0}
-                        showCategory={scope.length > 1}
-                        onInspect={openInspector}
-                      />
+            <Stack spacing={3} sx={{ minWidth: 0 }}>
+              <Section pad={false} title="Pipeline" hint={done ? `${done.seconds}s total` : running ? "running" : undefined}>
+            <Box component="ol" sx={{ listStyle: "none", m: 0, p: 0, py: 1 }}>
+              {steps.map((s, i) => (
+                <PipelineStep key={s.key} step={{ ...s, tech: !showTechDetails
+                    ? (s.key === "embed" ? "Meaning-based embedding" : s.key === "answer" ? "Written only from the excerpts" : s.tech)
+                    : s.key === "embed" && status ? `Ollama ${status.embed_model} (${status.embed_dimension || 1024}d)` : s.key === "answer" ? answerModel : s.tech }} last={i === steps.length - 1} next={steps[i + 1]?.status} />
+              ))}
+            </Box>
+              </Section>
+
+              {evaluation && (
+                <Section title="Quality at a glance"
+                         hint={<Link component="button" onClick={() => setTab("evaluation")}>open the evaluation</Link>}>
+                  {evaluation.status === "running" ? (
+                    <Typography sx={{ fontSize: 13, color: "text.secondary" }}>The judges are scoring this answer…</Typography>
+                  ) : (
+                    <Stack spacing={1}>
+                      {[
+                        ["Overall", overall],
+                        ["Faithfulness", metric("faithfulness")],
+                        ["Answer relevancy", metric("answer_relevancy")],
+                        ["Context precision", metric("context_precision")],
+                      ].map(([l, v]) => (
+                        <Box key={l as string} sx={{ display: "grid", gridTemplateColumns: "130px minmax(0, 1fr) 44px", gap: 1.25, alignItems: "center" }}>
+                          <Typography sx={{ fontSize: 12.5, fontWeight: l === "Overall" ? 600 : 400 }}>{l as string}</Typography>
+                          <Box sx={{ height: 8, bgcolor: "action.hover" }}>
+                            {v != null && (
+                              <Box sx={{ height: 8, width: `${(v as number) * 100}%`,
+                                         bgcolor: (v as number) >= 0.7 ? premium.accent : (v as number) >= 0.4 ? "warning.main" : "error.main" }} />
+                            )}
+                          </Box>
+                          <Typography sx={{ fontFamily: MONO, fontSize: 12.5, textAlign: "right" }}>{v == null ? "—" : (v as number).toFixed(2)}</Typography>
+                        </Box>
+                      ))}
+                    </Stack>
+                  )}
+                </Section>
+              )}
+
+              {cited.size > 0 && (
+                <Section title="Cited sources" hint={`${cited.size} of ${sources.length}`}>
+                  <Stack>
+                    {sources.filter((x) => cited.has(x.n)).map((x, i) => (
+                      <ButtonBase key={x.n} onClick={() => cite(x.n)}
+                                  sx={{ display: "grid", gridTemplateColumns: "40px minmax(0, 1fr)", gap: 1, textAlign: "left", py: 1,
+                                        borderTop: i ? 1 : 0, borderColor: "divider", "&:hover .t": { textDecoration: "underline" } }}>
+                        <Typography sx={{ fontFamily: MONO, fontSize: 12.5, fontWeight: 600, color: premium.accent }}>[{x.n}]</Typography>
+                        <Box sx={{ minWidth: 0 }}>
+                          <Typography className="t" sx={{ fontSize: 12.5, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{x.title}</Typography>
+                          <Typography sx={{ fontSize: 12, color: "text.secondary", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{x.section || "(start of document)"}</Typography>
+                        </Box>
+                      </ButtonBase>
                     ))}
-                  </Box>
-                </LayoutGroup>
-              </Paper>
-            </motion.div>
-          )}
-        </AnimatePresence>
+                  </Stack>
+                </Section>
+              )}
+            </Stack>
+          </Box>
+        )}
+
+        {tab === "evaluation" && (
+          evaluation ? (
+              <QualityScorecard
+                evaluation={showTechDetails ? evaluation : { ...evaluation, judge_model: undefined, scores_pushed: undefined }}
+                status={status?.evaluation}
+                onRescore={runId ? rescore : undefined}
+                busy={rescoring || running}
+                sources={sources}
+              />
+          ) : (
+            <Section title="Evaluation">
+              <Typography sx={{ fontSize: 13.5, color: "text.secondary" }}>
+                {running ? "The answer is still being written; the judges score it once it is finished."
+                  : status?.evaluation && !status.evaluation.enabled ? "Scoring is switched off on this server."
+                  : "No evaluation was recorded for this answer."}
+              </Typography>
+            </Section>
+          )
+        )}
+
+        {tab === "sources" && (
+          sources.length > 0 ? (
+            <SourcesView sources={sources} cited={cited} highlight={highlight} focus={focusSource}
+                         onInspect={openInspector} showCategory={scope.length > 1} fileStem={runId ?? "ask"} />
+          ) : (
+            <Section title="Sources">
+              <Typography sx={{ fontSize: 13.5, color: "text.secondary" }}>
+                {running ? "Retrieving excerpts…" : "No excerpt was retrieved for this question."}
+              </Typography>
+            </Section>
+          )
+        )}
       </Stack>
+
+      {(!!asked || sources.length > 0) && <ScrollRunway />}
 
       {/* ---------- Citation Hover Card ----------
           A Popper, not a Popover. A Popover is a Modal: it lays an invisible
@@ -944,41 +905,7 @@ export default function AskPage({ active }: { active: boolean }) {
         busy={running}
       />
 
-      {/* ---------- Sample questions ---------- */}
-      <SampleQuestionsDrawer
-        open={samplesOpen}
-        onClose={() => setSamplesOpen(false)}
-        onPick={pickSample}
-        onAsk={askSample}
-        busy={running}
-      />
     </Box>
-  );
-}
-
-function CardHead({ title, meta, actions }: { title: string; meta?: string; actions?: ReactNode }) {
-  return (
-    <Stack direction="row" spacing={1.25} useFlexGap sx={{ alignItems: "center", flexWrap: "wrap", px: 2.5, py: 1, minHeight: 46, borderBottom: 1, borderColor: "divider" }}>
-      <Typography variant="overline" sx={{ color: "text.secondary", lineHeight: 1 }}>
-        {title}
-      </Typography>
-      {meta && (
-        <Typography variant="caption" sx={{ color: "text.secondary", fontVariantNumeric: "tabular-nums" }}>
-          {meta}
-        </Typography>
-      )}
-      <Box sx={{ flex: 1 }} />
-      {actions}
-    </Stack>
-  );
-}
-
-function Legend({ color, text }: { color: string; text: string }) {
-  return (
-    <Stack direction="row" spacing={0.75} component="span" sx={{ alignItems: "center" }}>
-      <Box component="span" sx={{ width: 10, height: 10, borderRadius: 0.5, bgcolor: color }} />
-      <span>{text}</span>
-    </Stack>
   );
 }
 
@@ -1060,195 +987,6 @@ function PipelineStep({ step, last, next }: { step: Step; last: boolean; next?: 
           </motion.div>
         )}
       </AnimatePresence>
-    </Box>
-  );
-}
-
-function ScoreBar({ label, value, fraction, color, empty }: { label: string; value: string; fraction: number; color: string; empty?: boolean }) {
-  return (
-    <Box sx={{ opacity: empty ? 0.55 : 1, fontSize: 12.5, color: "text.secondary", fontVariantNumeric: "tabular-nums" }}>
-      <Stack direction="row" sx={{ justifyContent: "space-between", gap: 1 }}>
-        <span>{label}</span>
-        <Box component="b" sx={{ color: "text.primary", fontWeight: 650 }}>
-          {value}
-        </Box>
-      </Stack>
-      <Box sx={{ height: 6, borderRadius: 3, bgcolor: "divider", overflow: "hidden", mt: 0.5 }}>
-        <motion.div
-          initial={{ width: 0 }}
-          animate={{ width: `${Math.max(0, Math.min(1, fraction)) * 100}%` }}
-          transition={{ duration: 0.6, ease: "easeOut" }}
-          style={{ height: "100%", borderRadius: 3, background: color }}
-        />
-      </Box>
-    </Box>
-  );
-}
-
-function SourceCard({ source: s, index, cited, maxScore, maxBm25, highlight, flash, showCategory, onInspect }: {
-  source: Source; index: number; cited: boolean; maxScore: number; maxBm25: number; highlight: RegExp | null;
-  flash: number; showCategory: boolean; onInspect?: (s: Source) => void;
-}) {
-  const theme = useTheme();
-  const colors = searchColors[theme.palette.mode];
-  const [open, setOpen] = useState(false);
-  const [overflows, setOverflows] = useState(true);
-  const excerpt = useRef<HTMLDivElement>(null);
-
-  // A long excerpt opens its preview at the first matched code (or else the
-  // first match): in a 30-row table the answering row is rarely the first.
-  // Runs after every render, not just on new content: re-sorting moves DOM
-  // nodes, which resets their scroll position. The preview itself cannot be
-  // scrolled by hand, so nothing is overridden.
-  useLayoutEffect(() => {
-    const box = excerpt.current;
-    if (!box) return;
-    setOverflows(box.scrollHeight > 200);
-    if (open) {
-      box.scrollTop = 0;
-      return;
-    }
-    const target = box.querySelector("mark.key") ?? box.querySelector("mark");
-    if (!target) return;
-    const offset = target.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop;
-    box.scrollTop = offset > 130 ? offset - 50 : 0;
-  });
-
-  return (
-    <Box
-      component={motion.li}
-      id={`source-${s.n}`}
-      layout
-      initial={{ opacity: 0, y: 16 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ layout: { type: "spring", stiffness: 400, damping: 35 }, delay: index * 0.04 }}
-      sx={{
-        position: "relative", scrollMarginTop: 16, border: 1, borderRadius: 3, p: 2, display: "grid", gap: 1.5,
-        borderColor: cited ? alpha(theme.palette.success.main, 0.5) : "divider",
-        bgcolor: "background.paper",
-        transition: "border-color .2s",
-        "&:hover": { borderColor: cited ? "success.main" : "text.disabled" },
-      }}
-    >
-      {/* Pulses when the card is reached from a citation in the answer. */}
-      {flash > 0 && (
-        <Box
-          key={flash}
-          component={motion.span}
-          initial={{ opacity: 1, scale: 1 }}
-          animate={{ opacity: 0, scale: 1.02 }}
-          transition={{ duration: 1.4, ease: "easeOut" }}
-          sx={{ position: "absolute", inset: -3, borderRadius: 3.5, border: 3, borderColor: "primary.main", pointerEvents: "none" }}
-        />
-      )}
-      <Stack direction="row" spacing={1.25} sx={{ alignItems: "flex-start" }}>
-        <Box sx={{ flex: "none", fontSize: 12, fontWeight: 750, color: "primary.main", bgcolor: alpha(theme.palette.primary.main, 0.12), borderRadius: 1.5, px: 0.9, py: 0.2, mt: 0.2 }}>
-          [{s.n}]
-        </Box>
-        <Box sx={{ minWidth: 0, flex: 1 }}>
-          <Typography sx={{ fontWeight: 650, overflowWrap: "anywhere" }}>{s.title}</Typography>
-          <Stack direction="row" spacing={0.75} sx={{ alignItems: "center", flexWrap: "wrap" }}>
-            {/* Only when more than one category exists: otherwise it says the
-                same thing on every card. */}
-            {showCategory && (
-              <Chip size="small" variant="outlined" label={s.category} sx={{ height: 19, fontSize: 11, fontWeight: 650 }} />
-            )}
-            <Typography variant="body2" sx={{ color: "text.secondary", overflowWrap: "anywhere" }}>
-              {s.section || "(start of document)"}
-            </Typography>
-          </Stack>
-        </Box>
-        <Stack direction="row" spacing={0.75} sx={{ alignItems: "center" }}>
-          <AnimatePresence>
-            {cited && (
-              <motion.div initial={{ scale: 0.5, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.5, opacity: 0 }} transition={{ type: "spring", stiffness: 500, damping: 20 }}>
-                <Chip size="small" color="success" variant="outlined" icon={<Check size={13} />} label="Cited" />
-              </motion.div>
-            )}
-          </AnimatePresence>
-          {onInspect && (
-            <Tooltip title="Inspect in full document">
-              <IconButton
-                size="small"
-                onClick={() => onInspect(s)}
-                sx={{
-                  borderRadius: 1.5,
-                  color: "primary.main",
-                  bgcolor: (t) => alpha(t.palette.primary.main, 0.08),
-                  "&:hover": { bgcolor: (t) => alpha(t.palette.primary.main, 0.16) },
-                  width: 28,
-                  height: 28,
-                }}
-              >
-                <BookOpen size={15} />
-              </IconButton>
-            </Tooltip>
-          )}
-        </Stack>
-      </Stack>
-
-      <Box sx={{ display: "grid", gap: 1.5, gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))" }}>
-        <ScoreBar label="Combined" value={s.score.toFixed(4)} fraction={s.score / maxScore} color={colors.combined} />
-        <ScoreBar
-          label={`Semantic${s.vector_rank ? ` · #${s.vector_rank}` : ""}`}
-          value={s.similarity == null ? "not in top 40" : s.similarity.toFixed(3)}
-          fraction={s.similarity ?? 0}
-          color={colors.vector}
-          empty={s.similarity == null}
-        />
-        <ScoreBar
-          label={`Keyword${s.keyword_rank ? ` · #${s.keyword_rank}` : ""}`}
-          value={s.bm25 == null ? "no match" : s.bm25.toFixed(2)}
-          fraction={(s.bm25 ?? 0) / maxBm25}
-          color={colors.keyword}
-          empty={s.bm25 == null}
-        />
-      </Box>
-
-      <Box
-        ref={excerpt}
-        component={motion.div}
-        initial={false}
-        animate={{ maxHeight: open || !overflows ? 4000 : 200 }}
-        transition={{ duration: 0.35, ease: "easeInOut" }}
-        sx={{
-          overflow: "hidden", borderRadius: 2, bgcolor: "background.default", px: 1.75, py: 1.25,
-          maskImage: open || !overflows ? "none" : "linear-gradient(#000 calc(100% - 44px), transparent)",
-        }}
-      >
-        <Markdown source={s.content} highlight={highlight} dense />
-      </Box>
-      <Stack direction="row" spacing={1} sx={{ alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
-        {overflows ? (
-          <Button
-            size="small"
-            color="inherit"
-            onClick={() => setOpen(!open)}
-            sx={{ justifySelf: "start", color: "text.secondary", textTransform: "none", fontSize: 12.5 }}
-            endIcon={
-              <motion.span animate={{ rotate: open ? 180 : 0 }} style={{ display: "flex" }}>
-                <ChevronDown size={15} />
-              </motion.span>
-            }
-          >
-            {open ? "Show less" : "Show full text"}
-          </Button>
-        ) : (
-          <Box />
-        )}
-        {onInspect && (
-          <Button
-            size="small"
-            variant="text"
-            color="primary"
-            startIcon={<BookOpen size={14} />}
-            onClick={() => onInspect(s)}
-            sx={{ textTransform: "none", fontSize: 12.5, fontWeight: 650 }}
-          >
-            Inspect in document
-          </Button>
-        )}
-      </Stack>
     </Box>
   );
 }

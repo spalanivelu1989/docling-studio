@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import rag  # noqa: E402
 import uploads  # noqa: E402
+from guardrails import web  # noqa: E402
 from fitgap import bpml, tools as ftools  # noqa: E402
 
 from .schemas import (DEVIATION_TYPES, DIMENSIONS, DISPOSITIONS,  # noqa: E402
@@ -94,6 +95,7 @@ def _source_note(by_role: dict, corpus: list) -> str:
 
 def read_sources(session: Session, query: str, k: int = 8, side: str = "as_is") -> dict:
     """Hybrid retrieval over the attachments, restricted to one role."""
+    session.corpus_searches += 1
     if not session.uploads:
         return {"error": "no documents were attached to this session"}
     side = (side or "as_is").strip().lower()
@@ -321,6 +323,7 @@ ENGINE_OF = {
     "graph_entity": "graph", "graph_neighbors": "graph", "compare_entities": "graph",
     "get_scope": "bpml",
     "list_sources": "session",
+    "web_search": "web",
 }
 
 
@@ -333,6 +336,8 @@ DISPATCH = {
     "search_corpus": ftools.search_corpus,
     "graph_entity": ftools.graph_entity,
     "graph_neighbors": ftools.graph_neighbors,
+    # Gated in guardrails/web.py; only offered when switched on.
+    "web_search": web.search,
 }
 
 

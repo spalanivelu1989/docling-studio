@@ -71,7 +71,7 @@ for (const page of PAGES) {
         "historyAnchor is back -- the dropdown was the thing that had drifted three ways");
 
   check(`${name} renders its own detail (${page.detail})`,
-        new RegExp(`renderDetail=\\{\\(run\\) => <${page.detail} run=\\{run\\} */>\\}`).test(el),
+        new RegExp(`renderDetail=\\{\\(run\\) => <${page.detail} run=\\{run\\}[^>]*/>\\}`).test(el),
         `no ${page.detail} passed as renderDetail`);
 
   check(`${name} fetches one run with ${page.fetch}`,

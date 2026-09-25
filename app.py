@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import glob
 import hashlib
+import logging
 import json
 import os
 import queue
@@ -41,6 +42,8 @@ import rag
 import tracing
 import vlm_api
 from converter import VLM_PROVIDERS, convert
+
+logger = logging.getLogger(__name__)
 
 BASE = Path(__file__).parent
 WORKDIR = BASE / ".workdir"
@@ -86,6 +89,13 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(title="Docling Extraction UI", lifespan=lifespan)
 
+# No e-mail address or phone number leaves an agent's API: the live stream, the
+# history and the exports, including runs recorded before the rule existed.
+# See guardrails/middleware.py.
+from guardrails.middleware import RedactContactDetails  # noqa: E402
+
+app.add_middleware(RedactContactDetails)
+
 # Every heavy endpoint below is declared `def`, not `async def`, so FastAPI runs
 # it in the threadpool. Conversion and LibreOffice are CPU-bound and blocking;
 # under `async def` they would stall the event loop and freeze the whole UI.
@@ -120,6 +130,20 @@ def _spa() -> HTMLResponse:
     # free to hold its own copy and keep loading the bundle that page referred
     # to, so a rebuilt front end silently does not arrive.
     return HTMLResponse(page.read_text(), headers={"Cache-Control": "no-cache"})
+
+
+# Demo Mode for client presentations: its own page, login and routes, all in
+# demo_mode.py. Registered here and nowhere else, so the application below is
+# untouched by it.
+import demo_mode  # noqa: E402
+
+app.include_router(demo_mode.router)
+
+# The application's own static sign-in (test / test by default): the router
+# here, the page gate at the bottom of this file once every page exists.
+import app_login  # noqa: E402
+
+app.include_router(app_login.router)
 
 
 # One page app for both screens; it reads the path to pick Extract or Ask.
@@ -311,6 +335,11 @@ def cleanup(doc_id: str) -> dict:
 @app.get("/convert", response_class=HTMLResponse)
 @app.get("/extract", response_class=HTMLResponse)
 def convert_page() -> HTMLResponse:
+    return _spa()
+
+
+@app.get("/quality", response_class=HTMLResponse)
+def quality_page() -> HTMLResponse:
     return _spa()
 
 
@@ -1373,8 +1402,20 @@ def rag_status() -> dict:
         "chunks": 0,
         "categories": [],
         "ingest_categories": [],
+        "prompt_hash": rag.prompt_hash(),
+        "tracing": tracing.status(),
         "error": None,
     }
+    # What scoring is configured to do, so the page can explain an absent
+    # scorecard rather than showing an empty panel and leaving the reader to
+    # guess whether the answer was unscoreable or the judge was switched off.
+    try:
+        from evaluation import status as evaluation_status
+
+        info["evaluation"] = evaluation_status()
+    except Exception as exc:
+        info["evaluation"] = {"enabled": False, "available": False,
+                              "detail": f"{type(exc).__name__}: {exc}"}
     if "DATABASE_URL" not in missing:
         try:
             info["documents"], info["chunks"] = rag.counts()
@@ -1399,6 +1440,87 @@ def rag_status() -> dict:
         except Exception as exc:  # no tables yet, server down, bad credentials
             info["error"] = str(exc).splitlines()[0]
     return info
+
+
+# --- judging an answer --------------------------------------------------------
+#
+# Scoring runs after the answer has been streamed, on a daemon thread. There is
+# no BackgroundTasks anywhere in this application and no queue; a thread that
+# owns and releases its own connections is the shape every other piece of
+# deferred work here already takes (rollout/orchestrator.py, the upload
+# pipeline above). The thread reads the run back out of Postgres rather than
+# closing over what was streamed, so a first score and a re-score take exactly
+# the same path -- which is the only way the re-score button can be trusted to
+# reproduce what the automatic one did.
+
+
+def _judge(run_id: str, force: bool = False) -> None:
+    """Score one finished question, store the result, push it to Langfuse.
+
+    `force` is set when a person asked for the score. Sampling is a way of
+    spending less on questions nobody is looking at; someone pressing the
+    button is looking at this one."""
+    import evaluation
+
+    conn = None
+    try:
+        conn = ask_store.connect()
+        ask_store.create_schema(conn)
+        run = ask_store.get_run(conn, run_id)
+        if not run:
+            return
+        ask_store.start_evaluation(conn, run_id, evaluation.MODEL)
+        if not force and not evaluation.wanted():
+            # Recorded, not skipped silently. "We chose not to score this" and
+            # "scoring failed" have to stay distinguishable in the history.
+            ask_store.finish_evaluation(conn, run_id, {
+                "status": "skipped", "judge_model": evaluation.MODEL,
+                "error": f"Not scored: sampling is at {evaluation.SAMPLE:g}.",
+            })
+            return
+        # In rank order, which matters: context precision is a ranking metric,
+        # so shuffling the excerpts would change the score.
+        contexts = [s.get("content", "") for s in (run.get("sources") or [])]
+        result = evaluation.evaluate(run["question"], contexts, run.get("answer", ""))
+        pushed = 0
+        try:
+            pushed = evaluation.push_scores(run.get("trace_id", ""), run_id, result)
+        except Exception as exc:  # an observability tool may not break the tool
+            logger.debug("pushing scores for %s failed: %s", run_id, exc)
+        ask_store.finish_evaluation(conn, run_id, result, pushed)
+    except Exception as exc:
+        logger.warning("judging %s failed: %s", run_id, exc)
+        if conn is not None:
+            _try(ask_store.fail_evaluation, conn, run_id, f"{type(exc).__name__}: {exc}")
+    finally:
+        # This thread's connections are its own -- they are thread-local, so
+        # nothing else can release them and they would otherwise leak one set
+        # per question asked.
+        rag.close()
+
+
+def _record_unscored(conn, run_id: str, why: str) -> None:
+    import evaluation
+
+    ask_store.start_evaluation(conn, run_id, evaluation.MODEL)
+    ask_store.finish_evaluation(conn, run_id, {
+        "status": "skipped", "judge_model": evaluation.MODEL, "error": why})
+
+
+def _start_judging(run_id: str, force: bool = False) -> bool:
+    """Begin scoring in the background. False when scoring is not available."""
+    try:
+        import evaluation
+
+        ok, _why = evaluation.available()
+        if not ok:
+            return False
+        threading.Thread(target=_judge, args=(run_id, force),
+                         name=f"ask-eval-{run_id}", daemon=True).start()
+        return True
+    except Exception as exc:
+        logger.debug("could not start judging %s: %s", run_id, exc)
+        return False
 
 
 class Question(BaseModel):
@@ -1467,6 +1589,7 @@ def ask(body: Question) -> StreamingResponse:
                 "answer_model": rag.ANSWER_MODEL,
                 "embed_model": rag.EMBED_MODEL,
                 "corpus_fingerprint": _corpus_fingerprint(categories),
+                "prompt_hash": rag.prompt_hash(),
             })
             yield sse("run", {"id": run_id})
         except Exception as exc:
@@ -1479,12 +1602,27 @@ def ask(body: Question) -> StreamingResponse:
             for event, data in rag.ask_events(question, body.k, body.mode, categories):
                 if event == "stage" and data.get("terms"):
                     terms = data["terms"]
+                elif event == "trace" and conn is not None and data.get("id"):
+                    _try(ask_store.save_trace, conn, run_id, data["id"])
                 elif event == "sources" and conn is not None:
                     _try(ask_store.save_sources, conn, run_id, data, terms)
                 elif event == "token":
                     written.append(data)
                 elif event == "done" and conn is not None:
                     _try(ask_store.finish_run, conn, run_id, "".join(written), data)
+                    if data.get("refused"):
+                        # Refused by the scope guardrail: there is no answer
+                        # to judge, and nine judges grading a refusal would
+                        # spend a minute and money to say nothing. Recorded
+                        # as not scored, so the panel says why at once.
+                        _try(_record_unscored, conn, run_id,
+                             "Not scored: the question was outside this assistant's "
+                             "scope, so it was refused without searching.")
+                    else:
+                        # The answer has already reached the browser; judging it
+                        # happens behind that, on a thread of its own, so a score
+                        # that takes fifteen seconds costs the reader nothing.
+                        _start_judging(run_id)
                 yield sse(event, data)
         # rag.py exits with a message when a key or DATABASE_URL is missing.
         except SystemExit as exc:
@@ -2199,20 +2337,27 @@ def rollout_decide(run_id: str, body: "RolloutDecision") -> dict:
 
 
 @app.get("/api/rollout/runs/{run_id}/export")
-def rollout_export(run_id: str, format: str = "md"):
+def rollout_export(run_id: str, format: str = "md", client: bool = False):
     """The analysis as a workshop pack: PDF, Markdown or JSON.
 
     All three are the same document. The PDF is rendered from the Markdown
     rather than from the run, so a section added to one cannot go missing from
-    the other."""
+    the other. `client=1` leaves out the model that produced it -- Demo Mode's
+    downloads ask for that copy."""
     from rollout import store as ro_store
-    from rollout.export import to_markdown
+    from rollout.export import client_copy, to_markdown
 
     conn = ro_store.connect()
     ro_store.create_schema(conn)
     run = ro_store.get_run(conn, run_id)
     if not run:
         raise HTTPException(404, "Run not found")
+    # The middleware redacts text responses; a PDF is binary, so its source
+    # record is redacted before it is drawn.
+    from guardrails import contact
+    run = contact.redact_obj(run)
+    if client:
+        run = client_copy(run)
     if format == "pdf":
         from rollout import pdf as ro_pdf
 
@@ -2464,22 +2609,11 @@ def _try(fn, *args) -> None:
 
 
 def _corpus_fingerprint(categories: list[str]) -> str:
-    """What the run could have read, hashed the way InsightLens's and the
-    Fit-Gap Copilot's records hash it."""
-    import hashlib
-
-    try:
-        conn = rag.connection()
-        rows = (conn.execute("SELECT source, fingerprint FROM rag_documents"
-                             " WHERE category = ANY(%s)", (categories,)).fetchall()
-                if categories else
-                conn.execute("SELECT source, fingerprint FROM rag_documents").fetchall())
-        h = hashlib.sha256()
-        for _, fp in sorted(rows):
-            h.update(fp.encode())
-        return h.hexdigest()[:16]
-    except Exception:
-        return ""
+    """What the run could have read. Lives in rag.py since experiments over the
+    evaluation set need the same fingerprint, computed the same way, or a
+    comparison between a live run and an experiment is between two hashes of
+    two different things."""
+    return rag.corpus_fingerprint(categories)
 
 
 @app.get("/api/evidence/runs")
@@ -2556,14 +2690,67 @@ def evidence_memory_reflect(body: MemoryReflection) -> dict:
 
 
 @app.get("/api/ask/runs")
-def ask_runs(limit: int = 50, search: str = "") -> dict:
-    """Past questions, newest first, optionally filtered by their text."""
+def ask_runs(limit: int = 50, search: str = "", quality: str = "") -> dict:
+    """Past questions, newest first, optionally filtered by text and quality.
+
+    `quality` is one of ask_store.QUALITY_FILTERS -- low, unfaithful, unsafe,
+    unscored -- and is what answers "show me the hallucinations" without
+    leaving the page."""
     conn = ask_store.connect()
     ask_store.create_schema(conn)
     return {
-        "runs": ask_store.list_runs(conn, limit=max(1, min(limit, 200)), search=search),
+        "runs": ask_store.list_runs(conn, limit=max(1, min(limit, 200)),
+                                    search=search, quality=quality),
         "retention": ask_store.RETENTION,
+        "filters": list(ask_store.QUALITY_FILTERS),
+        "low_quality_below": ask_store.LOW_QUALITY,
     }
+
+
+@app.get("/api/ask/runs/{run_id}/evaluation")
+def ask_run_evaluation(run_id: str) -> dict:
+    """The quality scores for one question, or why there are none.
+
+    `status` is always present and is what the page branches on: none (never
+    judged), running, done, failed, skipped, abandoned."""
+    conn = ask_store.connect()
+    ask_store.create_schema(conn)
+    if not ask_store.get_run(conn, run_id):
+        raise HTTPException(404, f"No question {run_id}")
+    found = ask_store.get_evaluation(conn, run_id)
+    if found:
+        return found
+    from evaluation import available
+
+    ok, why = available()
+    return {"run_id": run_id, "status": "none", "error": "" if ok else why,
+            "metrics": {}, "overall": None, "safety": None, "terms": {}}
+
+
+@app.post("/api/ask/runs/{run_id}/evaluation")
+def ask_run_rescore(run_id: str) -> dict:
+    """Judge this question again, or for the first time.
+
+    Takes the same path the automatic scoring takes, which is the point: a
+    second opinion that ran different code would not be a second opinion."""
+    import evaluation
+
+    conn = ask_store.connect()
+    ask_store.create_schema(conn)
+    run = ask_store.get_run(conn, run_id)
+    if not run:
+        raise HTTPException(404, f"No question {run_id}")
+    if run["status"] != "done":
+        raise HTTPException(409, "This question has no finished answer to score.")
+    ok, why = evaluation.available()
+    if not ok:
+        raise HTTPException(503, why)
+    current = ask_store.get_evaluation(conn, run_id)
+    if current and current["status"] == "running":
+        raise HTTPException(409, "This question is already being scored.")
+    if not _start_judging(run_id, force=True):
+        raise HTTPException(503, "Scoring could not be started; see the server log.")
+    return {"status": "running", "run_id": run_id, "judge_model": evaluation.MODEL}
 
 
 @app.get("/api/ask/runs/{run_id}")
@@ -2581,7 +2768,139 @@ def ask_run(run_id: str) -> dict:
         run["corpus_fingerprint"]
         and run["corpus_fingerprint"] != _corpus_fingerprint(run["categories"])
     )
+    # Sent with the run rather than fetched separately, so reopening a past
+    # question shows its scorecard in the same paint as its answer. The live
+    # path still polls, because there the score does not exist yet.
+    run["evaluation"] = ask_store.get_evaluation(conn, run_id)
+    run["review"] = ask_store.get_review(conn, run_id)
     return run
+
+
+class Review(BaseModel):
+    verdict: str
+    reviewer: str = Field(default="", max_length=120)
+    note: str = Field(default="", max_length=2000)
+
+
+@app.post("/api/ask/runs/{run_id}/review")
+def ask_run_review(run_id: str, body: Review) -> dict:
+    """A person's verdict on whether this answer is grounded.
+
+    The only evidence there will be that the judge agrees with people. Stored
+    here, and sent to the answer's Langfuse trace as a categorical score so
+    Langfuse's own score analytics can set it against the judge's."""
+    conn = ask_store.connect()
+    ask_store.create_schema(conn)
+    run = ask_store.get_run(conn, run_id)
+    if not run:
+        raise HTTPException(404, f"No question {run_id}")
+    try:
+        ask_store.save_review(conn, run_id, body.verdict, body.reviewer, body.note)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+    if run.get("trace_id"):
+        try:
+            import evaluation
+
+            lf = tracing.client()
+            if lf is not None:
+                lf.create_score(name="human_grounded", value=body.verdict,
+                                trace_id=run["trace_id"], data_type="CATEGORICAL",
+                                comment=body.note or None,
+                                score_id=evaluation.score_id(run_id, "human_grounded"))
+                lf.flush()
+        except Exception as exc:  # an observability tool may not break the tool
+            logger.debug("pushing the review for %s failed: %s", run_id, exc)
+    return {"status": "saved", "run_id": run_id, **(ask_store.get_review(conn, run_id) or {})}
+
+
+# --- the Answer Quality workspace ---------------------------------------------
+#
+# Four views over the judged answers; the arithmetic is all in quality.py. The
+# filters are shared by the first two, so moving between them keeps the slice.
+
+
+def _window(days: int) -> int:
+    return max(1, min(int(days), 365))
+
+
+@app.get("/api/quality/overview")
+def quality_overview(days: int = 28, half: str = "", mode: str = "") -> dict:
+    import quality
+
+    return quality.overview(ask_store.connect(), days=_window(days), half_=half, mode=mode)
+
+
+@app.get("/api/quality/explorer")
+def quality_explorer(days: int = 28, half: str = "", mode: str = "") -> dict:
+    import quality
+
+    return quality.explorer(ask_store.connect(), days=_window(days), half_=half, mode=mode)
+
+
+@app.get("/api/quality/judge")
+def quality_judge() -> dict:
+    import quality
+
+    return quality.judge(ask_store.connect())
+
+
+@app.get("/api/quality/experiments")
+def quality_experiments() -> dict:
+    import experiment_store
+
+    conn = experiment_store.connect()
+    experiment_store.create_schema(conn)
+    return {"experiments": experiment_store.list_experiments(conn)}
+
+
+@app.get("/api/quality/experiments/compare")
+def quality_compare(base: str, cand: str) -> dict:
+    import experiment_store
+    import quality
+
+    conn = experiment_store.connect()
+    experiment_store.create_schema(conn)
+    b, c = experiment_store.get(conn, base), experiment_store.get(conn, cand)
+    if not b or not c:
+        raise HTTPException(404, f"No run {base if not b else cand}")
+    return quality.compare(b, c)
+
+
+@app.get("/api/quality/experiments/{experiment_id}/items/{item_id}")
+def quality_experiment_item(experiment_id: str, item_id: str) -> dict:
+    """One answered question from a run, with its judged working."""
+    import experiment_store
+
+    conn = experiment_store.connect()
+    experiment_store.create_schema(conn)
+    run = experiment_store.get(conn, experiment_id)
+    item = next((i for i in (run or {}).get("items", []) if i["item_id"] == item_id), None)
+    if not item:
+        raise HTTPException(404, f"No question {item_id} in {experiment_id}")
+    return {**item, "experiment": {k: run[k] for k in ("id", "name", "config")}}
+
+
+@app.post("/api/quality/experiments/{experiment_id}/baseline")
+def quality_set_baseline(experiment_id: str) -> dict:
+    import experiment_store
+
+    conn = experiment_store.connect()
+    experiment_store.create_schema(conn)
+    if not experiment_store.set_baseline(conn, experiment_id):
+        raise HTTPException(404, f"No run {experiment_id}")
+    return {"status": "baseline", "id": experiment_id}
+
+
+@app.delete("/api/quality/experiments/{experiment_id}")
+def quality_delete_experiment(experiment_id: str) -> dict:
+    import experiment_store
+
+    conn = experiment_store.connect()
+    experiment_store.create_schema(conn)
+    if not experiment_store.delete(conn, experiment_id):
+        raise HTTPException(404, f"No run {experiment_id}")
+    return {"status": "deleted", "id": experiment_id}
 
 
 @app.delete("/api/ask/runs/{run_id}")
@@ -2615,5 +2934,8 @@ class _ImmutableAssets(StaticFiles):
         response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
         return response
 
+
+# Every page route is declared by now, so the gate can find them all.
+app_login.install(app)
 
 app.mount("/assets", _ImmutableAssets(directory=DIST / "assets", check_dir=False), name="assets")

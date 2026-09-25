@@ -17,10 +17,7 @@ import {
   Box, Chip, Drawer, IconButton, Stack, ToggleButton, ToggleButtonGroup, Tooltip, Typography,
 } from "@mui/material";
 import { alpha, useTheme, type Theme } from "@mui/material/styles";
-import {
-  Brain, ChevronDown, ChevronRight, CircleAlert, Copy, Download, FileText, GitBranch,
-  MessageSquare, Network, ScanLine, Sigma, TriangleAlert, X,
-} from "lucide-react";
+import { Brain, ChevronDown, ChevronRight, CircleAlert, Copy, Download, FileText, GitBranch, Globe, MessageSquare, Network, ScanLine, Sigma, TriangleAlert, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from "react";
 import type { EvidenceLogEntry } from "../api";
 import { surface } from "../theme";
@@ -40,6 +37,7 @@ const KIND: Record<string, { label: string; hue: (t: Theme) => string; icon: Rea
 const ENGINE_ICON: Record<string, ReactElement> = {
   rag: <ScanLine size={11} />, graph: <Network size={11} />,
   bpml: <GitBranch size={11} />, session: <FileText size={11} />,
+  web: <Globe size={11} />,
 };
 
 /** Groups for the filter strip. Deliberately coarse: the point of a filter
@@ -80,7 +78,7 @@ function headline(e: EvidenceLogEntry): string {
     case "tool_call":
       return `${e.tool} — ${e.summary ?? ""}`;
     case "answer":
-      return `${e.state} · ${e.claims ?? 0} claim(s)`;
+      return e.title ?? `${e.state} · ${e.claims ?? 0} claim(s)`;
     case "error":
       return e.text ?? "";
     default:
@@ -92,6 +90,11 @@ function headline(e: EvidenceLogEntry): string {
 function body(e: EvidenceLogEntry): string {
   if (e.kind === "memory") return (e.memories ?? []).map((m, i) => `${i + 1}. ${m}`).join("\n\n");
   if (e.kind === "tool_call") return JSON.stringify(e.arguments ?? {}, null, 2);
+  // The Fit-Gap Copilot's opening line and final line carry the run's
+  // particulars -- what was attached, what it cost -- beside the sentence.
+  if ((e.kind === "question" || e.kind === "answer") && e.detail && Object.keys(e.detail).length) {
+    return [e.text ?? "", JSON.stringify(e.detail, null, 2)].filter(Boolean).join("\n\n");
+  }
   return e.text ?? "";
 }
 
@@ -154,6 +157,12 @@ function Line({ entry, first, onOpenCall }: {
             </Stack>
           )}
         </Box>
+        {entry.stage && (
+          <Tooltip title={entry.stage === "asis" ? "Pass 1: reading the subject" : "Pass 2: comparing with the Global Template"}>
+            <Chip size="small" label={entry.stage === "asis" ? "pass 1" : entry.stage === "compare" ? "pass 2" : entry.stage}
+                  sx={{ height: 17, fontSize: 9.5, flex: "none" }} />
+          </Tooltip>
+        )}
         {entry.engine && (
           <Tooltip title={`Answered by the ${entry.engine} engine`}>
             <Chip size="small" variant="outlined" icon={ENGINE_ICON[entry.engine] ?? undefined}

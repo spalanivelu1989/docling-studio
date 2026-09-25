@@ -18,6 +18,7 @@ from typing import Callable, Iterator
 import rag
 import tracing
 import uploads
+from guardrails import REFUSAL, scope as scope_guard
 
 from fitgap import bpml, tools as ftools
 
@@ -89,6 +90,14 @@ def run(req: RunRequest) -> Iterator[Event]:
     'done'|'error', payload)."""
     started = time.time()
     subject = SUBJECTS[req.subject]
+    # The scope guardrail, on the one thing here a person types freely. A run
+    # asked to answer something outside the programme is refused before it
+    # reads a document, with the same words the Evidence Agent uses.
+    verdict = scope_guard.check(req.question)
+    if not verdict.allowed:
+        yield "error", {"message": f"{REFUSAL} {scope_guard.refusal_detail(verdict)}",
+                        "refused": True, "guardrail": verdict.to_dict()}
+        return
     scope, bad = _resolve(req.scope_bpml)
     if bad:
         yield "error", {"message": bad}
@@ -191,6 +200,20 @@ def run(req: RunRequest) -> Iterator[Event]:
         # leaves behind what it had found by then, which is usually the reason
         # anyone reopens it.
         calls_log: list[dict] = []
+        # The investigation as a story, in the order it happened: the same
+        # entry shapes as the Evidence Agent's log, so the same console reads
+        # it. Tool calls point into `calls_log` by index rather than carrying
+        # a second copy of every passage.
+        log: list[dict] = []
+
+        def entry(kind: str, data: dict) -> dict:
+            e = _log_entry(len(log), kind, data, len(calls_log) - 1)
+            log.append(e)
+            try:
+                store.save_log(conn, run_id, log)
+            except Exception:
+                pass  # bookkeeping must never become the run's error
+            return e
 
         def recorded(events):
             for name, payload in events:
@@ -200,19 +223,36 @@ def run(req: RunRequest) -> Iterator[Event]:
                         store.save_calls(conn, run_id, calls_log)
                     except Exception:
                         pass  # bookkeeping must never become the run's error
-                yield name, payload
+                    yield name, payload
+                    yield "log", entry("tool_call", payload)
+                elif name in ("thinking", "note"):
+                    yield "log", entry(name, payload)
+                else:
+                    yield name, payload
+
+        yield "log", entry("question", {"text": (
+            (req.question or "").strip()
+            or f"Compare the {subject.label} with the Global Template"
+               + (f" for {req.country}" if req.country else "")
+               + (f", process {record['scope_label']}" if record["scope_label"] else "")),
+            "detail": {"subject": subject.label, "country": req.country,
+                       "template_process": record["scope_label"] or "(for the agent to identify)",
+                       "attached": [f"{f['name']} ({f['role']})" for f in attached],
+                       "categories": list(categories) or "all"}})
 
         # --- pass one: understand the As-Is (§21 stage 2) -------------------
         yield "stage", {"stage": "asis", "status": "running",
                         "detail": "Reading the country As-Is documentation"}
+        yield "log", entry("note", {"kind": "stage", "title": f"Pass 1 of 2: reading the {subject.label}"})
         box: dict = {}
-        yield from recorded(_pass(lambda cb: agent.read_asis(req, scope, sess, cb), box, run,
+        yield from recorded(_pass(lambda cb, nb: agent.read_asis(req, scope, sess, cb, nb), box, run,
                          "read-as-is", lambda m: {"steps": len(m.steps),
                                                   "evidence_gaps": len(m.evidence_gaps)}))
         if box.get("error"):
             raise box["error"]
         asis, asis_cost = box["result"]
         if asis is None:
+            yield "log", entry("error", {"message": "The agent did not submit an As-Is model."})
             store.fail_run(conn, run_id, "the agent did not submit an As-Is model")
             run.update(level="WARNING", status_message="no As-Is model was submitted")
             run.end(output={"error": "the agent did not submit an As-Is model"})
@@ -228,8 +268,12 @@ def run(req: RunRequest) -> Iterator[Event]:
         # --- pass two: the three-way comparison (§21 stages 4-6) ------------
         yield "stage", {"stage": "compare", "status": "running",
                         "detail": "Comparing against the Global Template"}
+        yield "log", entry("note", {"kind": "stage",
+                                    "title": "Pass 2 of 2: comparing with the Global Template",
+                                    "text": f"{len(asis.steps)} steps carried over from pass 1.",
+                                    "detail": asis_cost})
         box = {}
-        yield from recorded(_pass(lambda cb: agent.compare(req, scope, asis, sess, cb), box, run,
+        yield from recorded(_pass(lambda cb, nb: agent.compare(req, scope, asis, sess, cb, nb), box, run,
                          "compare-to-template",
                          lambda a: {"deviations": len(a.deviations),
                                     "fit_areas": len(a.fit_areas),
@@ -238,6 +282,7 @@ def run(req: RunRequest) -> Iterator[Event]:
             raise box["error"]
         analysis, cmp_cost = box["result"]
         if analysis is None:
+            yield "log", entry("error", {"message": "The agent did not submit an analysis."})
             store.fail_run(conn, run_id, "the agent did not submit an analysis")
             run.update(level="WARNING", status_message="no analysis was submitted")
             run.end(output={"error": "the agent did not submit an analysis"})
@@ -261,6 +306,13 @@ def run(req: RunRequest) -> Iterator[Event]:
                             "items": [i.model_dump() for i in issues]}
             gate_span.update(output={k: v for k, v in gate_summary.items() if k != "items"})
         yield "gate", gate_summary
+        yield "log", entry("note", {
+            "kind": "gates",
+            "title": (f"Quality gates: {gate_summary['hard']} hard, {gate_summary['soft']} soft"
+                      + (" — the analysis was repaired" if issues else "")),
+            "text": "\n".join(f"[{i.severity}] {i.gate}{f' · {i.gap_id}' if i.gap_id else ''}: {i.detail}"
+                              for i in issues),
+            "detail": {k: v for k, v in gate_summary.items() if k != "items"}})
         yield "stage", {"stage": "gates", "status": "done",
                         "detail": f"{gate_summary['hard']} hard, {gate_summary['soft']} soft"}
 
@@ -280,6 +332,17 @@ def run(req: RunRequest) -> Iterator[Event]:
 
         run.end(output=_headline(analysis, scores, gate_summary, record["scope_label"]))
 
+        counts = scores.get("counts") or {}
+        yield "log", entry("answer", {
+            "title": (f"Analysis complete: alignment {scores.get('gt_alignment')}/100"
+                      f" · {len(analysis.deviations)} deviations"
+                      f" · {len(scores.get('agenda') or [])} decisions for the workshop"),
+            "state": "done", "text": analysis.headline,
+            "detail": {"tool_calls": asis_cost["tool_calls"] + cmp_cost["tool_calls"],
+                       "input_tokens": tokens[0], "output_tokens": tokens[1],
+                       "seconds": round(time.time() - started, 1),
+                       "workshop_minutes": counts.get("workshop_minutes")}})
+
         yield "analysis", analysis.model_dump()
         yield "scores", scores
         yield "sources", trace
@@ -291,6 +354,8 @@ def run(req: RunRequest) -> Iterator[Event]:
         }
     except Exception as exc:
         try:
+            if "entry" in locals():
+                yield "log", entry("error", {"message": f"{type(exc).__name__}: {exc}"})
             store.fail_run(conn, run_id, f"{type(exc).__name__}: {exc}")
         except Exception:
             pass
@@ -332,7 +397,8 @@ def _pass(work: Callable, out: dict, run: tracing.Run, name: str,
         try:
             with run.step(name, as_type="agent") as span:
                 out["result"] = work(
-                    lambda call, stage: events.put(("tool_call", _call_event(stage, call))))
+                    lambda call, stage: events.put(("tool_call", _call_event(stage, call))),
+                    lambda kind, data: events.put((kind, data)))
                 model, cost = out["result"]
                 span.update(output=summarise(model) if model is not None else None,
                             metadata=cost)
@@ -379,6 +445,33 @@ def _headline(analysis, scores: dict, gates_summary: dict, scope_label: str) -> 
         "soft_gate_findings": gates_summary.get("soft"),
         "template_process": (analysis.template_process[:200] or scope_label),
     }
+
+
+def _log_entry(seq: int, kind: str, data: dict, call_index: int) -> dict:
+    """One line of the investigation log, capped: a reasoning block is
+    unbounded, and a log nobody can load is a log nobody reads."""
+    from datetime import datetime, timezone
+
+    e: dict = {"seq": seq, "at": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+               "kind": kind}
+    if data.get("stage"):
+        e["stage"] = data["stage"]
+    if kind == "tool_call":
+        e.update({"tool": data.get("tool"), "engine": data.get("engine"),
+                  "summary": data.get("summary"), "ms": data.get("ms"),
+                  "error": data.get("error"), "arguments": data.get("arguments"),
+                  "call": call_index})
+    elif kind == "thinking":
+        e.update({"text": (data.get("text") or "")[:6000], "turn": data.get("turn")})
+    elif kind == "note":
+        e.update({"note": data.get("kind"), "title": data.get("title"),
+                  "text": (data.get("text") or "")[:6000], "detail": data.get("detail") or {}})
+    elif kind in ("question", "answer"):
+        e.update({"text": (data.get("text") or "")[:6000], "title": data.get("title"),
+                  "state": data.get("state"), "detail": data.get("detail") or {}})
+    elif kind == "error":
+        e.update({"text": str(data.get("message", ""))[:2000]})
+    return e
 
 
 def _call_event(stage: str, call) -> dict:

@@ -28,6 +28,7 @@ from fitgap import verifier as fverify  # noqa: E402
 
 from fitgap import memory as agent_memory  # noqa: E402
 from fitgap import trace  # noqa: E402
+from guardrails import POLICY, REFUSAL, contact, scope as scope_guard, web  # noqa: E402
 from . import independence, paths, provenance, scoring  # noqa: E402
 from .schemas import Answer, Claim, Source  # noqa: E402
 
@@ -209,7 +210,7 @@ Call submit_answer once, with:
 
 British English. If you find yourself writing a sentence you would not say out
 loud to a colleague, rewrite it.
-"""
+""" + "\n" + POLICY
 
 
 def prompt_hash() -> str:
@@ -340,6 +341,8 @@ DISPATCH: dict[str, Callable[..., dict]] = {
     "graph_neighbors": ftools.graph_neighbors,
     "graph_path": graph_path,
     "graph_enumerate": graph_enumerate,
+    # Gated in guardrails/web.py; only offered when switched on.
+    "web_search": web.search,
 }
 
 ENGINE_OF = {
@@ -347,6 +350,7 @@ ENGINE_OF = {
     "graph_entity": "graph", "graph_neighbors": "graph",
     "graph_path": "graph", "graph_enumerate": "graph",
     "get_scope": "bpml",
+    "web_search": "web",
 }
 
 
@@ -466,6 +470,24 @@ def run(question: str, holdout: bool = False,
     import anthropic
 
     started = time.time()
+
+    # The scope guardrail, before anything is spent. A question a general
+    # chatbot would answer is refused here rather than handed to an agent
+    # that might answer it from its own knowledge anyway.
+    verdict = scope_guard.check(question)
+    if not verdict.allowed:
+        yield "note", {"kind": "guardrail", "title": "Refused: outside this assistant's scope",
+                       "text": verdict.reason or verdict.category, "detail": verdict.to_dict()}
+        refused = tracing.start_run("investigate-question", input={"question": question},
+                                    metadata={"guardrail": verdict.to_dict()},
+                                    tags=["evidence-agent", "guardrail-refused"])
+        answer = Answer(question=question, state="not_in_corpus", answer=REFUSAL,
+                        limits=[scope_guard.refusal_detail(verdict)],
+                        seconds=round(time.time() - started, 2))
+        refused.end(output={"state": "refused", "category": verdict.category})
+        yield "answer", answer.model_dump()
+        return
+
     scope = tuple(sorted({c.strip().upper() for c in (categories or []) if c.strip()}))
     session = ftools.Session(holdout=holdout, categories=scope)
     client = anthropic.Anthropic()
@@ -510,12 +532,16 @@ def run(question: str, holdout: bool = False,
     yield "note", {"kind": "prompt", "title": "Context handed to the agent",
                    "text": prompt,
                    "detail": {"question": question,
+                              # Why this question was let through, and how that
+                              # was decided (a signal, the classifier, or the
+                              # classifier being unreachable).
+                              "guardrail": verdict.to_dict(),
                               "scope": list(scope) or ["all categories"],
                               "memory_notes": len(remembered),
                               "characters": len(prompt)}}
 
     messages: list[dict[str, Any]] = [{"role": "user", "content": prompt}]
-    defs = tool_definitions()
+    defs = tool_definitions() + web.definitions(session)
 
     calls = turns = 0
     in_tokens = out_tokens = last_in = 0
@@ -658,6 +684,9 @@ def run(question: str, holdout: bool = False,
                 open_questions=["Re-run this question."])
 
         final = finalise(submitted, session, engines, calls, in_tokens, out_tokens, started)
+        # After verification, which checks each quote against the document as
+        # written; before anything leaves -- the page, the history, memory.
+        final = Answer.model_validate(contact.redact_obj(final.model_dump()))
         if use_memory:
             # After finalise, so only verified evidence can be written down, and
             # best-effort, so a memory server that has gone away cannot turn an

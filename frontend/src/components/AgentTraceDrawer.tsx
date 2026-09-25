@@ -11,19 +11,7 @@ import {
 import { alpha, useTheme, type Theme } from "@mui/material/styles";
 import { nodeHues, unknownHue } from "../theme";
 import * as d3 from "d3";
-import {
-  ArrowRight,
-  BookOpen,
-  Crosshair,
-  ExternalLink,
-  Maximize2,
-  Network,
-  Quote,
-  Search,
-  Target,
-  TriangleAlert,
-  X,
-} from "lucide-react";
+import { ArrowRight, BookOpen, Crosshair, ExternalLink, Globe, Maximize2, Network, Quote, Search, Target, TriangleAlert, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   AgentToolCall,
@@ -70,6 +58,7 @@ const ENGINE_FACE: Record<string, { name: string; colour: string; icon: typeof S
   rag: { name: "RAG", colour: "primary.main", icon: Search },
   graph: { name: "GRAPH", colour: "info.main", icon: Network },
   bpml: { name: "BPML", colour: "success.main", icon: Target },
+  web: { name: "WEB", colour: "warning.main", icon: Globe },
 };
 
 const ROLE_LABEL: Record<string, string> = {

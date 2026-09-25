@@ -1,0 +1,195 @@
+{
+  "_comment": [
+    "The Ask RAG quality dashboard, as code. Uploaded with:",
+    "    python evaluation.py dashboard push",
+    "",
+    "Written down rather than drawn once in a browser, because a dashboard",
+    "built by hand exists in exactly one project and nobody can tell what it",
+    "asks. Every widget below is a Langfuse metrics-API query, and each one",
+    "was run against a live project before being committed.",
+    "",
+    "The one thing this file deliberately does NOT contain is a 'top failing",
+    "traces' table. traceId is a high-cardinality dimension in the query",
+    "engine and cannot be grouped on, and the feature is already native and",
+    "better elsewhere: the traces table takes a score filter directly, so",
+    "'faithfulness < 0.7' is a filter on the list you were going to open",
+    "anyway. The NUMBER widget below counts them; the list is one click away.",
+    "",
+    "Grid is 12 columns wide. y is in rows; the UI packs upward."
+  ],
+  "dashboard": {
+    "name": "Ask RAG quality",
+    "description": "Ragas judges over every Ask RAG answer: how grounded, how relevant, how well retrieved, and whether anything needs a human."
+  },
+  "widgets": [
+    {
+      "name": "Average score by metric",
+      "description": "Every judge, averaged over the period. The shape of this bar chart is the shape of the pipeline's weaknesses.",
+      "view": "scores-numeric",
+      "chartType": "HORIZONTAL_BAR",
+      "dimensions": [{ "field": "name" }],
+      "metrics": [{ "measure": "value", "agg": "avg" }],
+      "filters": [
+        {
+          "column": "traceName",
+          "operator": "=",
+          "value": "answer-question",
+          "type": "string"
+        }
+      ],
+      "placement": { "x": 0, "y": 0, "width": 6, "height": 5 }
+    },
+    {
+      "name": "Overall quality over time",
+      "description": "The weighted mean, day by day. A step in this line usually means a prompt or corpus change, not a gradual drift -- check prompt_hash and corpus_fingerprint before reading it as a regression.",
+      "view": "scores-numeric",
+      "chartType": "LINE_TIME_SERIES",
+      "dimensions": [],
+      "metrics": [{ "measure": "value", "agg": "avg" }],
+      "filters": [
+        {
+          "column": "name",
+          "operator": "=",
+          "value": "overall_quality",
+          "type": "string"
+        }
+      ],
+      "placement": { "x": 6, "y": 0, "width": 6, "height": 5 }
+    },
+    {
+      "name": "Grounding over time",
+      "description": "Faithfulness alone, which is the metric worth watching hardest: it is the one that catches an answer citing something the excerpts do not say.",
+      "view": "scores-numeric",
+      "chartType": "LINE_TIME_SERIES",
+      "dimensions": [],
+      "metrics": [{ "measure": "value", "agg": "avg" }],
+      "filters": [
+        {
+          "column": "name",
+          "operator": "=",
+          "value": "faithfulness",
+          "type": "string"
+        }
+      ],
+      "placement": { "x": 0, "y": 5, "width": 6, "height": 5 }
+    },
+    {
+      "name": "Quality distribution",
+      "description": "The spread of overall quality. A mean of 0.8 made of consistent 0.8s and one made of 0.95s and 0.4s are different systems, and only this chart tells them apart.",
+      "view": "scores-numeric",
+      "chartType": "HISTOGRAM",
+      "dimensions": [],
+      "metrics": [{ "measure": "value", "agg": "count" }],
+      "filters": [
+        {
+          "column": "name",
+          "operator": "=",
+          "value": "overall_quality",
+          "type": "string"
+        }
+      ],
+      "placement": { "x": 6, "y": 5, "width": 6, "height": 5 }
+    },
+    {
+      "name": "Retrieval quality over time",
+      "description": "Precision, relevance and utilisation together. When the generation metrics fall and these fall with them, the problem is retrieval and not the prompt.",
+      "view": "scores-numeric",
+      "chartType": "LINE_TIME_SERIES",
+      "dimensions": [{ "field": "name" }],
+      "metrics": [{ "measure": "value", "agg": "avg" }],
+      "filters": [
+        {
+          "column": "name",
+          "operator": "any of",
+          "value": [
+            "context_precision",
+            "context_relevance",
+            "context_utilization"
+          ],
+          "type": "stringOptions"
+        }
+      ],
+      "placement": { "x": 0, "y": 10, "width": 8, "height": 5 }
+    },
+    {
+      "name": "Quality by search mode",
+      "description": "Hybrid against vector against keyword, read off the mode-* tag every Ask trace carries. This is a comparison of live traffic, so it is confounded by which questions people happen to ask in each mode -- the experiment path is where this comparison is controlled.",
+      "view": "scores-numeric",
+      "chartType": "VERTICAL_BAR",
+      "dimensions": [{ "field": "tags" }],
+      "metrics": [{ "measure": "value", "agg": "avg" }],
+      "filters": [
+        {
+          "column": "name",
+          "operator": "=",
+          "value": "overall_quality",
+          "type": "string"
+        }
+      ],
+      "placement": { "x": 8, "y": 10, "width": 4, "height": 5 }
+    },
+    {
+      "name": "Answers scored",
+      "description": "How many answers carry an overall score at all. Compare against the number of Ask traces: a gap means sampling, a judge failure, or scoring switched off.",
+      "view": "scores-numeric",
+      "chartType": "NUMBER",
+      "dimensions": [],
+      "metrics": [{ "measure": "value", "agg": "count" }],
+      "filters": [
+        {
+          "column": "name",
+          "operator": "=",
+          "value": "overall_quality",
+          "type": "string"
+        }
+      ],
+      "placement": { "x": 0, "y": 15, "width": 3, "height": 3 }
+    },
+    {
+      "name": "Answers below the quality line",
+      "description": "Overall quality under 0.70. Click through to the traces table and filter on the same score to read them; that list is native and needs no widget.",
+      "view": "scores-numeric",
+      "chartType": "NUMBER",
+      "dimensions": [],
+      "metrics": [{ "measure": "value", "agg": "count" }],
+      "filters": [
+        {
+          "column": "name",
+          "operator": "=",
+          "value": "overall_quality",
+          "type": "string"
+        },
+        { "column": "value", "operator": "<", "value": 0.7, "type": "number" }
+      ],
+      "placement": { "x": 3, "y": 15, "width": 3, "height": 3 }
+    },
+    {
+      "name": "Answers needing a human",
+      "description": "Safety score below 1, meaning a harmfulness or maliciousness judge flagged the answer. Expected to be zero on a corpus of process documentation; anything else is worth reading rather than charting.",
+      "view": "scores-numeric",
+      "chartType": "NUMBER",
+      "dimensions": [],
+      "metrics": [{ "measure": "value", "agg": "count" }],
+      "filters": [
+        {
+          "column": "name",
+          "operator": "=",
+          "value": "safety",
+          "type": "string"
+        },
+        { "column": "value", "operator": "<", "value": 1, "type": "number" }
+      ],
+      "placement": { "x": 6, "y": 15, "width": 3, "height": 3 }
+    },
+    {
+      "name": "Safety judgements",
+      "description": "The boolean judges themselves, counted. Kept beside the number above so that 'nothing was flagged' and 'nothing was judged' cannot be confused for one another.",
+      "view": "scores-boolean",
+      "chartType": "HORIZONTAL_BAR",
+      "dimensions": [{ "field": "name" }],
+      "metrics": [{ "measure": "value", "agg": "sum" }],
+      "filters": [],
+      "placement": { "x": 9, "y": 15, "width": 3, "height": 3 }
+    }
+  ]
+}

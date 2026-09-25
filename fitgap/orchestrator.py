@@ -16,6 +16,7 @@ from typing import Iterator
 
 import tracing
 import uploads
+from guardrails import REFUSAL, scope as scope_guard
 
 from . import agent, bpml, store, synthesis, tools, verifier
 from .schemas import RunRequest, VerifiedEntry
@@ -51,6 +52,14 @@ def run(req: RunRequest) -> Iterator[Event]:
     """Yields ('scope'|'step_start'|'tool_call'|'entry'|'verify_fail'|
     'synthesis'|'done'|'error', payload)."""
     started = time.time()
+    # The scope guardrail, on the one thing here a person types freely. A run
+    # asked to answer something outside the programme is refused before it
+    # reads a document, with the same words the Evidence Agent uses.
+    verdict = scope_guard.check(req.question)
+    if not verdict.allowed:
+        yield "error", {"message": f"{REFUSAL} {scope_guard.refusal_detail(verdict)}",
+                        "refused": True, "guardrail": verdict.to_dict()}
+        return
     scope = bpml.get(req.scope_bpml) or bpml.resolve_scope(req.scope_bpml)
     if not scope:
         yield "error", {"message": f"'{req.scope_bpml}' does not resolve to a BPML process"}

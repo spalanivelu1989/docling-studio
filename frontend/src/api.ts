@@ -63,6 +63,11 @@ export interface RagStatus {
    *  what there is to search: a category holding nothing is still a valid
    *  destination, it just cannot be a filter yet. */
   ingest_categories?: CategoryInfo[];
+  /** A fingerprint of the answering prompt. Two quality scores either side of
+   *  a change to it are not comparable. */
+  prompt_hash?: string;
+  tracing?: { enabled: boolean; environment: string; host: string };
+  evaluation?: EvaluationStatus;
   error: string | null;
 }
 
@@ -99,6 +104,78 @@ export interface Done {
 }
 
 export type SearchMode = "hybrid" | "vector" | "keyword";
+
+/** The judge's own working, kept on the way past.
+ *
+ *  Ragas computes all of this and then discards it -- its MetricResult comes
+ *  back with no reason and no traces -- so it is intercepted at the judge LLM
+ *  and normalised server-side into one of four shapes. The page draws the
+ *  shape and never needs to know what an `NLIStatementOutput` is. */
+export type MetricWorking =
+  | { kind: "claims"; items: { text: string; supported: boolean; reason: string }[] }
+  | { kind: "excerpts"; items: { n: number | null; useful: boolean; reason: string }[] }
+  | { kind: "questions"; items: { text: string; noncommittal: boolean }[] }
+  | { kind: "ratings"; items: { judge: number; rating: number | null; of: number; label: string }[] }
+  | Record<string, never>;
+
+/** One judge's verdict on one answer. `value` is null when that judge did not
+ *  return -- which is different from a zero, and is drawn differently. */
+export interface MetricScore {
+  value: number | null;
+  /** Why, in the judge's words. Ragas' own metrics return nothing here; the
+   *  rubric-based ones (coherence, conciseness, the safety pair) do -- and for
+   *  the Ragas five, `working` carries far more than a reason would. */
+  reason: string;
+  error: string;
+  seconds?: number;
+  working?: MetricWorking;
+}
+
+/** The arithmetic behind the overall score, kept so the number can be checked
+ *  rather than believed. */
+export interface EvaluationTerms {
+  weights?: Record<string, number>;
+  /** Judges that did not return, and so were left out of both sides of the
+   *  mean instead of being counted as zero. */
+  dropped?: string[];
+  flagged?: string[];
+  capped?: boolean;
+  cap?: number;
+}
+
+export interface AskEvaluation {
+  run_id?: string;
+  /** `none` means nobody has judged this answer; `skipped` means we chose not
+   *  to. The page says something different for each. */
+  status: "none" | "running" | "done" | "failed" | "skipped" | "abandoned";
+  judge_model?: string;
+  ragas_version?: string;
+  started_at?: string | null;
+  finished_at?: string | null;
+  seconds?: number;
+  metrics: Record<string, MetricScore>;
+  overall: number | null;
+  safety: number | null;
+  terms: EvaluationTerms;
+  scores_pushed?: number;
+  error?: string;
+}
+
+/** What scoring is configured to do, from /api/rag/status. Lets the page
+ *  explain an absent scorecard instead of showing an empty panel. */
+export interface EvaluationStatus {
+  enabled: boolean;
+  available: boolean;
+  detail: string;
+  judge_model?: string;
+  ragas_version?: string;
+  sample?: number;
+  online?: string[];
+  /** Needs a reference answer, so never scored on a live question. */
+  reference_only?: string[];
+  safety?: string[];
+  weights?: Record<string, number>;
+}
 
 /** `?categories=PKG&categories=DR`, or nothing at all for the whole graph. */
 function categoryQuery(categories: string[]): string {
@@ -470,6 +547,10 @@ export interface AskHandlers {
    *  pipeline starts. `not_saved` means the answer is coming but the history
    *  write failed -- the question is answered either way. */
   run?: (r: { id: string; not_saved?: string }) => void;
+  /** The Langfuse trace this question opened, sent before any work. Both
+   *  fields are empty strings when tracing is off. Optional so that a caller
+   *  which does not care keeps compiling. */
+  trace?: (t: { id: string; url: string }) => void;
   stage: (e: StageEvent) => void;
   sources: (s: Source[]) => void;
   token: (t: string) => void;
@@ -512,6 +593,7 @@ export async function ask(
       }
       const payload = data ? JSON.parse(data) : null;
       if (event === "run") on.run?.(payload);
+      else if (event === "trace") on.trace?.(payload);
       else if (event === "stage") on.stage(payload);
       else if (event === "sources") on.sources(payload);
       else if (event === "token") on.token(payload);
@@ -1207,6 +1289,8 @@ export interface EvidenceLogEntry {
   detail?: Record<string, unknown>;
   /** thinking */
   turn?: number;
+  /** Fit-Gap Copilot: which pass the line belongs to (asis · compare). */
+  stage?: string;
   /** memory */
   used?: boolean;
   recalled?: number;
@@ -1369,6 +1453,10 @@ export interface AskRunSummary {
   input_tokens: number;
   output_tokens: number;
   error: string;
+  /** Enough of the evaluation to badge the row. "" when nothing has judged it. */
+  eval_status?: "" | "running" | "done" | "failed" | "skipped" | "abandoned";
+  overall?: number | null;
+  safety?: number | null;
 }
 
 export interface AskRunDetail extends Omit<AskRunSummary, "sources" | "summary"> {
@@ -1380,12 +1468,35 @@ export interface AskRunDetail extends Omit<AskRunSummary, "sources" | "summary">
   answer: string;
   sources: Source[];
   terms: string[];
+  trace_id?: string;
+  prompt_hash?: string;
+  /** Sent with the run so a reopened question shows its scorecard in the same
+   *  paint as its answer. Null when it was never judged. */
+  evaluation?: AskEvaluation | null;
+  /** A person's verdict on whether the answer is grounded, if one was given. */
+  review?: { verdict: "grounded" | "partly" | "not"; reviewer: string; note: string; created_at: string | null } | null;
 }
 
+/** The quality segments the history panel offers. Kept in step with
+ *  ask_store.QUALITY_FILTERS by frontend/test/rag-quality.mjs. */
+export type QualityFilter = "" | "low" | "unfaithful" | "unsafe" | "unscored";
+
 export const askHistory = {
-  runs: (limit = 50, search = "") =>
-    fetch(`/api/ask/runs?limit=${limit}&search=${encodeURIComponent(search)}`)
-      .then((r) => json<{ runs: AskRunSummary[]; retention: number }>(r)),
+  runs: (limit = 50, search = "", quality: QualityFilter = "") =>
+    fetch(`/api/ask/runs?limit=${limit}&search=${encodeURIComponent(search)}`
+          + `&quality=${encodeURIComponent(quality)}`)
+      .then((r) => json<{
+        runs: AskRunSummary[];
+        retention: number;
+        filters: string[];
+        low_quality_below: number;
+      }>(r)),
+  evaluation: (id: string) =>
+    fetch(`/api/ask/runs/${encodeURIComponent(id)}/evaluation`)
+      .then((r) => json<AskEvaluation>(r)),
+  rescore: (id: string) =>
+    fetch(`/api/ask/runs/${encodeURIComponent(id)}/evaluation`, { method: "POST" })
+      .then((r) => json<{ status: string; run_id: string; judge_model: string }>(r)),
   run: (id: string) =>
     fetch(`/api/ask/runs/${encodeURIComponent(id)}`).then((r) => json<AskRunDetail>(r)),
   deleteRun: (id: string) =>
@@ -1669,6 +1780,8 @@ export interface RolloutRunDetail extends RolloutRunSummary {
   scores: RolloutScores | Record<string, never>;
   gates: RolloutGates | Record<string, never>;
   decisions: RolloutDecision[];
+  /** The investigation log. Empty for runs recorded before it was kept. */
+  log?: EvidenceLogEntry[];
 }
 
 /** One named person's verdict on one gap. The log is append-only: a later
@@ -1694,6 +1807,9 @@ export interface RolloutHandlers {
   sources: (d: RolloutSources) => void;
   done: (d: { run_id: string; seconds: number; input_tokens: number; output_tokens: number; tool_calls: number }) => void;
   error: (message: string) => void;
+  /** One line of the investigation log: reasoning, notes and tool calls, in
+   *  the Evidence Agent's shape. Optional so existing callers keep compiling. */
+  log?: (entry: EvidenceLogEntry) => void;
 }
 
 /** Run the Fit-Gap Copilot and dispatch its server-sent events. */
@@ -1715,8 +1831,14 @@ export async function runRollout(body: RolloutRunBody, on: RolloutHandlers, sign
     sources: (d) => on.sources(d as RolloutSources),
     done: (d) => on.done(d as Parameters<RolloutHandlers["done"]>[0]),
     error: (d) => on.error((d as { message: string }).message),
+    log: (d) => on.log?.(d as EvidenceLogEntry),
   });
 }
+
+/** Whether workshop-pack downloads are the client copy (no model named).
+ *  Off in the application; Demo Mode switches it on for its whole session. */
+let clientCopies = false;
+export function clientExports(on = true) { clientCopies = on; }
 
 export const rollout = {
   status: () => fetch("/api/rollout/status").then((r) => json<RolloutStatus>(r)),
@@ -1731,8 +1853,10 @@ export const rollout = {
   deleteRun: (id: string) =>
     fetch(`/api/rollout/runs/${encodeURIComponent(id)}`, { method: "DELETE" })
       .then((r) => json<{ status: string; id: string }>(r)),
-  exportUrl: (id: string, format: "md" | "json" | "pdf") =>
-    `/api/rollout/runs/${id}/export?format=${format}`,
+  /** `client` leaves the model out of the pack. Demo Mode turns it on for
+   *  every download with clientExports(), once, at start-up. */
+  exportUrl: (id: string, format: "md" | "json" | "pdf", client = clientCopies) =>
+    `/api/rollout/runs/${id}/export?format=${format}${client ? "&client=1" : ""}`,
   /** Where a cited document can be read. Corpus documents are resolved by
    *  file name; an attachment is served from its session, as the Markdown the
    *  agent actually read. */
@@ -1747,3 +1871,262 @@ export const rollout = {
       body: JSON.stringify(body),
     }).then((r) => json<RolloutDecision>(r)),
 };
+
+// --- the Answer Quality workspace ---------------------------------------------
+//
+// Four views over the judged Ask RAG answers; the arithmetic is all in
+// quality.py. Nothing here calls a judge.
+
+/** One of the four triad tiles on the Overview. */
+export interface QualityTile {
+  key: "overall" | "context_relevance" | "faithfulness" | "answer_relevancy";
+  label: string;
+  metric: string;
+  value: number | null;
+  /** The same window, one window earlier. */
+  previous: number | null;
+  delta: number | null;
+  below: number;
+  n: number;
+}
+
+/** Something worth a person's time, named as a cause rather than a metric.
+ *  `text` carries a `{subject}` placeholder the page emphasises. */
+export interface QualityAttention {
+  severity: "bad" | "warn";
+  kind: "subject" | "document" | "event";
+  target: string | number;
+  subject: string;
+  text: string;
+  detail: string;
+}
+
+export interface QualityOverview {
+  days: number;
+  line: number;
+  scored: number;
+  previous_scored: number;
+  failing: number;
+  tiles: QualityTile[];
+  series: { at: string; n: number; median: number | null; p10: number | null; p90: number | null; faithfulness: number | null }[];
+  /** Where the answering prompt or the corpus changed. */
+  events: { at: string; kind: "prompt" | "corpus"; value: string }[];
+  histogram: number[];
+  halves: { half: string; n: number; overall: number | null; faithfulness: number | null }[];
+  attention: QualityAttention[];
+  attention_error: string;
+  reviewed: number;
+  /** Whether enough answers have a person's verdict to trust the judge. */
+  checked: boolean;
+}
+
+/** A failure type: a stated rule over the scores, first match wins. */
+export interface FailureType {
+  key: "safety" | "wrong_sources" | "buried" | "ignored" | "invented" | "off_question";
+  label: string;
+  rule: string;
+  means: string;
+  fix: string;
+  count: number;
+}
+
+export interface QualityPoint {
+  run_id: string;
+  question: string;
+  at: string | null;
+  overall: number | null;
+  safety: number | null;
+  /** Mean of context relevance and precision: the quadrant's horizontal axis. */
+  retrieval: number | null;
+  faithfulness: number | null;
+  failure: FailureType["key"] | null;
+  half: string;
+  mode: string;
+  subject: number | null;
+  review: string | null;
+  /** Every score the judge returned, by metric name; null where one failed. */
+  values: Record<string, number | null>;
+  /** Input plus output tokens the answer cost. */
+  tokens: number;
+}
+
+export interface QualitySubject {
+  id: number;
+  label: string;
+  n: number;
+  overall: number | null;
+  faithfulness: number | null;
+  failure: FailureType["key"] | null;
+  failing: number;
+  /** The most typical question in the group. */
+  example: string;
+  run_ids: string[];
+}
+
+export interface QualityDocument {
+  title: string;
+  category: string;
+  retrieved: number;
+  judged: number;
+  useful: number;
+  useful_rate: number | null;
+  /** Retrieved often and rarely useful: crowding out something better. */
+  noisy: boolean;
+  run_ids: string[];
+}
+
+export interface ClaimGroup {
+  id: number;
+  label: string;
+  count: number;
+  example: string;
+  reason: string;
+  run_ids: string[];
+}
+
+export interface QualityExplorer {
+  days: number;
+  line: number;
+  failures: FailureType[];
+  points: QualityPoint[];
+  subjects: QualitySubject[];
+  subjects_error: string;
+  documents: QualityDocument[];
+  claims: ClaimGroup[];
+  claim_count: number;
+  claims_error: string;
+}
+
+export interface JudgeQueueItem {
+  run_id: string;
+  question: string;
+  kind: "disagree" | "relevance_split" | "unstable" | "sample";
+  severity: "bad" | "warn" | "info";
+  detail: string;
+}
+
+export interface JudgeTrust {
+  judge_models: string[];
+  scored: number;
+  dropped: { metric: string; tried: number; lost: number; rate: number }[];
+  dropped_rate: number | null;
+  relevance: { pairs: number; agree: number; rate: number | null };
+  stability: { rescored: number; median: number | null; unstable: number };
+  agreement: {
+    reviews: number;
+    /** Withheld (null) below `min_reviews`: a kappa over six answers is noise. */
+    kappa: number | null;
+    raw: number | null;
+    /** Rows are the judge's verdict, columns the reviewer's, in `buckets` order. */
+    matrix: number[][];
+    buckets: string[];
+    min_reviews: number;
+  };
+  checked: boolean;
+  queue: JudgeQueueItem[];
+  unstable_above: number;
+}
+
+export interface ExperimentConfig {
+  mode?: string;
+  k?: number;
+  answer_model?: string;
+  judge_model?: string;
+  prompt_hash?: string;
+  corpus_fingerprint?: string;
+  ragas_version?: string;
+  limit?: number | null;
+}
+
+export interface ExperimentSummary {
+  id: string;
+  name: string;
+  started_at: string | null;
+  finished_at: string | null;
+  status: string;
+  config: ExperimentConfig;
+  baseline: boolean;
+  langfuse_url: string;
+  error: string;
+  items: number;
+  overall: number | null;
+  correctness: number | null;
+  faithfulness: number | null;
+}
+
+export interface ExperimentRow {
+  item_id: string;
+  question: string;
+  part: string;
+  verdict: "improved" | "regressed" | "unchanged" | "missing";
+  missing_from?: "baseline" | "candidate";
+  deltas: Record<string, number | null>;
+  base: Record<string, number | null>;
+  cand: Record<string, number | null>;
+  /** Read off the excerpts, not a model: what entered, what left, what helped. */
+  why: string[];
+}
+
+export interface ExperimentComparison {
+  base: Pick<ExperimentSummary, "id" | "name" | "started_at" | "config" | "baseline">;
+  cand: Pick<ExperimentSummary, "id" | "name" | "started_at" | "config" | "baseline">;
+  /** The configuration keys that differ. A fair comparison differs in one. */
+  differs: string[];
+  counts: Partial<Record<ExperimentRow["verdict"], number>>;
+  summary: Record<string, number | null>;
+  tokens: { base: number | null; cand: number | null; change: number | null };
+  rows: ExperimentRow[];
+  noise: number;
+}
+
+export interface QualityFilters {
+  days: number;
+  half: string;
+  mode: string;
+}
+
+const qualityQuery = (f: QualityFilters) =>
+  `?days=${f.days}&half=${encodeURIComponent(f.half)}&mode=${encodeURIComponent(f.mode)}`;
+
+export const quality = {
+  overview: (f: QualityFilters) =>
+    fetch(`/api/quality/overview${qualityQuery(f)}`).then((r) => json<QualityOverview>(r)),
+  explorer: (f: QualityFilters) =>
+    fetch(`/api/quality/explorer${qualityQuery(f)}`).then((r) => json<QualityExplorer>(r)),
+  judge: () => fetch("/api/quality/judge").then((r) => json<JudgeTrust>(r)),
+  experiments: () =>
+    fetch("/api/quality/experiments").then((r) => json<{ experiments: ExperimentSummary[] }>(r)),
+  compare: (base: string, cand: string) =>
+    fetch(`/api/quality/experiments/compare?base=${encodeURIComponent(base)}&cand=${encodeURIComponent(cand)}`)
+      .then((r) => json<ExperimentComparison>(r)),
+  setBaseline: (id: string) =>
+    fetch(`/api/quality/experiments/${encodeURIComponent(id)}/baseline`, { method: "POST" })
+      .then((r) => json<{ status: string; id: string }>(r)),
+  deleteExperiment: (id: string) =>
+    fetch(`/api/quality/experiments/${encodeURIComponent(id)}`, { method: "DELETE" })
+      .then((r) => json<{ status: string; id: string }>(r)),
+  review: (runId: string, verdict: "grounded" | "partly" | "not", note = "", reviewer = "") =>
+    fetch(`/api/ask/runs/${encodeURIComponent(runId)}/review`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ verdict, note, reviewer }),
+    }).then((r) => json<{ status: string; verdict: string }>(r)),
+};
+
+/** One answered question from a run over the evaluation set. */
+export interface ExperimentItem {
+  item_id: string;
+  question: string;
+  part: string;
+  answer: string;
+  sources: { n: number; title: string; category: string }[];
+  metrics: Record<string, MetricScore>;
+  overall: number | null;
+  safety: number | null;
+  error: string;
+  experiment: { id: string; name: string; config: ExperimentConfig };
+}
+
+export const experimentItem = (experimentId: string, itemId: string) =>
+  fetch(`/api/quality/experiments/${encodeURIComponent(experimentId)}/items/${encodeURIComponent(itemId)}`)
+    .then((r) => json<ExperimentItem>(r));

@@ -5,7 +5,7 @@ import {
 import { alpha, useTheme } from "@mui/material/styles";
 import { History, Trash2, X } from "lucide-react";
 import { useEffect, useState } from "react";
-import { askHistory, type AskRunSummary } from "../api";
+import { askHistory, type AskRunSummary, type QualityFilter } from "../api";
 import { clearAdornment } from "./ClearAdornment";
 // The same relative time the other three history panels show. It was
 // written out here and again in EvidencePage; the two had not drifted yet.
@@ -21,6 +21,53 @@ const STATUS_COLOR: Record<AskRunSummary["status"], "default" | "success" | "war
   abandoned: "warning",
   failed: "error",
 };
+
+/** The quality segments, and what each one is for. These are the questions the
+ *  scores exist to make answerable -- "show me the hallucinations", "show me
+ *  anything unsafe" -- so they belong beside the history rather than only in
+ *  Langfuse. The values match ask_store.QUALITY_FILTERS. */
+const SEGMENTS: { key: QualityFilter; label: string; hint: string }[] = [
+  { key: "", label: "All", hint: "Every question, scored or not" },
+  { key: "low", label: "Low quality", hint: "Overall score below the line" },
+  { key: "unfaithful", label: "Unfaithful", hint: "Claims the excerpts do not support" },
+  { key: "unsafe", label: "Unsafe", hint: "A safety judge flagged the answer" },
+  { key: "unscored", label: "Unscored", hint: "Never judged, or judging did not finish" },
+];
+
+/** The overall score on a history row, or nothing at all.
+ *
+ *  Deliberately silent for a question nobody judged: an empty badge would read
+ *  as a score of zero, and "not scored" is not a verdict. A flagged answer
+ *  says so in words rather than as a number, because the number in that case
+ *  is a cap rather than a measurement. */
+function QualityBadge({ run }: { run: AskRunSummary }) {
+  const theme = useTheme();
+  if (run.eval_status === "running") {
+    return (
+      <Typography variant="caption" sx={{ fontSize: 11, color: "text.disabled" }}>
+        · scoring…
+      </Typography>
+    );
+  }
+  if (run.eval_status !== "done" || run.overall === null || run.overall === undefined) return null;
+  const flagged = (run.safety ?? 1) < 1;
+  const colour = flagged || run.overall < 0.4
+    ? theme.palette.error.main
+    : run.overall < 0.7 ? theme.palette.warning.main : theme.palette.success.main;
+  return (
+    <Tooltip title={flagged
+      ? "A safety judge flagged this answer, so its overall score is capped."
+      : "Overall quality, weighted across the judges."}>
+      <Box sx={{
+        px: 0.6, py: 0.1, borderRadius: 0.75, cursor: "help",
+        bgcolor: alpha(colour, 0.14), color: colour,
+        fontSize: 10.5, fontWeight: 800, fontVariantNumeric: "tabular-nums",
+      }}>
+        {flagged ? "flagged" : run.overall.toFixed(2)}
+      </Box>
+    </Tooltip>
+  );
+}
 
 export default function AskHistoryDrawer({
   open,
@@ -44,6 +91,7 @@ export default function AskHistoryDrawer({
   const [runs, setRuns] = useState<AskRunSummary[]>([]);
   const [retention, setRetention] = useState(0);
   const [search, setSearch] = useState("");
+  const [quality, setQuality] = useState<QualityFilter>("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -54,7 +102,7 @@ export default function AskHistoryDrawer({
     // Debounced, so typing in the filter does not fire a query per keystroke.
     const t = setTimeout(() => {
       askHistory
-        .runs(50, search)
+        .runs(50, search, quality)
         .then((r) => {
           if (cancelled) return;
           setRuns(r.runs);
@@ -68,7 +116,7 @@ export default function AskHistoryDrawer({
       cancelled = true;
       clearTimeout(t);
     };
-  }, [open, search, reloadKey]);
+  }, [open, search, quality, reloadKey]);
 
   const remove = async (id: string) => {
     setRuns((rs) => rs.filter((r) => r.id !== id));
@@ -164,6 +212,21 @@ export default function AskHistoryDrawer({
             },
           }}
         />
+
+        <Stack direction="row" spacing={0.75} useFlexGap sx={{ flexWrap: "wrap", mt: 1.25 }}>
+          {SEGMENTS.map((seg) => (
+            <Tooltip key={seg.key || "all"} title={seg.hint}>
+              <Chip
+                size="small"
+                label={seg.label}
+                variant={quality === seg.key ? "filled" : "outlined"}
+                color={quality === seg.key && seg.key ? "primary" : "default"}
+                onClick={() => setQuality(seg.key)}
+                sx={{ height: 24, fontSize: 11, fontWeight: 600, borderRadius: 1 }}
+              />
+            </Tooltip>
+          ))}
+        </Stack>
       </Box>
 
       {/* ---------- list ---------- */}
@@ -272,6 +335,7 @@ export default function AskHistoryDrawer({
                   · {r.mode} · {plural(r.sources, "excerpt")}
                   {r.seconds ? ` · ${r.seconds}s` : ""}
                 </Typography>
+                <QualityBadge run={r} />
                 <Box sx={{ flex: 1 }} />
                 <Button
                   size="small"

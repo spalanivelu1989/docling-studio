@@ -1,8 +1,9 @@
 import { AppBar, Box, CssBaseline, GlobalStyles, IconButton, Tab, Tabs, ThemeProvider, Toolbar, Tooltip, Typography } from "@mui/material";
 import { alpha, type Theme } from "@mui/material/styles";
 import { AnimatePresence, MotionConfig, motion } from "framer-motion";
-import { Columns2, DatabaseZap, FileText, FlaskConical, FolderArchive, Globe2, ListChecks, MessageSquareText, Moon, Network, ScanEye, Scale, Sun } from "lucide-react";
+import { Columns2, DatabaseZap, FileText, FlaskConical, FolderArchive, Gauge, Globe2, ListChecks, LogOut, MessageSquareText, Moon, Network, ScanEye, Scale, Sun } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactElement } from "react";
+import BrandLogo from "./components/BrandLogo";
 import AddToKnowledgeBasePage from "./pages/AddToKnowledgeBasePage";
 import AskPage from "./pages/AskPage";
 import BatchConvertPage from "./pages/BatchConvertPage";
@@ -14,10 +15,11 @@ import FitGapPage from "./pages/FitGapPage";
 import KnowledgeGraphPage from "./pages/KnowledgeGraphPage";
 import LandingPage from "./pages/LandingPage";
 import MdViewerPage from "./pages/MdViewerPage";
+import QualityPage from "./pages/QualityPage";
 import RolloutPage from "./pages/RolloutPage";
 import { makeTheme, searchColors, type Mode } from "./theme";
 
-type Page = "ask" | "graph" | "evidence" | "fitgap" | "rollout" | "extract" | "batch" | "add-kb" | "coverage" | "review" | "viewer" | "landing";
+type Page = "ask" | "quality" | "graph" | "evidence" | "fitgap" | "rollout" | "extract" | "batch" | "add-kb" | "coverage" | "review" | "viewer" | "landing";
 /** The header reads left to right as the pipeline actually runs: ask the
  *  corpus, convert documents into it, index them, then check the conversion.
  *  Each stage carries its own accent so the bar can be scanned rather than
@@ -33,6 +35,9 @@ const TABS: { value: Page; label: string; icon: ReactElement; group: TabGroup }[
   // The order a question escalates through them: one engine, the other
   // engine, an agent over both, then the agent that writes a register.
   { value: "ask", label: "Ask RAG", icon: <MessageSquareText size={16} />, group: "engine" },
+  // Beside Ask rather than with the inspection tools: it grades what Ask
+  // answered, and the two are used together.
+  { value: "quality", label: "RAG Metrics", icon: <Gauge size={16} />, group: "engine" },
   { value: "graph", label: "Knowledge Graph", icon: <Network size={16} />, group: "engine" },
   { value: "evidence", label: "Agent", icon: <FlaskConical size={16} />, group: "engine" },
   { value: "fitgap", label: "InsightLens", icon: <Scale size={16} />, group: "engine" },
@@ -99,6 +104,7 @@ const LABEL_ALPHA: Record<"light" | "dark", Record<TabGroup, number>> = {
 
 const PATHS: Record<Page, string> = {
   ask: "/ask",
+  quality: "/quality",
   graph: "/graph",
   evidence: "/evidence",
   fitgap: "/fit-gap",
@@ -121,6 +127,7 @@ const pageFromPath = (): Page => {
   if (location.pathname.startsWith("/rollout") || location.pathname.startsWith("/fit-to-standard")) return "rollout";
   if (location.pathname.startsWith("/evidence") || location.pathname.startsWith("/investigate")) return "evidence";
   if (location.pathname.startsWith("/ask")) return "ask";
+  if (location.pathname.startsWith("/quality")) return "quality";
   if (location.pathname.startsWith("/md-viewer") || location.pathname.startsWith("/viewer")) return "viewer";
   if (location.pathname.startsWith("/coverage")) return "coverage";
   if (location.pathname.startsWith("/review") || location.pathname.startsWith("/doc-md-viewer")) return "review";
@@ -142,6 +149,12 @@ export default function App() {
   const [mode, setMode] = useState<Mode>(initialMode);
   const [page, setPage] = useState<Page>(pageFromPath);
   const theme = useMemo(() => makeTheme(mode), [mode]);
+  // Who is signed in, for the sign-out button. Absent when the server has
+  // the sign-in switched off (APP_LOGIN=off), and then there is no button.
+  const [signedIn, setSignedIn] = useState<string | null>(null);
+  useEffect(() => {
+    fetch("/api/app/session").then((r) => r.json()).then((d) => setSignedIn(d.user ?? null)).catch(() => undefined);
+  }, []);
   const activeGroup = groupOf(page);
   // The Fit-Gap page hands a ticket or system name to the Graph page. The
   // nonce makes a repeat of the same text re-run the query.
@@ -227,20 +240,8 @@ export default function App() {
                     transition: "opacity 0.15s ease",
                   }}
                 >
-                  <Box
-                    component={motion.div}
-                    whileHover={{ rotate: -8, scale: 1.08 }}
-                    sx={{
-                      width: 28,
-                      height: 28,
-                      borderRadius: 2,
-                      display: "grid",
-                      placeItems: "center",
-                      bgcolor: "primary.main",
-                      color: "primary.contrastText",
-                    }}
-                  >
-                    <FileText size={16} />
+                  <Box component={motion.div} whileHover={{ scale: 1.08 }} sx={{ display: "flex" }}>
+                    <BrandLogo size={30} />
                   </Box>
                   <Typography sx={{ fontWeight: 700, letterSpacing: "-.01em", whiteSpace: "nowrap" }}>
                     Spark AI{" "}
@@ -322,6 +323,16 @@ export default function App() {
                   </AnimatePresence>
                 </IconButton>
               </Tooltip>
+              {signedIn && (
+                <Tooltip title={`Signed in as ${signedIn} — sign out`}>
+                  <IconButton aria-label="Sign out" onClick={async () => {
+                    await fetch("/api/app/logout", { method: "POST" }).catch(() => undefined);
+                    location.replace("/login");
+                  }}>
+                    <LogOut size={18} />
+                  </IconButton>
+                </Tooltip>
+              )}
             </Toolbar>
           </AppBar>
 
@@ -357,6 +368,8 @@ export default function App() {
                   <DocMdViewerPage />
                 ) : p === "viewer" ? (
                   <MdViewerPage />
+                ) : p === "quality" ? (
+                  <QualityPage active={page === "quality"} />
                 ) : p === "landing" ? (
                   <LandingPage onNavigate={(next) => go(next)} />
                 ) : (

@@ -64,7 +64,9 @@ def teardown() -> None:
 
 
 def clear() -> None:
-    ask_store.connect().execute("TRUNCATE TABLE ask_runs")
+    # CASCADE, because ask_evaluations references ask_runs. Without it every
+    # test in this file fails on the foreign key rather than on its subject.
+    ask_store.connect().execute("TRUNCATE TABLE ask_runs CASCADE")
     ask_store.connect().commit()
 
 
@@ -172,6 +174,40 @@ def test_the_filter_matches_question_text_only():
     assert [r["id"] for r in ask_store.list_runs(conn, search="packaging")] == ["ask_7a"]
     assert [r["id"] for r in ask_store.list_runs(conn, search="BILLING")] == ["ask_7b"]
     assert ask_store.list_runs(conn, search="nothing here") == []
+
+
+def test_the_schema_is_brought_up_once_however_many_requests_arrive():
+    """The bug this is here for: every endpoint called create_schema, whose
+    ALTER TABLE ... ADD COLUMN IF NOT EXISTS takes an exclusive lock even when
+    the column exists. Two requests together -- the quality dashboard loading
+    two views -- deadlocked, and Postgres killed one of them."""
+    import threading
+
+    calls = []
+    real = ask_store._create_schema
+    ask_store._create_schema = lambda conn: (calls.append(1), real(conn))
+    ask_store._ready.clear()
+    errors = []
+
+    def request():
+        try:
+            ask_store.create_schema(ask_store.connect())
+            ask_store.connect().execute("SELECT count(*) FROM ask_runs").fetchone()
+        except Exception as exc:
+            errors.append(exc)
+        finally:
+            rag.close()
+
+    try:
+        threads = [threading.Thread(target=request) for _ in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+    finally:
+        ask_store._create_schema = real
+    assert not errors, errors
+    assert len(calls) == 1, f"the DDL ran {len(calls)} times for 8 concurrent requests"
 
 
 def main() -> int:

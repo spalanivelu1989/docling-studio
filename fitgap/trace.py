@@ -63,7 +63,7 @@ MAX_DESC = 240
 # attached to one session rather than the corpus. The `sources` label on the
 # call already says which database answered; what matters here is that it comes
 # back as passages a reader can check.
-RAG_TOOLS = ("search_corpus", "search_uploads", "get_chunk", "read_sources")
+RAG_TOOLS = ("search_corpus", "search_uploads", "get_chunk", "read_sources", "web_search")
 GRAPH_TOOLS = ("graph_entity", "graph_neighbors", "graph_path", "graph_enumerate",
                "compare_entities")
 

@@ -781,7 +781,94 @@ def test_the_log_survives_a_reopened_run():
         assert len(back) == 1
         assert back[0]["trace"]["hits"][0]["text"] == "a passage"
         assert back[0]["engine"] == "rag"
+        # The reasoning and notes are kept beside the calls, for the same reason.
+        store.save_log(conn, "ro_log", [{"seq": 0, "kind": "thinking", "text": "Looking for X."}])
+        assert store.get_run(conn, "ro_log")["log"][0]["text"] == "Looking for X."
     _with_store(check)
+
+
+def test_a_pass_reports_its_reasoning_rejections_and_submission():
+    """The Investigation log used to show only tool calls: the model's text
+    between them was dropped, and a submission rejected and re-made left no
+    trace. Driven here by a scripted model, so no real call is made."""
+    import types
+
+    import pydantic
+
+    from fitgap import tools as ftools
+    from rollout import agent
+
+    class Out(pydantic.BaseModel):
+        n: int
+
+    def block(**kw):
+        return types.SimpleNamespace(**kw)
+
+    turns = [
+        [block(type="text", text="Checking which sources are attached first."),
+         block(type="tool_use", id="t1", name="no_such_tool", input={})],
+        [block(type="text", text="Submitting."),
+         block(type="tool_use", id="t2", name="submit_x", input={"n": "not a number"})],
+        [block(type="tool_use", id="t3", name="submit_x", input={"n": 3})],
+    ]
+    usage = types.SimpleNamespace(input_tokens=10, output_tokens=5)
+
+    class Stream:
+        def __init__(self, content):
+            self.content = content
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            return False
+        def get_final_message(self):
+            return types.SimpleNamespace(content=self.content, usage=usage)
+
+    class Client:
+        class messages:
+            @staticmethod
+            def stream(**kw):
+                return Stream(turns.pop(0))
+
+    notes, tool_calls = [], []
+    real = agent._client
+    agent._client = lambda: Client()
+    try:
+        out, cost = agent._run("sys", "the context", "asis", ftools.Session(), "submit_x", Out,
+                               lambda call, stage: tool_calls.append(call.name),
+                               lambda kind, data: notes.append((kind, data)))
+    finally:
+        agent._client = real
+
+    assert out == Out(n=3)
+    kinds = [(k, d.get("kind")) for k, d in notes]
+    assert kinds[0] == ("note", "prompt") and notes[0][1]["text"] == "the context"
+    thinking = [d["text"] for k, d in notes if k == "thinking"]
+    assert thinking == ["Checking which sources are attached first.", "Submitting."], thinking
+    assert ("note", "rejected") in kinds, "a rejected submission left no trace"
+    assert kinds[-1] == ("note", "submitted")
+    assert all(d["stage"] == "asis" for _, d in notes)
+    assert tool_calls == ["no_such_tool"]
+
+
+def test_the_prompt_asks_the_agent_to_narrate():
+    from rollout import agent
+    from rollout.schemas import SUBJECTS
+
+    for s in SUBJECTS.values():
+        assert agent.NARRATION in agent.system_subject(s)
+        assert agent.NARRATION in agent.system_compare(s)
+
+
+def test_a_log_entry_keeps_the_shape_the_console_reads():
+    from rollout.orchestrator import _log_entry
+
+    call = _log_entry(3, "tool_call", {"tool": "search_corpus", "engine": "rag", "summary": "4",
+                                       "ms": 9, "arguments": {"q": 1}, "stage": "compare"}, 2)
+    assert call["call"] == 2 and call["stage"] == "compare" and call["tool"] == "search_corpus"
+    long = _log_entry(0, "thinking", {"text": "x" * 9000, "turn": 1}, -1)
+    assert len(long["text"]) == 6000
+    note = _log_entry(1, "note", {"kind": "rejected", "title": "t", "text": "e"}, -1)
+    assert note["note"] == "rejected" and note["title"] == "t"
 
 
 
@@ -919,6 +1006,49 @@ def test_the_filename_says_what_the_pack_is():
     assert "/" not in name and "\\" not in name, name
     # Nothing to name it after still produces a file name.
     assert ro_pdf.filename({"id": "ro_bare"}).endswith("ro_bare.pdf")
+
+
+def test_the_pack_carries_the_workshop_views_and_the_verdicts():
+    """The pack is what leaves the room, so it has to say what the page says:
+    the agenda as timed slots with who must attend, which option each verdict
+    chose, what can be confirmed without discussion, and the risk view."""
+    from rollout.export import to_markdown
+
+    def gap(gid, mat, bucket, harm, impacts):
+        return {"gap_id": gid, "materiality": mat, "workshop_bucket": bucket, "harmonization_potential": harm,
+                "primary_type": "PF", "secondary_types": [], "localization_state": "NOT_LOCALIZATION",
+                "gt_fit_rating": 2, "candidate_disposition": "ADOPT_GT", "exact_difference": f"diff {gid}",
+                "decision_options": ["Keep it", "Change it"], "impacts": impacts, "evidence": []}
+
+    run = {
+        **_pack_run(),
+        "analysis": {"deviations": [
+            gap("GAP-01", "High", "MUST_DISCUSS", 40, [{"area": "Tax", "score": 5, "note": ""}]),
+            gap("GAP-02", "Medium", "CONFIRM", 90, [{"area": "Tax", "score": 2, "note": ""}]),
+        ]},
+        "scores": {"agenda": [{"position": 1, "gap_id": "GAP-01", "topic": "Keep or change?", "minutes": 30,
+                               "materiality": "High", "primary_type": "PF", "disposition": "ADOPT_GT",
+                               "localization_state": "NOT_LOCALIZATION", "options": ["Keep it", "Change it"],
+                               "owner": ["Process Owner", "Tax Lead"], "why": "Because."}]},
+        "decisions": [
+            {"gap_id": "GAP-01", "reviewer": "Asha", "verdict": "defer", "comment": "", "decided_at": "2026-01-01T09:00"},
+            {"gap_id": "GAP-01", "reviewer": "Asha", "verdict": "accept", "comment": "Option B: Change it",
+             "decided_at": "2026-01-01T10:00"},
+        ],
+    }
+    md = to_markdown(run)
+    assert "## Workshop agenda — run-of-show" in md
+    assert "| 0:00–0:30 | 1. GAP-01 · High |" in md, "the agenda lost its time slot"
+    assert "| Process Owner | 30 | GAP-01 |" in md, "no attendee list"
+    assert "Accepted · Asha" in md, "the table does not show the standing verdict"
+    assert "Accepted by Asha — Option B: Change it" in md, "the chosen option was dropped"
+    assert "Deferred" not in md.split("## Human decisions")[0], "a superseded verdict shown as standing"
+    assert "- **A.** Keep it" in md and "- **B.** Change it" in md, "options are not lettered"
+    confirm = md.split("## Confirm without discussion")[1].split("\n## ")[0]
+    assert "GAP-02" in confirm and "GAP-01" not in confirm
+    risk = md.split("## Deviation risk view")[1].split("## Deviation register")[0]
+    assert "| High | **GAP-01** ✓ | — | — |" in risk, "the materiality matrix is wrong"
+    assert "| Tax | 2 | 5/5 | GAP-01 5/5, GAP-02 2/5 |" in risk, "impact by area is wrong"
 
 
 # A pack made of the shapes that actually broke: a ten-column register, an

@@ -25,6 +25,46 @@ def _loc(state: str) -> str:
     return LOCALIZATION_STATES.get(state, state)
 
 
+_LETTERS = "ABCDEFGH"
+_VERDICT = {"accept": "Accepted", "defer": "Deferred", "reject": "Rejected"}
+_BUCKET = {"MUST_DISCUSS": "Must discuss", "CONFIRM": "Confirm", "NO_WORKSHOP_TIME": "No floor time"}
+_MATERIALITY = ["Critical", "High", "Medium", "Low", "Informational"]
+# The harmonisation bands the Deviations tab's risk view draws.
+_BANDS = (("Hard to harmonise (<60%)", 0, 60), ("Partly harmonisable (60–79%)", 60, 80),
+          ("Adopt the template (80%+)", 80, 101))
+
+
+def _clock(minutes: int) -> str:
+    return f"{minutes // 60}:{minutes % 60:02d}"
+
+
+def _status(decision: dict | None) -> str:
+    """The standing verdict as the page shows it: "Open", or who decided what,
+    with the option they chose when they chose one."""
+    if not decision:
+        return "Open"
+    text = f"{_VERDICT.get(decision['verdict'], decision['verdict'])} by {decision['reviewer']}"
+    if decision.get("comment"):
+        text += f" — {decision['comment']}"
+    return _clean(text)
+
+
+def _verdict(decision: dict | None) -> str:
+    """The standing verdict in a table cell: the verdict and who gave it."""
+    if not decision:
+        return "Open"
+    return _clean(f"{_VERDICT.get(decision['verdict'], decision['verdict'])} · {decision['reviewer']}")
+
+
+def _ranked(deviations: list[dict]) -> list[dict]:
+    """Must-discuss first, then by materiality: the order the register shows."""
+    bucket = {"MUST_DISCUSS": 0, "CONFIRM": 1}
+    return sorted(deviations, key=lambda d: (
+        bucket.get(d.get("workshop_bucket"), 2),
+        _MATERIALITY.index(d["materiality"]) if d.get("materiality") in _MATERIALITY else 9,
+        d["gap_id"]))
+
+
 def to_markdown(run: dict) -> str:
     analysis = run.get("analysis") or {}
     from .schemas import SUBJECTS
@@ -36,6 +76,9 @@ def to_markdown(run: dict) -> str:
     workshop = counts.get("workshop") or {}
     out: list[str] = []
     w = out.append
+    # Every verdict ever recorded, reduced to the one that stands per gap, so
+    # the agenda and the register can say what was decided where it was asked.
+    standing, _ = _standing(run.get("decisions") or [])
 
     matched = (analysis.get("template_process") or "").strip()
     title = run.get("scope_label") or matched or "no Global Template process identified"
@@ -69,7 +112,8 @@ def to_markdown(run: dict) -> str:
         w(f"| Template version | {run['gt_version']} |")
     if run.get("sap_release"):
         w(f"| SAP target | {run['sap_release']} |")
-    w(f"| Model | {run.get('model', '')} · prompt `{run.get('prompt_hash', '')}` |")
+    if run.get("model"):
+        w(f"| Model | {run['model']} · prompt `{run.get('prompt_hash', '')}` |")
     w(f"| Corpus fingerprint | `{run.get('corpus_fingerprint', '')}` |")
     cats = run.get("categories") or []
     w(f"| Corpus categories read | {', '.join(cats) if cats else 'all'} |")
@@ -133,28 +177,66 @@ def to_markdown(run: dict) -> str:
               f"{row['localization']} | {row['focus']} |")
         w("")
 
-    # --- §17 Output 8: workshop scope ---------------------------------------
+    # --- §17 Output 8: workshop scope, as the run-of-show --------------------
     agenda = scores.get("agenda") or []
+    by_gap = {d["gap_id"]: d for d in analysis.get("deviations") or []}
     if agenda:
-        w("## Workshop agenda")
+        total = sum(item["minutes"] for item in agenda)
+        decided = sum(1 for item in agenda if item["gap_id"] in standing)
+        w("## Workshop agenda — run-of-show")
         w("")
-        w("*Legal and localization blockers first, then controls and financial impact, "
-          "then the rest by materiality (§22).*")
+        w(f"{_n(len(agenda), 'decision')} · {total} min of floor time · {decided} of {len(agenda)} decided. "
+          "Legal and localization blockers first, then controls and financial impact, then the rest "
+          "by materiality (§22). Times are from the start of the workshop.")
         w("")
+        # Five columns, so the table stays on the portrait page under its
+        # heading; the pdf turns anything wider than six landscape.
+        w("| Slot | Gap | Decision | Owners | Status |")
+        w("|---|---|---|---|---|")
+        start = 0
+        slots = {}
         for item in agenda:
+            slots[item["gap_id"]] = (start, start + item["minutes"])
+            w(f"| {_clock(start)}–{_clock(start + item['minutes'])} | {item['position']}. {item['gap_id']} · "
+              f"{item['materiality']} | {_clean(item['topic'])} | "
+              f"{_clean(', '.join(item.get('owner') or []))} | {_verdict(standing.get(item['gap_id']))} |")
+            start += item["minutes"]
+        w("")
+
+        roles: dict[str, dict] = {}
+        for item in agenda:
+            for o in item.get("owner") or []:
+                r = roles.setdefault(o, {"minutes": 0, "gaps": []})
+                r["minutes"] += item["minutes"]
+                r["gaps"].append(item["gap_id"])
+        if roles:
+            w("### Who needs to be in the room")
+            w("")
+            w("| Role | Minutes | Decisions they own |")
+            w("|---|---:|---|")
+            for role, r in sorted(roles.items(), key=lambda kv: (-kv[1]["minutes"], kv[0])):
+                w(f"| {_clean(role)} | {r['minutes']} | {', '.join(r['gaps'])} |")
+            w("")
+
+        for item in agenda:
+            a0, a1 = slots[item["gap_id"]]
             w(f"### {item['position']}. {item['topic']}")
             w("")
-            w(f"`{item['gap_id']}` · {item['materiality']} · "
+            w(f"`{item['gap_id']}` · {_clock(a0)}–{_clock(a1)} · {item['materiality']} · "
               f"{DEVIATION_TYPES.get(item['primary_type'], item['primary_type'])} · "
               f"~{item['minutes']} min")
+            w("")
+            w(f"**Status** — {_status(standing.get(item['gap_id']))}")
             w("")
             if item.get("why"):
                 w(f"**Why this is being discussed** — {item['why']}")
                 w("")
-            if item.get("options"):
+            options = item.get("options") or (by_gap.get(item["gap_id"]) or {}).get("decision_options") or []
+            if options:
                 w("**Options**")
-                for opt in item["options"]:
-                    w(f"- {opt}")
+                w("")
+                for i, opt in enumerate(options):
+                    w(f"- **{_LETTERS[i] if i < len(_LETTERS) else i + 1}.** {opt}")
                 w("")
             w(f"**Agent's proposal** — {DISPOSITIONS.get(item['disposition'], item['disposition'])}")
             w("")
@@ -165,21 +247,45 @@ def to_markdown(run: dict) -> str:
                 w(f"**Localization** — {_loc(item['localization_state'])}")
                 w("")
 
+    confirm = [d for d in _ranked(analysis.get("deviations") or []) if d.get("workshop_bucket") == "CONFIRM"]
+    if confirm:
+        w("## Confirm without discussion")
+        w("")
+        w(f"{_n(len(confirm), 'deviation')} the analysis proposes to settle without floor time; "
+          f"{sum(1 for d in confirm if d['gap_id'] in standing)} confirmed so far.")
+        w("")
+        w("| Gap | Difference | Proposal | Status |")
+        w("|---|---|---|---|")
+        for d in confirm:
+            w(f"| {d['gap_id']} | {_clean(d.get('exact_difference', ''))} | "
+              f"{DISPOSITIONS.get(d['candidate_disposition'], d['candidate_disposition'])} | "
+              f"{_verdict(standing.get(d['gap_id']))} |")
+        w("")
+
     # --- §17 Output 4: the deviation register -------------------------------
     deviations = analysis.get("deviations") or []
     if deviations:
+        _risk_view(w, _ranked(deviations), standing)
         w("## Deviation register")
         w("")
-        w("| Gap | Step | Exact difference | Type | Materiality | Localization | "
-          "GT fit | Harmonization | Disposition | Confidence |")
-        w("|---|---|---|---|---|---|---:|---:|---|---|")
+        decided_all = sum(1 for d in deviations if d["gap_id"] in standing)
+        w(f"{_n(len(deviations), 'deviation')}, must-discuss first and then by materiality · "
+          f"{decided_all} decided.")
+        w("")
+        w("| Gap | Step | Exact difference | Type | Materiality | Workshop | Localization | "
+          "GT fit | Harmonization | Disposition | Status |")
+        w("|---|---|---|---|---|---|---|---:|---:|---|---|")
+        deviations = _ranked(deviations)
         for d in deviations:
+            last = standing.get(d["gap_id"])
             w(f"| {d['gap_id']} | {d.get('as_is_step_id', '')} | "
               f"{_clean(d.get('exact_difference', ''))} | "
               f"{d['primary_type']}{''.join('/' + t for t in d.get('secondary_types') or [])} | "
-              f"{d['materiality']} | {_loc(d['localization_state'])} | "
+              f"{d['materiality']} | {_BUCKET.get(d.get('workshop_bucket'), d.get('workshop_bucket', ''))} | "
+              f"{_loc(d['localization_state'])} | "
               f"{d['gt_fit_rating']}/4 | {d['harmonization_potential']}% | "
-              f"{d['candidate_disposition']} | {d.get('evidence_confidence', '')} |")
+              f"{d['candidate_disposition']} | "
+              f"{_VERDICT.get(last['verdict'], last['verdict']) if last else 'Open'} |")
         w("")
 
         w("### Gap detail")
@@ -194,10 +300,18 @@ def to_markdown(run: dict) -> str:
                 w(f"- **SAP Best Practice** — {d['sap_bp_reference']}")
             w(f"- **Difference** — {d.get('exact_difference', '')}")
             w(f"- **Localization** — {_loc(d['localization_state'])}")
+            w(f"- **Workshop** — {_BUCKET.get(d.get('workshop_bucket'), d.get('workshop_bucket', ''))}"
+              + (f", ~{d['workshop_minutes']} min" if d.get("workshop_minutes") else "")
+              + (f" · owners: {', '.join(d['decision_owner'])}" if d.get("decision_owner") else ""))
+            w(f"- **Proposed disposition** — {DISPOSITIONS.get(d['candidate_disposition'], d['candidate_disposition'])}"
+              f" · evidence confidence {str(d.get('evidence_confidence', '')).lower() or '—'}")
+            w(f"- **Status** — {_status(standing.get(d['gap_id']))}")
             if d.get("standard_options_considered"):
                 w("- **Standard options considered** — " + "; ".join(d["standard_options_considered"]))
             if d.get("decision_question"):
                 w(f"- **Decision** — {d['decision_question']}")
+            for i, opt in enumerate(d.get("decision_options") or []):
+                w(f"    - **{_LETTERS[i] if i < len(_LETTERS) else i + 1}.** {opt}")
             for imp in d.get("impacts") or []:
                 w(f"- **Impact · {imp['area']}** ({imp['score']}/5) — {imp.get('note', '')}")
             for ev in d.get("evidence") or []:
@@ -374,6 +488,67 @@ def to_markdown(run: dict) -> str:
             w("")
 
     return "\n".join(out)
+
+
+def _risk_view(w, deviations: list[dict], standing: dict) -> None:
+    """The Deviations tab's risk view: where each finding sits between
+    materiality and harmonisation potential, and which business areas carry
+    the impact. Portrait tables, so it sits ahead of the landscape register."""
+    w("## Deviation risk view")
+    w("")
+    w("### Where the deviations sit")
+    w("")
+    w("*Materiality against harmonisation potential. Top left is what the workshop has to settle; "
+      "bottom right can adopt the template. Bold = must discuss; ✓ = decided.*")
+    w("")
+    w("| Materiality | " + " | ".join(b[0] for b in _BANDS) + " |")
+    w("|---|" + "---|" * len(_BANDS))
+    for m in [x for x in _MATERIALITY if any(d["materiality"] == x for d in deviations)]:
+        cells = []
+        for _, lo, hi in _BANDS:
+            ids = [(f"**{d['gap_id']}**" if d.get("workshop_bucket") == "MUST_DISCUSS" else d["gap_id"])
+                   + (" ✓" if d["gap_id"] in standing else "")
+                   for d in deviations
+                   if d["materiality"] == m and lo <= (d.get("harmonization_potential") or 0) < hi]
+            cells.append(", ".join(ids) or "—")
+        w(f"| {m} | " + " | ".join(cells) + " |")
+    w("")
+
+    areas: dict[str, list[tuple[str, int]]] = {}
+    for d in deviations:
+        for imp in d.get("impacts") or []:
+            areas.setdefault(imp["area"], []).append((d["gap_id"], imp["score"]))
+    if areas:
+        w("### Impact by business area")
+        w("")
+        w("*Each deviation's material impact, scored 1–5 by the analysis, gathered by the area it lands on.*")
+        w("")
+        w("| Business area | Deviations | Highest | Deviations and scores |")
+        w("|---|---:|---:|---|")
+        for area, hits in sorted(areas.items(), key=lambda kv: (-max(s for _, s in kv[1]), -len(kv[1]), kv[0])):
+            hits = sorted(hits, key=lambda h: (-h[1], h[0]))
+            w(f"| {_clean(area)} | {len(hits)} | {max(s for _, s in hits)}/5 | "
+              + ", ".join(f"{g} {sc}/5" for g, sc in hits) + " |")
+        w("")
+
+
+def client_copy(run: dict) -> dict:
+    """The run as it may leave for a client: without the model that produced it.
+
+    Demo Mode downloads ask for this. The model and the prompt hash are the
+    team's provenance, not the client's; every other row of the pack --
+    sources, corpus fingerprint, decisions -- stays, because that is the part
+    a reader needs to trust the analysis.
+    """
+    import copy
+
+    out = copy.deepcopy(run)
+    out.pop("model", None)
+    out.pop("prompt_hash", None)
+    for entry in out.get("log") or []:
+        if isinstance(entry.get("detail"), dict):
+            entry["detail"].pop("model", None)
+    return out
 
 
 def _standing(decisions: list[dict]) -> tuple[dict, list[dict]]:

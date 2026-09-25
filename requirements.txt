@@ -32,6 +32,20 @@ opentelemetry-instrumentation-threading
 # running, memory reports itself unavailable and every agent works as before.
 hindsight-client
 
+# evaluation.py: automatic quality scoring of Ask RAG answers. Ragas supplies
+# the canonical metric implementations (faithfulness, answer relevancy, the
+# context metrics); the judge itself is Claude through Ragas' instructor
+# adapter, and the embeddings are the corpus's own bge-m3, so nothing here
+# adds a model. Without it Ask works exactly as before and the scorecard says
+# why it is empty -- see evaluation.available().
+#
+# The pin below is not caution, it is a fix. Ragas 0.4.3 imports
+# `langchain_community.chat_models.vertexai` at module scope, and 0.4.0
+# removed it, so `import ragas` fails outright on the current release. Nothing
+# in this project uses LangChain directly; it is a hard dependency of Ragas.
+ragas
+langchain-community<0.4
+
 # rollout/pdf.py: the Fit-to-Standard workshop pack as a PDF. HTML/CSS to PDF,
 # because the pack is mostly tables and WeasyPrint lays out real CSS tables
 # with repeating headers and sane page breaks. It needs pango, cairo and

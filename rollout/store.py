@@ -84,6 +84,11 @@ def create_schema(conn=None) -> None:
         # page says so rather than showing an empty log.
         conn.execute("ALTER TABLE rollout_runs ADD COLUMN IF NOT EXISTS"
                      " calls jsonb NOT NULL DEFAULT '[]'::jsonb")
+        # The rest of the investigation: the context each pass was handed, the
+        # agent's reasoning between calls, rejected submissions, the gates.
+        # Runs recorded before it have an empty list.
+        conn.execute("ALTER TABLE rollout_runs ADD COLUMN IF NOT EXISTS"
+                     " log jsonb NOT NULL DEFAULT '[]'::jsonb")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS rollout_decisions (
@@ -131,6 +136,13 @@ def save_calls(conn, run_id: str, calls: list[dict]) -> None:
     happened up to the drop."""
     conn.execute("UPDATE rollout_runs SET calls = %s WHERE id = %s",
                  (json.dumps(calls, default=str), run_id))
+    conn.commit()
+
+
+def save_log(conn, run_id: str, log: list[dict]) -> None:
+    """The investigation log so far, rewritten in full, like `save_calls`."""
+    conn.execute("UPDATE rollout_runs SET log = %s WHERE id = %s",
+                 (json.dumps(log, default=str), run_id))
     conn.commit()
 
 
@@ -191,7 +203,7 @@ _COLUMNS = ("id, subject, scope_bpml, scope_label, country, country_context,"
             " sap_release, gt_version,"
             " question, model, prompt_hash, categories, uploads, corpus_fingerprint,"
             " started_at, finished_at, status, input_tokens, output_tokens,"
-            " asis, analysis, scores, gates, sources, calls")
+            " asis, analysis, scores, gates, sources, calls, log")
 
 
 # A run whose SSE stream was dropped -- the browser closed, the tab was
@@ -225,6 +237,7 @@ def _row(r) -> dict:
         "asis": r[19] or {}, "analysis": r[20] or {}, "scores": r[21] or {}, "gates": r[22] or {},
         "sources": r[23] or {},
         "calls": r[24] or [],
+        "log": r[25] or [],
     }
 
 

@@ -1,38 +1,35 @@
 import {
-  Alert, Autocomplete, Box, Button, Chip, CircularProgress, Collapse, Divider, IconButton,
-  LinearProgress, ListSubheader, Paper, Stack, Switch,
+  Alert, Autocomplete, Box, Button, ButtonBase, Chip, CircularProgress, Collapse, Divider, IconButton,
+  LinearProgress, Paper, Stack, Switch, Tab, Tabs,
   TextField, Tooltip, Typography,
 } from "@mui/material";
 import { alpha, useTheme } from "@mui/material/styles";
 import { AnimatePresence, motion } from "framer-motion";
-import {
-  Ban, BookOpen, ChevronDown, ChevronUp, CircleAlert, CircleCheck, CircleHelp, Copy, Dices, Eye,
-  Lightbulb,
-  FileText, FlaskConical, GitBranch, History as HistoryIcon, Network, Quote, Scale,
-  Brain, ScanLine, Search, SendHorizontal, Sigma, Square, Target, Terminal,
-  TriangleAlert,
-} from "lucide-react";
+import { Ban, BookOpen, Brain, ChevronDown, ChevronUp, CircleAlert, CircleCheck, CircleHelp, Copy, Dices, FileText, FlaskConical, GitBranch, Globe, History as HistoryIcon, Lightbulb, Network, Quote, ScanLine, Search, SendHorizontal, Sigma, Square, Target, Terminal, TriangleAlert } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactElement } from "react";
 import {
   api, askEvidence, evidence,
   type EvidenceToolSources,
-  type AnswerState, type EvidenceAnswer, type EvidenceClaim, type EvidenceSource,
+  type AnswerState, type EvidenceAnswer, type EvidenceSource,
   type EvidenceLogEntry, type EvidenceMemory,
   type EvidenceRunDetail, type EvidenceRunSummary, type EvidenceStatus,
   type EvidenceToolCall, type ScoreTerm,
   type EvidenceRagHit,
   type Source, type Stance,
 } from "../api";
-import {
-  CATEGORY_LABEL, EVAL_QUESTIONS, EVAL_QUESTIONS_BY_GROUP, HALVES, type EvalQuestion,
-} from "../data/evalQuestions";
+import { EVIDENCE_SAMPLES, type SampleQuestion } from "../data/evidenceSamples";
 import { surface } from "../theme";
 import { clearAdornment } from "../components/ClearAdornment";
 import DocumentInspectorDrawer from "../components/DocumentInspectorDrawer";
 import AgentTraceDrawer from "../components/AgentTraceDrawer";
 import AgentLogDrawer from "../components/AgentLogDrawer";
 import MemoryReflectDrawer from "../components/MemoryReflectDrawer";
+import ScrollRunway from "../components/ScrollRunway";
 import RunHistoryDrawer, { type HistoryCard } from "../components/RunHistoryDrawer";
+import ClaimsView, { ScoreBar, strength } from "../components/evidence/ClaimsView";
+import ObjectHeader, { BandButton } from "../components/rollout/ObjectHeader";
+import { MONO, RADIUS, usePremium } from "../components/rollout/premium";
+import { Section } from "../components/rollout/SummaryView";
 
 /* ------------------------------------------------------------------- states */
 
@@ -70,6 +67,7 @@ const ENGINE_ICON: Record<string, ReactElement> = {
   rag: <Search size={12} />,
   graph: <Network size={12} />,
   bpml: <Target size={12} />,
+  web: <Globe size={12} />,
   other: <GitBranch size={12} />,
 };
 
@@ -79,6 +77,9 @@ const ENGINE_NAME: Record<string, string> = {
   rag: "RAG",
   graph: "GRAPH",
   bpml: "BPML",
+  // Gated external search (guardrails/web.py). Amber, because what it found
+  // is not the programme's own evidence.
+  web: "WEB",
   other: "\u2014",
 };
 
@@ -86,6 +87,7 @@ const ENGINE_COLOUR: Record<string, string> = {
   rag: "primary.main",
   graph: "info.main",
   bpml: "success.main",
+  web: "warning.main",
   other: "text.disabled",
 };
 
@@ -201,9 +203,10 @@ function SourceRow({ s, onInspect, busy }: {
       onKeyDown={(e) => {
         if (e.key === "Enter") { e.preventDefault(); onInspect(s); }
       }}
+      variant="outlined"
       sx={{
-        p: 1.25,
-        borderLeft: `3px solid ${colour}`,
+        p: 1.5,
+        borderRadius: RADIUS,
         cursor: "pointer",
         transition: "background-color .15s ease, border-color .15s ease",
         "&:hover, &:focus-visible": {
@@ -273,83 +276,118 @@ function SourceRow({ s, onInspect, busy }: {
   );
 }
 
-function ClaimCard({ claim, index, onInspect, busyChunk }: {
-  claim: EvidenceClaim;
-  index: number;
-  onInspect: (s: EvidenceSource) => void;
-  busyChunk: string | null;
+/** Answer — the Evidence Agent's summary tab, in the Fit-Gap Copilot's
+ *  Summary idiom: the answer and the claims that govern it on the left; claim
+ *  strength, the engines consulted and what is still open on the right. */
+function AnswerSummary({ answer, onClaim, engines, showModel = true }: {
+  answer: EvidenceAnswer;
+  onClaim: (index: number) => void;
+  engines: string;
+  showModel?: boolean;
 }) {
+  const p = usePremium();
   const theme = useTheme();
-  const [open, setOpen] = useState(index === 0);
-  const supports = claim.sources.filter((s) => s.stance === "supports").length;
-  const opposes = claim.sources.filter((s) => s.stance === "opposes").length;
-
+  const claims = answer.claims;
+  // The weakest claim that asserts something governs the answer, so those
+  // lead: they are what a reviewer should read first.
+  const lead = claims.map((c, i) => ({ c, i })).sort((a, b) => a.c.score - b.c.score).slice(0, 2);
+  const bands = [
+    { l: "Strong", sub: "0.65 and above", n: claims.filter((c) => strength(c.score) === "Strong").length, c: p.accent },
+    { l: "Moderate", sub: "0.40 – 0.64", n: claims.filter((c) => strength(c.score) === "Moderate").length, c: theme.palette.warning.main },
+    { l: "Weak", sub: "below 0.40", n: claims.filter((c) => strength(c.score) === "Weak").length, c: theme.palette.error.main },
+  ];
   return (
-    <Paper component={motion.div} layout initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
-           sx={{ p: 1.6 }}>
-      <Stack direction="row" spacing={1.25} sx={{ alignItems: "flex-start" }}>
-        <ScoreChip score={claim.score} terms={claim.score_terms} />
-        <Typography sx={{ fontSize: 13.5, lineHeight: 1.55, flex: 1 }}>{claim.text}</Typography>
-        <IconButton size="small" onClick={() => setOpen((v) => !v)}>
-          <ChevronDown size={16} style={{ transform: open ? "rotate(180deg)" : undefined, transition: "transform .2s" }} />
-        </IconButton>
-      </Stack>
-
-      <Stack direction="row" useFlexGap sx={{ flexWrap: "wrap", gap: 0.6, mt: 0.85, alignItems: "center" }}>
-        {supports > 0 && (
-          <Tooltip title={`${plural(claim.independent_sources, "independent document")} behind this claim`}>
-            <Chip size="small" icon={<Quote size={10} />} variant="outlined"
-                  label={`${supports} supporting · ${claim.independent_sources} independent`}
-                  sx={{ height: 19, fontSize: 10 }} />
-          </Tooltip>
-        )}
-        {opposes > 0 && (
-          <Chip size="small" color="error" variant="outlined" label={`${opposes} opposing`}
-                sx={{ height: 19, fontSize: 10 }} />
-        )}
-        {claim.graph_facts.map((f, i) => (
-          <Tooltip key={i} title={f.note || f.statement}>
-            <Chip size="small" icon={<Network size={10} />}
-                  label={f.meaningful ? "graph confirms" : "graph route flagged"}
-                  sx={{ height: 19, fontSize: 10,
-                        bgcolor: alpha(f.meaningful ? theme.palette.info.main : theme.palette.warning.main, 0.14),
-                        color: f.meaningful ? "info.main" : "warning.main" }} />
-          </Tooltip>
-        ))}
-      </Stack>
-
-      {claim.note && (
-        <Typography sx={{ fontSize: 11.5, color: "warning.main", mt: 0.75 }}>{claim.note}</Typography>
-      )}
-
-      <Collapse in={open}>
-        <Stack spacing={1} sx={{ mt: 1.25 }}>
-          {claim.graph_facts.map((f, i) => (
-            <Paper key={i} sx={{ p: 1.25, bgcolor: alpha(theme.palette.info.main, 0.06) }}>
-              <Stack direction="row" spacing={0.75} sx={{ alignItems: "center", mb: 0.4 }}>
-                <Network size={12} />
-                <Typography sx={{ fontSize: 10, fontWeight: 800, letterSpacing: ".06em",
-                                  textTransform: "uppercase", color: "text.secondary" }}>
-                  Knowledge graph
-                </Typography>
-              </Stack>
-              <Typography sx={{ fontSize: 12.5 }}>{f.statement}</Typography>
-              {f.note && (
-                <Typography sx={{ fontSize: 11.5, mt: 0.5, color: f.meaningful ? "text.secondary" : "warning.main" }}>
-                  {f.note}
-                </Typography>
-              )}
-            </Paper>
-          ))}
-          {claim.sources.map((s, i) => (
-            <SourceRow key={i} s={s} onInspect={onInspect} busy={busyChunk === s.chunk_id} />
-          ))}
-          {!claim.sources.length && !claim.graph_facts.length && (
-            <Typography sx={{ fontSize: 12.5, color: "text.secondary" }}>No evidence attached.</Typography>
+    <Box sx={{ display: "grid", gap: 3, gridTemplateColumns: { xs: "1fr", lg: "minmax(0, 2fr) minmax(0, 1fr)" } }}>
+      <Stack spacing={3} sx={{ minWidth: 0 }}>
+        <Section title="Answer" hint={<StateBadge state={answer.state} />}>
+          <Typography sx={{ fontSize: 15, lineHeight: 1.65 }}>{answer.answer}</Typography>
+          {lead.length > 0 && (
+            <Box sx={{ display: "grid", gap: 1.5, mt: 2, gridTemplateColumns: { xs: "1fr", md: `repeat(${lead.length}, minmax(0, 1fr))` } }}>
+              {lead.map(({ c, i }) => (
+                <ButtonBase key={i} onClick={() => onClaim(i)}
+                            sx={{ display: "block", textAlign: "left", border: 1, borderColor: "divider", borderRadius: RADIUS,
+                                  p: 1.75, "&:hover": { borderColor: p.accent } }}>
+                  <Typography sx={{ fontSize: 11.5, fontWeight: 600, letterSpacing: "0.04em", color: p.accent }}>
+                    {i === lead[0].i ? "WEAKEST CLAIM" : "NEXT WEAKEST"} · C{i + 1} · {c.score.toFixed(2)}
+                  </Typography>
+                  <Typography sx={{ fontSize: 13.5, fontWeight: 600, mt: 0.6, lineHeight: 1.45 }}>{c.text}</Typography>
+                  <Typography sx={{ fontSize: 12.5, color: "text.secondary", mt: 0.6 }}>
+                    {c.sources.length} quote{c.sources.length === 1 ? "" : "s"} · {c.independent_sources} independent document{c.independent_sources === 1 ? "" : "s"}
+                  </Typography>
+                </ButtonBase>
+              ))}
+            </Box>
           )}
-        </Stack>
-      </Collapse>
-    </Paper>
+        </Section>
+
+        {claims.length > 0 && (
+          <Section pad={false} title="Claim register" hint={`${claims.length} claims · open one for its evidence and arithmetic`}>
+            {claims.map((c, i) => (
+              <ButtonBase key={i} onClick={() => onClaim(i)}
+                          sx={{ display: "grid", gridTemplateColumns: "44px minmax(0, 1fr) 120px", columnGap: 1.75, alignItems: "center",
+                                width: "100%", textAlign: "left", px: 2.5, minHeight: 44, borderTop: 1, borderColor: "divider",
+                                "&:hover": { bgcolor: "action.hover" } }}>
+                <Typography sx={{ fontFamily: MONO, fontSize: 12.5, fontWeight: 600, color: p.accent }}>C{i + 1}</Typography>
+                <Typography sx={{ fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={c.text}>{c.text}</Typography>
+                <ScoreBar score={c.score} width={52} />
+              </ButtonBase>
+            ))}
+          </Section>
+        )}
+      </Stack>
+
+      <Stack spacing={3} sx={{ minWidth: 0 }}>
+        <Section title="Claim strength" hint="open a claim for its arithmetic">
+          <Stack spacing={1.25}>
+            {bands.map((b) => (
+              <Box key={b.l} sx={{ display: "grid", gridTemplateColumns: "92px minmax(0, 1fr) 24px", gap: 1.25, alignItems: "center" }}>
+                <Box>
+                  <Typography sx={{ fontSize: 12.5, fontWeight: 500 }}>{b.l}</Typography>
+                  <Typography sx={{ fontSize: 11.5, color: "text.secondary" }}>{b.sub}</Typography>
+                </Box>
+                <Box sx={{ height: 10, bgcolor: "action.hover" }}>
+                  <Box sx={{ height: 10, width: `${claims.length ? (b.n / claims.length) * 100 : 0}%`, bgcolor: b.c }} />
+                </Box>
+                <Typography sx={{ fontFamily: MONO, fontSize: 12.5, textAlign: "right" }}>{b.n}</Typography>
+              </Box>
+            ))}
+          </Stack>
+        </Section>
+        <Section title="How it was answered">
+          <Stack spacing={0.75}>
+            {[
+              ["Engines", engines || "—"],
+              ["Tool calls", String(answer.tool_calls)],
+              ...(showModel ? [["Model", answer.model]] : []),
+              ["Time", `${answer.seconds}s · ${answer.input_tokens.toLocaleString()} in · ${answer.output_tokens.toLocaleString()} out`],
+            ].map(([k, v]) => (
+              <Box key={k} sx={{ display: "grid", gridTemplateColumns: "96px minmax(0, 1fr)", gap: 1.25 }}>
+                <Typography sx={{ fontSize: 12.5, color: "text.secondary" }}>{k}</Typography>
+                <Typography sx={{ fontSize: 12.5 }}>{v}</Typography>
+              </Box>
+            ))}
+          </Stack>
+        </Section>
+        {answer.open_questions.length > 0 && (
+          <Section title="Open questions" hint={String(answer.open_questions.length)}>
+            <Stack spacing={1}>
+              {answer.open_questions.map((q, i) => (
+                <Typography key={i} sx={{ fontSize: 13, lineHeight: 1.5, pt: i ? 1 : 0, borderTop: i ? 1 : 0, borderColor: "divider" }}>{q}</Typography>
+              ))}
+            </Stack>
+          </Section>
+        )}
+        {answer.limits.length > 0 && (
+          <Section title="What stopped it going further">
+            <Stack spacing={1}>
+              {answer.limits.map((l, i) => (
+                <Typography key={i} sx={{ fontSize: 13, lineHeight: 1.5, color: "text.secondary", pt: i ? 1 : 0, borderTop: i ? 1 : 0, borderColor: "divider" }}>{l}</Typography>
+              ))}
+            </Stack>
+          </Section>
+        )}
+      </Stack>
+    </Box>
   );
 }
 
@@ -369,7 +407,7 @@ function memoryNotes(run: { memory?: EvidenceMemory | Record<string, never> }): 
  *  document, the tool trace, the log) stay one button away, behind "Load into
  *  page", rather than being stacked drawer-on-drawer at 560px.
  */
-function PastInvestigation({ run }: { run: EvidenceRunDetail }) {
+function PastInvestigation({ run, showModel = true }: { run: EvidenceRunDetail; showModel?: boolean }) {
   const theme = useTheme();
   const hue = useHue();
   const answer = run.answer;
@@ -402,7 +440,7 @@ function PastInvestigation({ run }: { run: EvidenceRunDetail }) {
                   sx={{ height: 19, fontSize: 10, "& .MuiChip-icon": { ml: 0.4 } }} />
           </Tooltip>
         )}
-        <Chip size="small" variant="outlined" label={run.model} sx={{ height: 19, fontSize: 10 }} />
+        {showModel && <Chip size="small" variant="outlined" label={run.model} sx={{ height: 19, fontSize: 10 }} />}
         <Chip size="small" variant="outlined" label={plural(run.calls?.length ?? 0, "call")}
               sx={{ height: 19, fontSize: 10 }} />
         {run.seconds ? (
@@ -532,11 +570,17 @@ function PastInvestigation({ run }: { run: EvidenceRunDetail }) {
 
 /* --------------------------------------------------------------------- page */
 
-export default function EvidencePage({ active }: { active: boolean }) {
+export default function EvidencePage({ active, showTechDetails = true }: {
+  active: boolean;
+  /** The model name and the corpus internals (tool count, filtered graph
+   *  hubs, duplicate groups). Demo Mode turns it off: a client is shown what
+   *  the agent does, not what it runs on. */
+  showTechDetails?: boolean;
+}) {
   const theme = useTheme();
   const [status, setStatus] = useState<EvidenceStatus | null>(null);
   const [question, setQuestion] = useState("");
-  const [picked, setPicked] = useState<EvalQuestion | null>(null);
+  const [picked, setPicked] = useState<SampleQuestion | null>(null);
   const [holdout, setHoldout] = useState(false);
   // Memory is off unless asked for. It changes what the agent is told before
   // it starts, so a run with it on is not the same experiment as one without,
@@ -571,6 +615,9 @@ export default function EvidencePage({ active }: { active: boolean }) {
   // the Fit-Gap Copilot does it: past runs are a thing you go and get, not a
   // thing that sits between the question and the answer.
   const [historyOpen, setHistoryOpen] = useState(false);
+  // Named tabs, as on the Fit-Gap Copilot; which exist depends on what the run has.
+  const [tab, setTab] = useState("answer");
+  const [focusClaim, setFocusClaim] = useState<{ index: number; at: number } | null>(null);
   const [runId, setRunId] = useState<string | null>(null);
   const [viewing, setViewing] = useState<string | null>(null);
   const [notSaved, setNotSaved] = useState<string | null>(null);
@@ -728,7 +775,7 @@ export default function EvidencePage({ active }: { active: boolean }) {
   async function run(text?: string) {
     const q = (text ?? question).trim();
     if (!q || running) return;
-    setRunning(true); setCalls([]); setAnswer(null); setError(null);
+    setRunning(true); setCalls([]); setAnswer(null); setError(null); setTab("investigation");
     setRunId(null); setViewing(null); setNotSaved(null); setMemory(null); setLog([]);
     const ctrl = new AbortController();
     controller.current = ctrl;
@@ -738,7 +785,7 @@ export default function EvidencePage({ active }: { active: boolean }) {
         memory: setMemory,
         log: (e) => setLog((es) => [...es, e]),
         toolCall: (c) => setCalls((cs) => [...cs, c]),
-        answer: setAnswer,
+        answer: (a) => { setAnswer(a); setTab("answer"); },
         error: setError,
       }, ctrl.signal);
     } catch (e) {
@@ -801,7 +848,7 @@ export default function EvidencePage({ active }: { active: boolean }) {
     try {
       const run = await evidence.run(id);
       setQuestion(run.question);
-      setPicked(EVAL_QUESTIONS.find((q) => q.question === run.question) ?? null);
+      setPicked(EVIDENCE_SAMPLES.find((q) => q.question === run.question) ?? null);
       setHoldout(run.holdout);
       const remembered = run.memory as EvidenceMemory | undefined;
       setMemory(remembered && "enabled" in remembered ? remembered : null);
@@ -809,6 +856,7 @@ export default function EvidencePage({ active }: { active: boolean }) {
       setLog(run.log ?? []);
       setCalls(run.calls ?? []);
       setAnswer(run.answer);
+      setTab(run.answer ? "answer" : "investigation");
       setRunId(run.id);
       setViewing(run.id);
       if (run.status === "failed" && run.error) setError(run.error);
@@ -833,51 +881,77 @@ export default function EvidencePage({ active }: { active: boolean }) {
 
   const blocked = status && !status.anthropic_key;
 
+  const claims = answer?.claims ?? [];
+  const quotes = claims.flatMap((c) => c.sources);
+  const docs = new Set(quotes.map((q) => q.doc)).size;
+  const weakest = claims.length ? claims.reduce((m, c) => (c.score < m.score ? c : m), claims[0]) : null;
+  const strongN = claims.filter((c) => strength(c.score) === "Strong").length;
+  const weakN = claims.filter((c) => strength(c.score) === "Weak").length;
+  const engineLine = Object.entries(answer?.engines && Object.keys(answer.engines).length ? answer.engines : engineCounts)
+    .map(([e, n]) => `${ENGINE_NAME[e] ?? e} ${n}`).join(" · ");
+  const showMemory = !!memory && (memory.used || memory.suppressed_by_holdout);
+  const TABS = [
+    { key: "answer", label: "Answer", show: !!answer },
+    { key: "claims", label: `Claims (${claims.length})`, show: !!answer },
+    { key: "investigation", label: `Investigation${calls.length ? ` (${calls.length})` : ""}`, show: calls.length > 0 || running },
+    { key: "memory", label: `Memory${memory?.recalled ? ` (${memory.recalled})` : ""}`, show: showMemory },
+  ].filter((t) => t.show);
+  const current = TABS.some((t) => t.key === tab) ? tab : TABS[0]?.key ?? "";
+  const openClaim = (index: number) => { setTab("claims"); setFocusClaim({ index, at: Date.now() }); };
+  const shownQuestion = answer?.question || (running ? question : "");
+
   return (
     <Box sx={{ height: "100%", overflow: "auto", bgcolor: "background.default" }}>
-      <Box sx={{ maxWidth: 1080, mx: "auto", p: { xs: 2, md: 3 } }}>
-        {/* header */}
-        <Stack direction="row" spacing={1.5} sx={{ alignItems: "center", mb: 2.5 }}>
-          <Box sx={{ width: 32, height: 32, borderRadius: 2, display: "grid", placeItems: "center",
-                     bgcolor: "primary.main", color: "primary.contrastText" }}>
-            <Scale size={18} />
-          </Box>
-          <Box sx={{ flex: 1 }}>
-            <Typography variant="h5" sx={{ fontWeight: 800, letterSpacing: "-.02em", lineHeight: 1.15 }}>
-              Evidence Agent
-            </Typography>
-            <Typography sx={{ fontSize: 12.5, color: "text.secondary" }}>
-              One question, both engines. Every claim carries its sources and the arithmetic behind its score.
-            </Typography>
-          </Box>
-          <Tooltip title="Past investigations — read one here, beside the one on the page">
-            <Button size="small" variant="text" startIcon={<HistoryIcon size={14} />}
-                    onClick={() => setHistoryOpen(true)}
-                    sx={{ fontSize: 12.5, flex: "none" }}>
-              {history.length
-                ? `${history.length} investigation${history.length === 1 ? "" : "s"}`
-                : "History"}
-            </Button>
-          </Tooltip>
-        </Stack>
+      <ObjectHeader
+        breadcrumb={`Evidence Agent / Investigations${runId ? ` / ${runId}` : ""}`}
+        title={shownQuestion ? (shownQuestion.length > 150 ? `${shownQuestion.slice(0, 150)}…` : shownQuestion) : "Evidence Agent"}
+        badge={answer ? STATES[answer.state].label : running ? "Investigating…" : viewing ? "Recorded" : undefined}
+        meta={answer
+          ? `${STATES[answer.state].blurb}${showTechDetails ? ` · ${answer.model}` : ""}${holdout ? " · holdout" : ""}${memory?.used ? " · memory on" : ""}`
+          : "One question, both engines. Every claim carries its sources and the arithmetic behind its score."}
+        actions={
+          <>
+            <BandButton onClick={() => setHistoryOpen(true)} startIcon={<HistoryIcon size={14} />}
+                        title="Past investigations — read one here, beside the one on the page">
+              {history.length ? `History (${history.length})` : "History"}
+            </BandButton>
+            <BandButton onClick={() => setReflectOpen(true)} disabled={!mem?.available || !mem?.memories}
+                        startIcon={<Lightbulb size={14} />}
+                        title={!mem?.available
+                          ? "The memory server is not reachable, so there is nothing to ask."
+                          : !mem?.memories
+                            ? "Nothing has been written to memory yet. Run an investigation with memory on."
+                            : `Ask the ${mem.memories} memories what earlier investigations found — what we have looked at, where two runs disagreed, what is still open. Reads the whole bank, so it takes 30-60 seconds.`}>
+              Ask memory
+            </BandButton>
+            <BandButton onClick={() => setLogOpen(true)} disabled={log.length === 0} startIcon={<Terminal size={15} />}
+                        title={log.length === 0
+                          ? "The step-by-step log of a run: the context the agent is handed, what it reasons, every engine it queries, and what it writes back. Ask a question to fill it."
+                          : `Open the step-by-step log — ${log.length} step(s)`}>
+              Logs{log.length ? ` (${log.length})` : ""}
+            </BandButton>
+          </>
+        }
+        kpis={answer ? [
+          { label: "Claims", value: String(claims.length), sub: claims.length ? `${strongN} strong · ${weakN} weak` : "no claim rests on a source" },
+          { label: "Weakest claim", value: weakest ? weakest.score.toFixed(2) : "—", sub: weakest ? `${strength(weakest.score)} — it governs the answer` : "—" },
+          { label: "Evidence", value: String(docs), sub: `documents · ${quotes.length} quotes` },
+          { label: "Investigation", value: String(answer.tool_calls), sub: engineLine || "tool calls" },
+          { label: "Time", value: `${answer.seconds}s`, sub: `${Math.round((answer.input_tokens + answer.output_tokens) / 1000)}k tokens` },
+        ] : undefined}
+      />
 
-        {blocked && (
-          <Alert severity="warning" sx={{ mb: 2 }}>
-            No <code>ANTHROPIC_API_KEY</code> is set, so no question can be answered.
-          </Alert>
-        )}
-
-        {/* ask */}
-        <Paper sx={{ p: 2, mb: 2.5 }}>
+      <Paper square elevation={0} sx={{ borderBottom: 1, borderColor: "divider", px: { xs: 2, md: 4 }, py: 2 }}>
+          <Box sx={{ maxWidth: 1440 }}>
           <TextField
             fullWidth multiline maxRows={4} value={question}
             onChange={(e) => { setQuestion(e.target.value); if (picked) setPicked(null); }}
             onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); run(); } }}
-            placeholder={`Ask anything about the corpus — or pick one of the ${EVAL_QUESTIONS.length} evaluation questions`}
+            placeholder={`Ask anything about the corpus — or pick one of the ${EVIDENCE_SAMPLES.length} sample questions below`}
             slotProps={{ input: {
               sx: { fontSize: 15, alignItems: "flex-start" },
               startAdornment: <Box sx={{ pt: 0.35, pr: 1.25, color: "primary.main" }}><FlaskConical size={18} /></Box>,
-              // Clears the picked evaluation question with it: the text and the
+              // Clears the picked sample question with it: the text and the
               // chip below it are the same choice shown twice.
               endAdornment: clearAdornment(question, () => { setQuestion(""); setPicked(null); },
                                            { size: 16, label: "Clear question", top: true }),
@@ -886,54 +960,39 @@ export default function EvidencePage({ active }: { active: boolean }) {
 
           <Stack direction="row" spacing={1} sx={{ alignItems: "center", mt: 1.5 }}>
             <Autocomplete
-              openOnFocus size="small" sx={{ flex: 1 }} value={picked} options={EVAL_QUESTIONS_BY_GROUP}
-              // Grouped by corpus first: which half of the corpus a question
-              // needs is the coarser distinction, and a question that spans
-              // both is a different kind of test from one that does not.
-              groupBy={(q) => `${CATEGORY_LABEL[q.category]}  ·  ${HALVES[q.half].title}`}
+              openOnFocus size="small" sx={{ flex: 1 }} value={picked} options={EVIDENCE_SAMPLES}
               isOptionEqualToValue={(a, b) => a.id === b.id}
               getOptionLabel={(q) => q.question}
               onChange={(_, q) => { setPicked(q); if (q) setQuestion(q.question); }}
               filterOptions={(opts, { inputValue }) => {
                 const n = inputValue.trim().toLowerCase();
-                return n ? opts.filter((q) => `${q.id} ${q.category} ${q.axis} ${q.question}`.toLowerCase().includes(n)) : opts;
+                return n ? opts.filter((q) => `${q.id} ${q.shows} ${q.question}`.toLowerCase().includes(n)) : opts;
               }}
               renderInput={(params) => (
-                <TextField {...params} placeholder={`Evaluation set — ${EVAL_QUESTIONS.length} questions across PKG, DR and both`}
+                <TextField {...params} placeholder={`Sample questions — ${EVIDENCE_SAMPLES.length} to try, each showing something the agent does`}
                   slotProps={{ ...params.slotProps, input: { ...params.slotProps.input,
                     startAdornment: (<><Box sx={{ pl: 0.5, pr: 0.75, display: "flex", color: "text.secondary" }}>
-                      <Search size={15} /></Box>{params.slotProps.input.startAdornment}</>) } }} />
-              )}
-              renderGroup={(params) => (
-                <Box key={params.key} component="li" sx={{ listStyle: "none" }}>
-                  <ListSubheader sx={{ bgcolor: "background.paper", lineHeight: "28px", fontSize: 10.5,
-                                       fontWeight: 800, letterSpacing: ".05em", textTransform: "uppercase",
-                                       color: "text.secondary", borderBottom: 1, borderColor: "divider" }}>
-                    {params.group}
-                  </ListSubheader>
-                  <Box component="ul" sx={{ p: 0, m: 0 }}>{params.children}</Box>
-                </Box>
+                      <Lightbulb size={15} /></Box>{params.slotProps.input.startAdornment}</>) } }} />
               )}
               renderOption={(props, q) => {
                 const { key, ...rest } = props as { key?: string } & Record<string, unknown>;
                 return (
-                  <Box component="li" key={q.id} {...rest} sx={{ display: "block !important", py: 0.85, px: 1.5 }}>
-                    <Stack direction="row" spacing={1} sx={{ alignItems: "center", mb: 0.25 }}>
-                      <Box component="span" sx={{ fontFamily: "ui-monospace, monospace", fontSize: 10,
-                        fontWeight: 800, px: 0.55, borderRadius: 0.75, color: "primary.main",
-                        bgcolor: alpha(theme.palette.primary.main, 0.12) }}>{q.id}</Box>
-                      <Typography sx={{ fontSize: 10, fontWeight: 700, color: "text.secondary",
-                                        textTransform: "uppercase", letterSpacing: ".04em" }}>{q.axis}</Typography>
+                  <Box component="li" key={q.id} {...rest} sx={{ display: "block !important", py: 1, px: 1.5, borderBottom: 1, borderColor: "divider" }}>
+                    <Stack direction="row" spacing={1} sx={{ alignItems: "center", mb: 0.35 }}>
+                      <Box component="span" sx={{ fontFamily: MONO, fontSize: 11, fontWeight: 700, color: "primary.main" }}>{q.id}</Box>
+                      <Typography sx={{ fontSize: 11, fontWeight: 700, color: "text.secondary", textTransform: "uppercase", letterSpacing: ".04em" }}>
+                        {q.shows}
+                      </Typography>
                     </Stack>
-                    <Typography sx={{ fontSize: 12.5, lineHeight: 1.4 }}>{q.question}</Typography>
+                    <Typography sx={{ fontSize: 13, lineHeight: 1.45 }}>{q.question}</Typography>
                   </Box>
                 );
               }}
-              slotProps={{ paper: { sx: { width: { xs: "100%", md: 560 } } } }}
+              slotProps={{ paper: { sx: { width: { xs: "100%", md: 620 } } } }}
             />
             <Tooltip title="Pick one at random">
               <span><IconButton size="small" disabled={running}
-                onClick={() => { const q = EVAL_QUESTIONS[Math.floor(Math.random() * EVAL_QUESTIONS.length)];
+                onClick={() => { const q = EVIDENCE_SAMPLES[Math.floor(Math.random() * EVIDENCE_SAMPLES.length)];
                                  setPicked(q); setQuestion(q.question); }}>
                 <Dices size={16} /></IconButton></span>
             </Tooltip>
@@ -955,34 +1014,6 @@ export default function EvidencePage({ active }: { active: boolean }) {
                 </Stack>
               </Stack>
             </Tooltip>
-            <Tooltip title={!mem?.available
-              ? "The memory server is not reachable, so there is nothing to ask."
-              : !mem?.memories
-                ? "Nothing has been written to memory yet. Run an investigation with memory on."
-                : `Ask the ${mem.memories} memories what earlier investigations found — `
-                  + "what we have looked at, where two runs disagreed, what is still open. "
-                  + "Reads the whole bank, so it takes 30-60 seconds."}>
-              <span>
-                <Button variant="outlined" size="small"
-                        disabled={!mem?.available || !mem?.memories}
-                        startIcon={<Lightbulb size={15} />} onClick={() => setReflectOpen(true)}
-                        sx={{ minHeight: 32 }}>
-                  Ask memory
-                </Button>
-              </span>
-            </Tooltip>
-            <Tooltip title={log.length === 0
-              ? "The step-by-step log of a run: the context the agent is handed, what it reasons, "
-                + "every engine it queries, and what it writes back. Ask a question to fill it."
-              : `Open the step-by-step log — ${log.length} step(s)`}>
-              <span>
-                <Button variant="outlined" size="small" disabled={log.length === 0}
-                        startIcon={<Terminal size={15} />} onClick={() => setLogOpen(true)}
-                        sx={{ minHeight: 32 }}>
-                  Logs{log.length ? ` (${log.length})` : ""}
-                </Button>
-              </span>
-            </Tooltip>
             {running ? (
               <Button variant="outlined" color="error" startIcon={<Square size={15} />}
                       onClick={() => controller.current?.abort()}>Stop</Button>
@@ -994,102 +1025,49 @@ export default function EvidencePage({ active }: { active: boolean }) {
 
           {picked && (
             <Typography sx={{ fontSize: 11.5, color: "text.secondary", mt: 1.25 }}>
-              <b>{picked.id} · {picked.axis}</b> — {picked.tests}
+              <b>{picked.id} · {picked.shows}</b> — {picked.lookFor}
             </Typography>
           )}
-        </Paper>
+        </Box>
+      </Paper>
 
-        {error && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>{error}</Alert>}
+      {TABS.length > 0 && (
+        <Paper square elevation={0} sx={{ borderBottom: 1, borderColor: "divider", px: { xs: 1, md: 3 } }}>
+          <Tabs value={current} onChange={(_, v) => setTab(v)} variant="scrollable" scrollButtons="auto" allowScrollButtonsMobile
+                sx={{ minHeight: 46, "& .MuiTab-root": { minHeight: 46, textTransform: "none", fontSize: 13.5, fontWeight: 500, px: 1.75 },
+                      "& .Mui-selected": { fontWeight: 600 } }}>
+            {TABS.map((t) => <Tab key={t.key} value={t.key} label={t.label} />)}
+          </Tabs>
+        </Paper>
+      )}
+
+      <Box sx={{ px: { xs: 2, md: 4 }, py: 3 }}>
+        {blocked && (
+          <Alert severity="warning" sx={{ mb: 2, borderRadius: RADIUS }}>
+            No <code>ANTHROPIC_API_KEY</code> is set, so no question can be answered.
+          </Alert>
+        )}
+        {error && <Alert severity="error" sx={{ mb: 2, borderRadius: RADIUS }} onClose={() => setError(null)}>{error}</Alert>}
 
         {notSaved && (
-          <Alert severity="warning" sx={{ mb: 2 }} onClose={() => setNotSaved(null)}>
+          <Alert severity="warning" sx={{ mb: 2, borderRadius: RADIUS }} onClose={() => setNotSaved(null)}>
             This investigation is running but is <b>not being recorded</b> — {notSaved}. The answer
             below is real; it just will not be in the history afterwards.
           </Alert>
         )}
 
-        {/* previous investigations, in a drawer beside the current one */}
-        <RunHistoryDrawer<EvidenceRunDetail>
-          open={historyOpen}
-          onClose={() => setHistoryOpen(false)}
-          icon={<HistoryIcon size={18} />}
-          title="Past investigations"
-          noun={["investigation", "investigations"]}
-          items={historyCards}
-          currentId={viewing}
-          onDelete={remove}
-          deleteLabel="Delete this investigation"
-          fetchDetail={evidence.run}
-          renderDetail={(run) => <PastInvestigation run={run} />}
-          onLoadIntoPage={open}
-          loadDisabled={running}
-          filterPlaceholder="Filter by question or answer…"
-          emptyText="Nothing investigated yet. Ask a question and it will appear here."
-        />
 
-        {/* what the agent was told before it started */}
-        {memory && (memory.used || memory.suppressed_by_holdout) && (
-          <Paper sx={{ mb: 2.5, overflow: "hidden" }}>
-            <Stack direction="row" spacing={1}
-                   sx={{ alignItems: "center", p: 1.75, cursor: "pointer" }}
-                   onClick={() => setMemoryOpen((o) => !o)}
-                   role="button" aria-expanded={memoryOpen}
-                   aria-label={`${memoryOpen ? "Hide" : "Show"} the notes memory supplied`}>
-              <Brain size={15} color={theme.palette.text.secondary} />
-              <Typography variant="overline" color="text.secondary" sx={{ lineHeight: 1 }}>
-                Memory · {memory.suppressed_by_holdout ? "not read" : plural(memory.recalled, "note")}
-              </Typography>
-              <Box sx={{ flex: 1 }} />
-              {/* Collapsed, the panel still has to carry the warning: the
-                  reader is about to scroll past retrieved passages, and what
-                  memory supplied must never be mistaken for them. */}
-              <Chip size="small" variant="outlined" label="not evidence"
-                    sx={{ height: 20, fontSize: 10.5, fontWeight: 700 }} />
-              {memoryOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-            </Stack>
-            <Collapse in={memoryOpen}>
-              <Divider />
-              <Box sx={{ p: 1.75 }}>
-                {memory.suppressed_by_holdout ? (
-                  <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
-                    Memory was requested but not read: this is a holdout run. Holdout measures the
-                    agent against a corpus it cannot look the answer up in, and an earlier run's
-                    answer arriving through memory would hand it back.
-                  </Typography>
-                ) : memory.recalled === 0 ? (
-                  <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
-                    Nothing was remembered about this question. The agent started from the corpus, as
-                    it always did.
-                  </Typography>
-                ) : (
-                  <>
-                    <Typography sx={{ fontSize: 11.5, color: "text.secondary", mb: 1 }}>
-                      Notes from earlier investigations, given to the agent before its first search.
-                      They steer where it looks. They are <b>not</b> evidence and cannot be cited: a
-                      quote that is not in a chunk retrieved in this run is discarded, so nothing here
-                      can reach an answer without being proved again from the corpus.
-                    </Typography>
-                    <Stack spacing={0.75}>
-                      {memory.memories.map((m, i) => (
-                        <Box key={m.id || i} sx={{ p: 1, borderRadius: 1.5, border: 1,
-                                                   borderColor: "divider", bgcolor: surface(theme, 0.5) }}>
-                          <Stack direction="row" spacing={0.75} sx={{ alignItems: "baseline" }}>
-                            <Typography sx={{ fontSize: 10, fontWeight: 800, color: "text.disabled",
-                                              textTransform: "uppercase", letterSpacing: ".04em" }}>
-                              {m.type || "note"}
-                            </Typography>
-                            <Typography sx={{ fontSize: 12.5, lineHeight: 1.5 }}>{m.text}</Typography>
-                          </Stack>
-                    </Box>
-                  ))}
-                </Stack>
-              </>
-            )}
-              </Box>
-            </Collapse>
-          </Paper>
+        {current === "answer" && answer && (
+          <AnswerSummary answer={answer} onClaim={openClaim} engines={engineLine} showModel={showTechDetails} />
         )}
 
+        {current === "claims" && answer && (
+          <ClaimsView claims={claims} focus={focusClaim} fileStem={runId ?? "evidence"}
+                      renderSource={(s, i) => <SourceRow key={i} s={s} onInspect={inspect} busy={inspectBusy === s.chunk_id} />} />
+        )}
+
+        {current === "investigation" && (
+          <>
         {/* the investigation, live */}
         {calls.length > 0 && (
           <Paper sx={{ p: 1.75, mb: 2.5 }}>
@@ -1215,78 +1193,75 @@ export default function EvidencePage({ active }: { active: boolean }) {
           </Paper>
         )}
 
-        {/* the answer */}
-        {answer && (
-          <Paper component={motion.div} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
-                 sx={{ p: { xs: 1.75, md: 2.5 } }}>
-            <Stack direction="row" spacing={1.25} sx={{ alignItems: "center", mb: 1.5, flexWrap: "wrap" }}>
-              <StateBadge state={answer.state} />
-              <Box sx={{ flex: 1 }} />
-              <Typography sx={{ fontSize: 11.5, color: "text.secondary" }}>
-                {plural(answer.claims.length, "claim")} · {answer.tool_calls} calls ·{" "}
-                {answer.seconds}s · {Math.round((answer.input_tokens + answer.output_tokens) / 1000)}k tokens
+          </>
+        )}
+
+        {current === "memory" && (
+          <>
+        {/* what the agent was told before it started */}
+        {memory && (memory.used || memory.suppressed_by_holdout) && (
+          <Paper sx={{ mb: 2.5, overflow: "hidden" }}>
+            <Stack direction="row" spacing={1}
+                   sx={{ alignItems: "center", p: 1.75, cursor: "pointer" }}
+                   onClick={() => setMemoryOpen((o) => !o)}
+                   role="button" aria-expanded={memoryOpen}
+                   aria-label={`${memoryOpen ? "Hide" : "Show"} the notes memory supplied`}>
+              <Brain size={15} color={theme.palette.text.secondary} />
+              <Typography variant="overline" color="text.secondary" sx={{ lineHeight: 1 }}>
+                Memory · {memory.suppressed_by_holdout ? "not read" : plural(memory.recalled, "note")}
               </Typography>
+              <Box sx={{ flex: 1 }} />
+              {/* Collapsed, the panel still has to carry the warning: the
+                  reader is about to scroll past retrieved passages, and what
+                  memory supplied must never be mistaken for them. */}
+              <Chip size="small" variant="outlined" label="not evidence"
+                    sx={{ height: 20, fontSize: 10.5, fontWeight: 700 }} />
+              {memoryOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
             </Stack>
-
-            <Typography sx={{ fontSize: 15, lineHeight: 1.65, mb: 2 }}>{answer.answer}</Typography>
-
-            {answer.claims.length > 0 && (
-              <>
-                <Stack direction="row" spacing={1} sx={{ alignItems: "center", mb: 1.25 }}>
-                  <Quote size={14} />
-                  <Typography variant="overline" color="text.secondary" sx={{ lineHeight: 1 }}>
-                    Claims and evidence
+            <Collapse in={memoryOpen}>
+              <Divider />
+              <Box sx={{ p: 1.75 }}>
+                {memory.suppressed_by_holdout ? (
+                  <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
+                    Memory was requested but not read: this is a holdout run. Holdout measures the
+                    agent against a corpus it cannot look the answer up in, and an earlier run's
+                    answer arriving through memory would hand it back.
                   </Typography>
-                  <Box sx={{ flex: 1 }} />
-                  <Tooltip title="The weakest claim that actually asserts something governs the answer">
-                    <Typography sx={{ fontSize: 11.5, color: "text.secondary" }}>
-                      hover any score to see its arithmetic
+                ) : memory.recalled === 0 ? (
+                  <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
+                    Nothing was remembered about this question. The agent started from the corpus, as
+                    it always did.
+                  </Typography>
+                ) : (
+                  <>
+                    <Typography sx={{ fontSize: 11.5, color: "text.secondary", mb: 1 }}>
+                      Notes from earlier investigations, given to the agent before its first search.
+                      They steer where it looks. They are <b>not</b> evidence and cannot be cited: a
+                      quote that is not in a chunk retrieved in this run is discarded, so nothing here
+                      can reach an answer without being proved again from the corpus.
                     </Typography>
-                  </Tooltip>
-                </Stack>
-                <Stack spacing={1.25}>
-                  {answer.claims.map((c, i) => (
-                    <ClaimCard key={i} claim={c} index={i}
-                               onInspect={inspect} busyChunk={inspectBusy} />
+                    <Stack spacing={0.75}>
+                      {memory.memories.map((m, i) => (
+                        <Box key={m.id || i} sx={{ p: 1, borderRadius: 1.5, border: 1,
+                                                   borderColor: "divider", bgcolor: surface(theme, 0.5) }}>
+                          <Stack direction="row" spacing={0.75} sx={{ alignItems: "baseline" }}>
+                            <Typography sx={{ fontSize: 10, fontWeight: 800, color: "text.disabled",
+                                              textTransform: "uppercase", letterSpacing: ".04em" }}>
+                              {m.type || "note"}
+                            </Typography>
+                            <Typography sx={{ fontSize: 12.5, lineHeight: 1.5 }}>{m.text}</Typography>
+                          </Stack>
+                    </Box>
                   ))}
                 </Stack>
               </>
             )}
-
-            {(answer.open_questions.length > 0 || answer.limits.length > 0) && <Divider sx={{ my: 2 }} />}
-
-            {answer.open_questions.length > 0 && (
-              <Box sx={{ mb: 1.5 }}>
-                <Stack direction="row" spacing={0.85} sx={{ alignItems: "center", mb: 0.75 }}>
-                  <CircleHelp size={13} />
-                  <Typography variant="overline" color="text.secondary" sx={{ lineHeight: 1 }}>
-                    Open questions
-                  </Typography>
-                </Stack>
-                <Stack spacing={0.4}>
-                  {answer.open_questions.map((q, i) => (
-                    <Typography key={i} sx={{ fontSize: 12.5 }}>• {q}</Typography>
-                  ))}
-                </Stack>
               </Box>
-            )}
-
-            {answer.limits.length > 0 && (
-              <Box>
-                <Stack direction="row" spacing={0.85} sx={{ alignItems: "center", mb: 0.75 }}>
-                  <Eye size={13} />
-                  <Typography variant="overline" color="text.secondary" sx={{ lineHeight: 1 }}>
-                    What stopped it going further
-                  </Typography>
-                </Stack>
-                <Stack spacing={0.4}>
-                  {answer.limits.map((l, i) => (
-                    <Typography key={i} sx={{ fontSize: 12.5, color: "text.secondary" }}>• {l}</Typography>
-                  ))}
-                </Stack>
-              </Box>
-            )}
+            </Collapse>
           </Paper>
+        )}
+
+          </>
         )}
 
         {/* idle */}
@@ -1298,7 +1273,7 @@ export default function EvidencePage({ active }: { active: boolean }) {
               hybrid retrieval for substance — then reports what it found as separate claims, each
               scored by a rule you can check. It will say <b>not in the corpus</b> rather than guess.
             </Typography>
-            {status && (
+            {status && showTechDetails && (
               <Stack direction="row" useFlexGap sx={{ justifyContent: "center", flexWrap: "wrap", gap: 1, mt: 2 }}>
                 <Chip size="small" variant="outlined" icon={<FileText size={13} />} label={status.model} />
                 <Chip size="small" variant="outlined" icon={<GitBranch size={13} />}
@@ -1316,6 +1291,27 @@ export default function EvidencePage({ active }: { active: boolean }) {
           </Paper>
         )}
       </Box>
+
+        {/* previous investigations, in a drawer beside the current one */}
+        <RunHistoryDrawer<EvidenceRunDetail>
+          open={historyOpen}
+          onClose={() => setHistoryOpen(false)}
+          icon={<HistoryIcon size={18} />}
+          title="Past investigations"
+          noun={["investigation", "investigations"]}
+          items={historyCards}
+          currentId={viewing}
+          onDelete={remove}
+          deleteLabel="Delete this investigation"
+          fetchDetail={evidence.run}
+          renderDetail={(run) => <PastInvestigation run={run} showModel={showTechDetails} />}
+          onLoadIntoPage={open}
+          loadDisabled={running}
+          filterPlaceholder="Filter by question or answer…"
+          emptyText="Nothing investigated yet. Ask a question and it will appear here."
+        />
+
+      {(!!answer || calls.length > 0) && <ScrollRunway />}
 
       {/* ---------- citation traceability ---------- */}
       <MemoryReflectDrawer

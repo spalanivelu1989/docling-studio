@@ -735,6 +735,60 @@ When a user submits a query via the Knowledge Graph query bar or clicks an entit
    - All unrelated nodes and edges are dimmed (`opacity: 0.12`).
    - The camera automatically calculates the bounding box of the matched subgraph and executes a smooth pan/zoom transition to frame the answer.
 
+## Agent guardrails
+
+The Evidence Agent, InsightLens, the Fit-Gap Copilot and Ask RAG share these
+guardrails (`guardrails/`). Each is enforced in code; the same rules are also written into
+every agent's prompt, as a second line rather than the mechanism.
+
+**Scope.** The agents answer questions about this programme -- its processes,
+SAP, the systems, specifications and rollouts in the corpus -- and nothing a
+general chatbot would answer. What a person types (the Evidence Agent's
+question, the optional note on an InsightLens or Fit-Gap Copilot run) is
+checked before any agent starts. A BPML code, a ticket, a known system or a
+domain term passes at once; anything else goes to a small, fast model
+(`claude-haiku-4-5`) that answers only "in or out". Out of scope, the answer is
+**"I don't have the information."** and nothing else runs -- in Ask RAG nothing
+is searched and the answer is recorded as not scored, rather than sending nine
+judges to grade a refusal. If that model cannot
+be reached the question goes through and the log says so -- an outage of the
+filter must not become an outage of every agent.
+
+**Web search, gated.** The agents may ask for `web_search`; the code decides.
+It runs only after the corpus has been searched in that run, at most twice per
+run, on an allow-list of sites (SAP's and the EU's by default), for a query
+that is itself about the programme's subject and contains no ticket numbers,
+BPML codes or contact details. Only the cited passages come back, under `WEB:`
+chunk ids, so a web quote is verified like any other and one the model
+paraphrased is dropped. A claim resting on web pages alone is capped at 0.35 --
+a web page says what SAP does in general, not what this programme decided.
+The log shows web calls in amber, as `WEB`. Ask RAG has no tools and stays
+corpus-only: it answers from the excerpts it retrieved and nothing else.
+
+**No contact details.** E-mail addresses and phone numbers are removed from
+everything the agents return: after quote verification inside the agent, and
+again on every response under `/api/evidence`, `/api/fitgap`, `/api/rollout`,
+`/api/ask` and `/api/quality`, so runs recorded before the rule existed are clean when
+reopened or exported. Measured on the corpus: 116 e-mail addresses and 21
+phone numbers are removed, and none of the order numbers, BPML codes, dates or
+amounts that looser rules mistook for phone numbers. Ask RAG's answer streams
+token by token, so it is held back to the end of each line or sentence and
+redacted there -- an address split across two tokens is still caught.
+
+```bash
+# Optional overrides (defaults shown):
+AGENT_SCOPE_GUARD=on
+AGENT_SCOPE_MODEL=claude-haiku-4-5-20251001
+AGENT_WEB_SEARCH=on
+AGENT_WEB_DOMAINS=sap.com,europa.eu     # subdomains included; add a tax authority per country
+AGENT_WEB_MAX_SEARCHES=2                # per run
+AGENT_WEB_MODEL=claude-sonnet-5
+```
+
+```bash
+.venv/bin/python test_guardrails.py
+```
+
 ## Tracing the agents (Langfuse)
 
 Off unless configured. The four things that call a model -- the Fit-Gap Copilot,
@@ -786,6 +840,135 @@ Two things worth knowing:
   are redacted on the way out. Document text is not -- it is the reason the
   trace is worth keeping. Point this at a Langfuse project you would be
   willing to show the corpus to.
+
+## Scoring the answers (Ragas)
+
+Every Ask RAG answer is judged automatically. Twelve judges run against the
+excerpts the answer was written from -- faithfulness, answer relevancy, the
+three context metrics, coherence, conciseness and a safety pair -- and the
+verdict is stored beside the question, pushed into Langfuse as scores, and
+drawn on the Ask page as a scorecard between the answer and the sources.
+
+Judging happens on a background thread after the answer has streamed, so it
+never delays a reader: the panel opens as "Scoring..." and fills in about
+thirty seconds later. Closing the tab in between costs nothing -- the result is
+written either way and is there when the question is reopened.
+
+```bash
+python evaluation.py status      # what scoring is configured to do
+python evaluation.py selftest    # score one good and one bad answer, print the gap
+python evaluation.py configs     # declare the score names and ranges in Langfuse
+python evaluation.py dashboard   # upload the quality dashboard
+```
+
+Off with `RAG_EVAL=off`, and off by itself if Ragas is not installed or there is
+no `ANTHROPIC_API_KEY` -- in which case the panel says which, rather than
+showing an empty card. The judge defaults to `claude-sonnet-5` rather than the
+answering model: grading an answer on Opus costs more than writing it did.
+
+**Two of the metrics the usual RAG metric list includes are missing here, on
+purpose.** Correctness and Context Recall both need a reference answer, and a
+live question has none. They are measured instead over the 27 ground-truthed
+questions in `docs/three-engine-eval-questions.md`:
+
+```bash
+python evaluation.py dataset                            # push them to Langfuse
+python evaluation.py experiment --mode hybrid --k 8     # answer and score them
+python evaluation.py experiment --mode vector --k 8     # then compare the runs
+```
+
+That is also the only honest way to compare two retrieval settings, since live
+traffic asks different questions in each mode.
+
+Clicking a metric opens the judge's own working beside the page: for
+faithfulness, every claim the answer made with a verdict and a reason for each;
+for the retrieval metrics, a verdict per excerpt named by its document. Ragas
+discards all of that, so it is intercepted at the judge and kept — at no extra
+model calls and no extra time.
+
+The history drawer gains a score badge per row and four segments -- low
+quality, unfaithful, unsafe, unscored -- so "show me the hallucinations" is one
+click rather than a query. In Langfuse the same thing is a filter on the traces
+table, because these are Langfuse *scores* and not trace metadata.
+
+The **RAG Metrics** tab, beside Ask RAG, is laid out as an analytical list page:
+a KPI strip against the 0.70 threshold, a filter bar, and six tabs. **Answers**
+is a sortable table of every judged answer under small charts that act as
+filters; **Metric matrix** shows every answer against every metric as a heatmap,
+with a pane giving the judge's findings for the selected one; **Source
+documents** flags documents retrieved often and rarely useful; **Failure
+analysis** groups bad answers by cause and subject; **Experiments** compares two
+runs over the evaluation set question by question; and **Judge calibration** is
+where people review answers so the judge itself can be checked. Until twenty
+answers have a reviewer's verdict, every tab says so.
+
+`docs/rag-evaluation.md` has the weights behind the overall score and the
+argument for them, the three Ragas/Anthropic incompatibilities this had to work
+around, and what to fix before the evaluation set becomes a regression gate
+rather than a diagnostic.
+
+## Signing in to the application
+
+Every page of the application (`/`, `/ask`, `/rollout`, …) asks for a static
+username and password first: **test** / **test** by default. The sign-in page
+is `/login`; the sign-out button is at the right of the header. A page opened
+while signed out goes to `/login` and comes back to that page afterwards.
+
+It is a presentation lock, not access control: the `/api/*` endpoints stay
+open, because Demo Mode's pages call the same API. Keep the "localhost only"
+rule. Demo Mode has its own, separate sign-in (below). `app_login.py` holds it,
+and `test_app_login.py` tests it.
+
+| Variable | Default | |
+|---|---|---|
+| `APP_USERNAME` | `test` | |
+| `APP_PASSWORD` | `test` | |
+| `APP_SECRET` | random per process | signs the session cookie; set it to stay signed in across restarts |
+| `APP_SESSION_HOURS` | `12` | |
+| `APP_LOGIN` | `on` | `off` removes the sign-in |
+
+## Demo Mode (client presentations)
+
+A second front door for presenting to a client: <http://localhost:8000/demo>.
+It asks for a sign-in, then opens on the Spark AI Spine landing page (the
+logo returns to it) with only two tabs in the header, **Knowledge Graph** and
+**Fit-Gap Copilot**. **Ask RAG** and the **Agent** sit in a sidebar that starts
+minimized to icons: the menu button in the header expands it and minimizes it
+again, and it can also be hidden entirely. It remembers its state in the
+browser. The document tools (Convert, Batch Convert, Add to knowledge base),
+the inspection pages (Coverage, Doc vs MD, MD Viewer), InsightLens and RAG
+Metrics are left out of Demo Mode altogether -- their addresses under `/demo`
+land on the introduction, and the landing page shows no buttons to them. All
+of them remain in the application at `/`.
+
+```bash
+./run.sh                      # then open http://localhost:8000/demo
+# username solvay, password solvay
+```
+
+The application at `/` is untouched. Demo Mode is a separate page bundle
+(`frontend/demo.html`, `frontend/src/demo/`) served by its own routes in
+`demo_mode.py`, and it renders the application's own page components, so a
+fix to a page shows up in both.
+
+**The sign-in is for a presentation, not for security.** It keeps a casual
+visitor on a shared screen out of the demo page, and that is all: the main
+application and every `/api/*` endpoint stay exactly as open as before, so the
+"localhost only" note below still applies in full. The password is checked on
+the server (it is not in the JavaScript bundle) and the session is an
+HMAC-signed, HttpOnly cookie.
+
+```bash
+# Optional overrides (defaults shown):
+DEMO_USERNAME=solvay
+DEMO_PASSWORD=solvay
+DEMO_SECRET=                  # unset: random per process, so a restart signs out
+DEMO_SESSION_HOURS=12
+```
+
+```bash
+.venv/bin/python test_demo_mode.py   # credentials, the signed session, the gate
+```
 
 ## Notes
 

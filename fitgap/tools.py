@@ -14,6 +14,7 @@ import fnmatch
 import re
 import sys
 import threading
+from urllib.parse import urlparse
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -22,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import knowledge_graph  # noqa: E402
 import rag  # noqa: E402
 import uploads  # noqa: E402
+from guardrails import web  # noqa: E402
 
 from . import bpml  # noqa: E402
 
@@ -97,6 +99,12 @@ class Session:
     calls: list[ToolCall] = field(default_factory=list)
     # chunk id -> the record the agent was shown, for the verifier
     retrieved: dict[str, dict] = field(default_factory=dict)
+    # For the web-search gate (guardrails/web.py): the web is a fallback for a
+    # gap the corpus left, so it opens only once the corpus has been searched,
+    # and only a few times per run.
+    corpus_searches: int = 0
+    web_searches: int = 0
+    web_log: list[dict] = field(default_factory=list)
     masked_docs: set[str] = field(default_factory=set)
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
@@ -162,6 +170,7 @@ def search_corpus(session: Session, query: str, k: int = 8, filters: dict | None
     """Hybrid retrieval only -- vector + BM25 + RRF, no answer generation.
     Over-fetches when a filter is active so a held-out document does not
     silently cost the agent a slot."""
+    session.corpus_searches += 1
     filters = filters or {}
     include = tuple(filters.get("doc_include") or ())
     exclude = tuple(filters.get("doc_exclude") or ())
@@ -213,6 +222,7 @@ def search_uploads(session: Session, query: str, k: int = 8, filters: dict | Non
     category of it. The upload is not part of the corpus -- it is the thing
     being compared against the corpus -- and one ranked list mixing the two
     would let an uploaded sentence be cited as what the project decided."""
+    session.corpus_searches += 1
     if not session.uploads:
         return {"error": "no documents were attached to this session"}
     filters = filters or {}
@@ -660,6 +670,7 @@ def definitions(mode: str = "A", has_uploads: bool = False) -> list[dict]:
 # neither search nor read a corpus: `list_sources` reports what is attached to
 # the session, and `compare_entities` computes over two graphs already loaded.
 OBSERVATION_TYPE = {
+    "web_search": "retriever",
     "get_scope": "retriever",
     "search_corpus": "retriever",
     "search_uploads": "retriever",
@@ -683,6 +694,8 @@ DISPATCH = {
     "graph_entity": graph_entity,
     "graph_neighbors": graph_neighbors,
     "graph_path": graph_path,
+    # Gated in guardrails/web.py; only offered when switched on.
+    "web_search": web.search,
 }
 
 
@@ -770,6 +783,11 @@ def describe_sources(name: str, args: dict, result: dict, session: Session | Non
         }
     if name == "get_scope":
         return {"kind": "sheet", "label": f"BPML sheet · {bpml.SHEET.name}"}
+    if name == "web_search":
+        hosts = sorted({urlparse(r.get("url", "")).hostname or "" for r in result.get("results") or []})
+        return {"kind": "web", "categories": ["WEB"],
+                "label": (f"web · {', '.join(h for h in hosts if h)}" if hosts
+                          else "web · nothing on the allowed sites")}
     return {"kind": "other", "label": ""}
 
 
@@ -809,4 +827,7 @@ def summarise(name: str, args: dict, result: dict) -> str:
         return f'{result.get("hops", "no")} hop(s)' if result.get("path") is not False else "no path"
     if name == "upload_entities":
         return f'{result.get("shared", 0)} shared, {result.get("new", 0)} new entities'
+    if name == "web_search":
+        n = len(result.get("results", []))
+        return f'web "{str(args.get("query", ""))[:52]}" → {n} page{"s" if n != 1 else ""}'
     return ""

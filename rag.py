@@ -56,6 +56,7 @@ from dotenv import load_dotenv
 
 import md_chunker
 import tracing
+from guardrails import RAG_POLICY, REFUSAL, contact, scope as scope_guard
 from md_chunker import Chunk, chunk_file, with_context
 
 load_dotenv(Path(__file__).with_name(".env"), override=False)
@@ -386,7 +387,40 @@ excerpts from different categories disagree.
 The documents were converted to Markdown automatically. Text from pictures was \
 read by OCR and can contain misread characters, and flowcharts traced from \
 pictures can have wrong or missing arrows, so mention it when an answer rests \
-on such text."""
+on such text.
+
+""" + RAG_POLICY
+
+
+def corpus_fingerprint(categories: Sequence[str] | None = None) -> str:
+    """What a question could have read: a hash over the fingerprints of every
+    document in scope, hashed the way InsightLens's and the Fit-Gap Copilot's
+    records hash it. Empty when the database cannot be reached -- a missing
+    fingerprint is recorded as missing rather than stopping the question."""
+    try:
+        conn = connection()
+        rows = (conn.execute("SELECT source, fingerprint FROM rag_documents"
+                             " WHERE category = ANY(%s)", (list(categories),)).fetchall()
+                if categories else
+                conn.execute("SELECT source, fingerprint FROM rag_documents").fetchall())
+        h = hashlib.sha256()
+        for _, fp in sorted(rows):
+            h.update(fp.encode())
+        return h.hexdigest()[:16]
+    except Exception:
+        return ""
+
+
+def prompt_hash() -> str:
+    """A fingerprint of the instructions every answer was written under.
+
+    Recorded on each question for the same reason the corpus fingerprint is:
+    once answers are scored, two scores either side of an edit to the text
+    above are not comparable, and a quality trend that steps on the day the
+    prompt changed should be readable as that rather than as a regression.
+    The agents in fitgap/ and rollout/ have kept one for their own prompts
+    since they started storing runs."""
+    return hashlib.sha256(ANSWER_SYSTEM.encode()).hexdigest()[:12]
 
 
 # --- embedding ----------------------------------------------------------------
@@ -1267,9 +1301,10 @@ def ask_events(
     mode: str = "hybrid",
     categories: Sequence[str] | None = None,
 ):
-    """The whole pipeline as a sequence of events for a UI: ("stage", {...})
-    as each step starts and finishes, ("sources", [...]), ("token", str) while
-    Claude writes, and ("done", {...}). Errors propagate to the caller."""
+    """The whole pipeline as a sequence of events for a UI: ("trace", {...})
+    first, then ("stage", {...}) as each step starts and finishes,
+    ("sources", [...]), ("token", str) while Claude writes, and
+    ("done", {...}). Errors propagate to the caller."""
     import time
 
     started = time.perf_counter()
@@ -1283,12 +1318,33 @@ def ask_events(
         metadata={"model": ANSWER_MODEL, "embed_model": EMBED_MODEL},
         tags=["rag-ask", f"mode-{mode}"],
     )
+    # Handed out immediately, and before any work, so the caller can write it
+    # down beside the question. Without it there is no way back from a stored
+    # run to its trace -- and a quality score has to be attached to a trace,
+    # not to a row in our database. Both fields are "" when tracing is off,
+    # which is the existing contract of Run.trace_id and Run.url.
+    yield "trace", {"id": run.trace_id, "url": run.url()}
 
     def stage(key, status, detail="", t0=None):
         info = {"key": key, "status": status, "detail": detail}
         if t0 is not None:
             info["ms"] = round((time.perf_counter() - t0) * 1000)
         return "stage", info
+
+    # The scope guardrail the agents have (guardrails/scope.py), before any
+    # retrieval: a question outside the programme is answered with the same
+    # refusal, with nothing searched and no model asked to write anything.
+    verdict = scope_guard.check(question)
+    if not verdict.allowed:
+        yield stage("answer", "done", "Refused: outside this assistant's scope. Nothing was searched.")
+        yield "sources", []
+        yield "token", REFUSAL
+        run.end(output={"answer": REFUSAL, "refused": True, "guardrail": verdict.to_dict()})
+        yield "done", {"seconds": round(time.perf_counter() - started, 1),
+                       "input_tokens": 0, "output_tokens": 0,
+                       "refused": True, "guardrail": verdict.to_dict(),
+                       "detail": scope_guard.refusal_detail(verdict)}
+        return
 
     # What was searched is shown by the category filter on the page, and which
     # categories the excerpts came from is reported by the "fuse" stage; the
@@ -1363,9 +1419,12 @@ def ask_events(
     detail += f"; {', '.join(found)}"
     yield stage("fuse", "done", detail, t0)
 
+    # Contact details come out of the excerpts as shown and stored; the model
+    # still reads them as written, and its prompt tells it not to repeat them.
     yield "sources", [
         {
-            "n": n, "title": h.title, "section": h.heading_path, "content": h.content,
+            "n": n, "title": h.title, "section": h.heading_path,
+            "content": contact.redact(h.content),
             "category": h.category,
             "score": h.score, "similarity": h.similarity, "bm25": h.bm25,
             "vector_rank": h.vector_rank, "keyword_rank": h.keyword_rank,
@@ -1382,6 +1441,9 @@ def ask_events(
     # observation and is what the tracing table shows, so a root that reports
     # token counts and not the answer makes every row unreadable at a glance.
     written: list[str] = []
+    # Tokens are redacted as they stream, held back to the end of a line or a
+    # sentence so an address split across two tokens is still caught.
+    redacting = contact.Stream()
     for kind, value in answer_stream(question, hits, run):
         if kind == "thinking":
             yield stage("answer", "running", f"{ANSWER_MODEL} is reasoning over the excerpts")
@@ -1389,9 +1451,13 @@ def ask_events(
             if not writing:
                 writing = True
                 yield stage("answer", "running", f"{ANSWER_MODEL} is writing")
-            written.append(value)
-            yield "token", value
+            if out := redacting.feed(value):
+                written.append(out)
+                yield "token", out
         else:
+            if rest := redacting.flush():
+                written.append(rest)
+                yield "token", rest
             yield stage(
                 "answer", "done",
                 f"{ANSWER_MODEL}: {value['input_tokens']:,} tokens in, {value['output_tokens']:,} out",

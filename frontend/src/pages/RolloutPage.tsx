@@ -1,5 +1,5 @@
 import {
-  Alert, Box, Button, Chip, CircularProgress, Collapse, Divider, IconButton,
+  Alert, Box, Button, Chip, CircularProgress, Collapse, Divider,
   LinearProgress, Menu, MenuItem, Paper, Select, Stack, Tab, Tabs, TextField,
   Tooltip, Typography,
 } from "@mui/material";
@@ -7,14 +7,14 @@ import { alpha, useTheme } from "@mui/material/styles";
 import RunHistoryDrawer, { type HistoryCard } from "../components/RunHistoryDrawer";
 import { AnimatePresence, motion } from "framer-motion";
 import {
-  AlertTriangle, CheckCircle2, ChevronDown, CircleHelp, Download, FileDown, FileText, Gavel, Globe2,
-  History, Layers, ListChecks, Paperclip, Scale, Search, ShieldCheck, Sparkles, Square,
-  Target, Trash2, Upload, X,
+  ArrowLeft, CheckCircle2, ChevronDown, CircleHelp, Download, FileDown, FileText, Globe2,
+  History, Layers, ListChecks, Paperclip, Plus, Scale, Search, ShieldCheck, Square,
+  Terminal, Trash2, Upload, X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   fitgap, rollout, runRollout, sessionUploads, uploadSessionDocuments,
-  type AgentToolCall, type AsIsModel, type BpmlProcess, type Deviation, type LocalizationState,
+  type AgentToolCall, type AsIsModel, type EvidenceLogEntry, type BpmlProcess, type Deviation,
   type Materiality, type RolloutAnalysis, type RolloutDecision, type RolloutGates,
   type RolloutSourceChunk, type RolloutSourceDocument, type RolloutSources,
   type RolloutSubject,
@@ -24,7 +24,32 @@ import {
   type UploadSession,
 } from "../api";
 import { clearAdornment, clearOnEscape } from "../components/ClearAdornment";
+import AgentLogDrawer from "../components/AgentLogDrawer";
 import AgentTraceDrawer from "../components/AgentTraceDrawer";
+import ScrollRunway from "../components/ScrollRunway";
+import BriefView from "../components/rollout/BriefView";
+import DeviationRegisterView from "../components/rollout/DeviationRegisterView";
+import FacilitatorView from "../components/rollout/FacilitatorView";
+import WorkshopAgendaView from "../components/rollout/WorkshopAgendaView";
+import ObjectHeader, { BandButton } from "../components/rollout/ObjectHeader";
+import { MONO, RADIUS, usePremium } from "../components/rollout/premium";
+import ProcessAlignmentView from "../components/rollout/ProcessAlignmentView";
+import SummaryView, { Section } from "../components/rollout/SummaryView";
+
+/** A log for a run recorded before the reasoning was kept: its tool calls,
+ *  in order, under a note that says that is all there is. */
+function logFromCalls(calls: (AgentToolCall & { stage?: string })[]): EvidenceLogEntry[] {
+  if (!calls.length) return [];
+  return [
+    { seq: 0, at: "", kind: "note", note: "legacy",
+      title: "Recorded before the reasoning was kept — tool calls only",
+      text: "Runs from this version on also log the context each pass was handed, the agent's reasoning between calls, rejected submissions and the quality gates." },
+    ...calls.map((c, i) => ({
+      seq: i + 1, at: "", kind: "tool_call" as const, tool: c.tool, engine: c.engine, summary: c.summary,
+      ms: c.ms, error: c.error ?? null, arguments: c.arguments as Record<string, unknown>, call: i, stage: c.stage,
+    })),
+  ];
+}
 
 /* ------------------------------------------------------------------ palette */
 
@@ -49,7 +74,6 @@ const MATERIALITY_HUE: Record<Materiality, "error" | "warning" | "info" | "succe
 
 /** The two states that are a real legal obligation. Everything else is a
  *  choice, however local — which is the whole point of §5.3. */
-const MANDATORY: LocalizationState[] = ["CONFIRMED_STATUTORY", "SAP_DELIVERED"];
 
 const plural = (n: number, one: string, many = "") => `${n} ${n === 1 ? one : many || one + "s"}`;
 
@@ -151,6 +175,14 @@ function Sources({
   onClear: () => void;
 }) {
   const theme = useTheme();
+  const premium = usePremium();
+  // The one action on this screen, so it is filled in the accent rather than
+  // outlined like the controls around it.
+  const attachSx = {
+    textTransform: "none", fontWeight: 600, fontSize: 13, height: 36, px: 2, borderRadius: RADIUS,
+    bgcolor: premium.accent, color: premium.dark ? premium.onAccent : "#ffffff",
+    "&:hover": { bgcolor: premium.accent, filter: "brightness(1.08)" },
+  } as const;
   const input = useRef<HTMLInputElement | null>(null);
   const [role, setRole] = useState<UploadRole>(subject.role);
   const [over, setOver] = useState(false);
@@ -202,10 +234,12 @@ function Sources({
         if (dropped.length) onAdd(dropped, role);
       }}
       sx={{
-        mt: 1.5, px: 1.75, py: 1.5, borderRadius: 2,
-        border: "1px dashed",
-        borderColor: over ? "primary.main" : hasSubject ? "divider" : alpha(theme.palette.warning.main, 0.6),
-        bgcolor: over ? alpha(theme.palette.primary.main, 0.06) : "transparent",
+        mt: 0.5, px: 1.75, py: 1.5, borderRadius: "4px",
+        // Dashed because it is a drop zone. Heavier while empty, because then
+        // attaching is the only thing to do on this screen.
+        border: files.length ? "1px dashed" : "2px dashed",
+        borderColor: over ? premium.accent : files.length ? "divider" : alpha(premium.accent, 0.55),
+        bgcolor: over ? alpha(premium.accent, 0.08) : files.length ? "transparent" : alpha(premium.accent, 0.035),
         transition: "background-color .15s, border-color .15s",
       }}
     >
@@ -233,6 +267,8 @@ function Sources({
             Discard all
           </Button>
         )}
+        {files.length > 0 && (
+          <>
         <Select
           size="small" value={role} disabled={disabled || !!busy}
           onChange={(e) => setRole(e.target.value as UploadRole)}
@@ -250,12 +286,54 @@ function Sources({
             </MenuItem>
           ))}
         </Select>
-        <Button size="small" variant="outlined" startIcon={<Upload size={14} />}
-                disabled={disabled || full || !!busy} onClick={() => input.current?.click()}
-                sx={{ fontSize: 12.5 }}>
-          Attach
-        </Button>
+            <Button variant="contained" disableElevation startIcon={<Upload size={15} />}
+                    disabled={disabled || full || !!busy} onClick={() => input.current?.click()}
+                    sx={attachSx}>
+              Attach more
+            </Button>
+          </>
+        )}
       </Stack>
+
+      {files.length === 0 && !busy && (
+        <Stack spacing={1.5} sx={{ alignItems: "center", textAlign: "center", py: 3 }}>
+          <Box sx={{ width: 52, height: 52, borderRadius: "50%", display: "grid", placeItems: "center",
+                     bgcolor: alpha(premium.accent, 0.12), color: premium.accent }}>
+            <Upload size={24} />
+          </Box>
+          <Typography sx={{ fontSize: 16, fontWeight: 600 }}>
+            Attach the {subject.label} to start
+          </Typography>
+          <Typography sx={{ fontSize: 13, color: "text.secondary" }}>
+            Drag files here, or choose them — PDF, Word, Excel, PowerPoint, HTML, XML or plain text
+          </Typography>
+          <Stack direction="row" spacing={1} useFlexGap sx={{ alignItems: "center", flexWrap: "wrap", justifyContent: "center", pt: 0.5 }}>
+            <Typography component="label" sx={{ fontSize: 12.5, color: "text.secondary" }}>Attach as</Typography>
+              <Select
+          size="small" value={role} disabled={disabled || !!busy}
+          onChange={(e) => setRole(e.target.value as UploadRole)}
+          title="What the next upload is in the analysis"
+          sx={{ fontSize: 12.5, minWidth: 168 }}
+        >
+          {roles.map((r) => (
+            <MenuItem key={r.value} value={r.value} sx={{ fontSize: 12.5 }}>
+              {r.label}
+              <Typography component="span"
+                          sx={{ fontSize: 10.5, ml: 1,
+                                color: r.value === subject.role ? "warning.main" : "text.secondary" }}>
+                {r.value === subject.role ? "required" : "baseline"}
+              </Typography>
+            </MenuItem>
+          ))}
+        </Select>
+            <Button variant="contained" disableElevation size="large" startIcon={<Upload size={17} />}
+                    disabled={disabled || full} onClick={() => input.current?.click()}
+                    sx={{ ...attachSx, height: 42, px: 3, fontSize: 14.5 }}>
+              Attach documents
+            </Button>
+          </Stack>
+        </Stack>
+      )}
 
       {files.length === 0 && !busy && (
         <Typography sx={{ fontSize: 12.5, color: "text.secondary", mt: 0.75 }}>
@@ -263,8 +341,7 @@ function Sources({
             ? "an SOP, work instruction, process narrative or workshop transcript describing how"
               + " the country works today"
             : "SAP's delivered process: a scope item description, process flow or test script"}.
-          That one is <b>required</b>: it is what the run analyses. PDF, Word, Excel, PowerPoint,
-          HTML, XML or plain text.
+          That one is <b>required</b>: it is what the run analyses.
           <Box component="span" sx={{ display: "block", mt: 0.85 }}>
             The other roles are optional baselines to compare it against, so the comparison rests
             on your documents rather than on the indexed corpus alone.
@@ -606,194 +683,6 @@ function AlignmentRow({ deviations, chunks, session, onGap, children }: {
   );
 }
 
-/* --------------------------------------------------------------- gap detail */
-
-function GapCard({ gap, types, dispositions, states, onDecide, decisions = [], reviewer = "",
-                  busy, subjectLabel = "As-Is", chunks, session = "" }: {
-  gap: Deviation;
-  types: Record<string, string>;
-  dispositions: Record<string, string>;
-  states: Record<string, string>;
-  onDecide?: (verdict: "accept" | "reject" | "defer") => void;
-  decisions?: RolloutDecision[];
-  reviewer?: string;
-  busy?: string;
-  /** The subject side's name. A deviation is a difference between two sides,
-   *  and labelling one of them "As-Is" in a run with no country in it names
-   *  the wrong document. */
-  subjectLabel?: string;
-  /** The run's source index, keyed by chunk id. */
-  chunks?: Record<string, RolloutSourceChunk>;
-  session?: string;
-}) {
-  const theme = useTheme();
-  const [open, setOpen] = useState(false);
-  const mandatory = MANDATORY.includes(gap.localization_state);
-  // The log is append-only, so the last row is the standing verdict and the
-  // ones above it are the history of how it got there.
-  const latest = decisions.length ? decisions[decisions.length - 1] : null;
-  const named = reviewer.trim().length > 0;
-  return (
-    <Paper variant="outlined" sx={{ p: 2, borderLeft: 3, borderLeftColor:
-      gap.workshop_bucket === "MUST_DISCUSS" ? "error.main"
-        : gap.workshop_bucket === "CONFIRM" ? "warning.main" : "success.main" }}>
-      <Stack direction="row" spacing={1.25} sx={{ alignItems: "center", flexWrap: "wrap", gap: 0.75 }}>
-        <Typography sx={{ fontSize: 13, fontWeight: 800, fontFamily: "monospace" }}>{gap.gap_id}</Typography>
-        <Chip size="small" label={gap.materiality} color={MATERIALITY_HUE[gap.materiality]}
-              sx={{ height: 20, fontSize: 10.5, fontWeight: 700 }} />
-        <Tooltip title={types[gap.primary_type] ?? gap.primary_type}>
-          <Chip size="small" variant="outlined" label={gap.primary_type} sx={{ height: 20, fontSize: 10.5 }} />
-        </Tooltip>
-        {gap.secondary_types.map((t) => (
-          <Tooltip key={t} title={types[t] ?? t}>
-            <Chip size="small" variant="outlined" label={t}
-                  sx={{ height: 20, fontSize: 10.5, opacity: 0.7 }} />
-          </Tooltip>
-        ))}
-        {mandatory && (
-          <Chip size="small" icon={<Globe2 size={11} />} label={states[gap.localization_state]}
-                sx={{ height: 20, fontSize: 10.5, bgcolor: alpha(theme.palette.info.main, 0.14),
-                      color: "info.main", fontWeight: 700 }} />
-        )}
-        <Box sx={{ flex: 1 }} />
-        <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
-          GT fit {gap.gt_fit_rating}/4 · harmonisation {gap.harmonization_potential}%
-        </Typography>
-        <IconButton size="small" onClick={() => setOpen((v) => !v)}>
-          <ChevronDown size={15} style={{ transform: open ? "rotate(180deg)" : undefined, transition: "transform .2s" }} />
-        </IconButton>
-      </Stack>
-
-      <Typography sx={{ fontSize: 13.5, fontWeight: 600, mt: 1 }}>{gap.exact_difference}</Typography>
-
-      <Stack spacing={0.75} sx={{ mt: 1 }}>
-        <Row label={subjectLabel} value={gap.as_is_statement} />
-        <Row label="Template" value={gap.gt_statement} />
-        {gap.sap_bp_reference && <Row label="SAP standard" value={gap.sap_bp_reference} />}
-        {!mandatory && <Row label="Localization" value={states[gap.localization_state] ?? gap.localization_state} />}
-      </Stack>
-
-      {gap.decision_question && (
-        <Box sx={{ mt: 1.25, p: 2, borderRadius: 1.5, bgcolor: alpha(theme.palette.error.main, 0.06) }}>
-          <Stack direction="row" spacing={1} sx={{ alignItems: "flex-start" }}>
-            <Gavel size={13} style={{ marginTop: 2, flexShrink: 0 }} />
-            <Box>
-              <Typography sx={{ fontSize: 12.5, fontWeight: 700 }}>{gap.decision_question}</Typography>
-              {gap.decision_options.length > 0 && (
-                <Stack direction="row" useFlexGap sx={{ flexWrap: "wrap", gap: 0.75, mt: 0.6 }}>
-                  {gap.decision_options.map((o, i) => (
-                    <Chip key={i} size="small" label={o} sx={{ height: 21, fontSize: 10.5, maxWidth: 340 }} />
-                  ))}
-                </Stack>
-              )}
-              <Typography sx={{ fontSize: 12, color: "text.secondary", mt: 0.6 }}>
-                {gap.decision_owner.length ? `Owner: ${gap.decision_owner.join(", ")} · ` : ""}
-                ~{gap.workshop_minutes || 10} min
-              </Typography>
-            </Box>
-          </Stack>
-        </Box>
-      )}
-
-      <Stack direction="row" spacing={1.25} sx={{ alignItems: "center", mt: 1, flexWrap: "wrap", gap: 0.75 }}>
-        <Chip size="small" icon={<Target size={11} />}
-              label={dispositions[gap.candidate_disposition] ?? gap.candidate_disposition}
-              sx={{ height: 21, fontSize: 10.5, maxWidth: 420 }} />
-        <Typography sx={{ fontSize: 10.5, color: "text.secondary" }}>
-          {latest ? "proposed" : "proposed · awaiting a decision"} · confidence{" "}
-          {gap.evidence_confidence.toLowerCase()}
-        </Typography>
-        <Box sx={{ flex: 1 }} />
-        {onDecide && (
-          <Stack direction="row" spacing={0.85}>
-            <Button size="small" variant={latest?.verdict === "accept" ? "contained" : "text"}
-                    color="success" disabled={!named || !!busy} sx={{ fontSize: 12 }}
-                    startIcon={busy === "accept" ? <CircularProgress size={11} /> : undefined}
-                    onClick={() => onDecide("accept")}>Accept</Button>
-            <Button size="small" variant={latest?.verdict === "defer" ? "contained" : "text"}
-                    color="warning" disabled={!named || !!busy} sx={{ fontSize: 12 }}
-                    startIcon={busy === "defer" ? <CircularProgress size={11} /> : undefined}
-                    onClick={() => onDecide("defer")}>Defer</Button>
-            <Button size="small" variant={latest?.verdict === "reject" ? "contained" : "text"}
-                    color="error" disabled={!named || !!busy} sx={{ fontSize: 12 }}
-                    startIcon={busy === "reject" ? <CircularProgress size={11} /> : undefined}
-                    onClick={() => onDecide("reject")}>Reject</Button>
-          </Stack>
-        )}
-      </Stack>
-
-      {onDecide && !named && (
-        <Typography sx={{ fontSize: 10.5, color: "text.disabled", mt: 0.75 }}>
-          A verdict needs a name against it — put yours in the run panel above.
-        </Typography>
-      )}
-
-      {decisions.length > 0 && (
-        <Stack spacing={0.75} sx={{ mt: 1 }}>
-          {decisions.map((d, i) => (
-            <Stack key={d.id} direction="row" spacing={1}
-                   sx={{ alignItems: "center", opacity: i === decisions.length - 1 ? 1 : 0.55 }}>
-              <Chip size="small" label={d.verdict}
-                    color={d.verdict === "accept" ? "success" : d.verdict === "reject" ? "error" : "warning"}
-                    sx={{ height: 18, fontSize: 10.5, fontWeight: 700 }} />
-              <Typography sx={{ fontSize: 12.5, fontWeight: 600 }}>{d.reviewer}</Typography>
-              <Typography sx={{ fontSize: 10.5, color: "text.secondary" }}>
-                {d.decided_at ? new Date(d.decided_at).toLocaleString() : ""}
-                {i < decisions.length - 1 ? " · superseded" : ""}
-              </Typography>
-              {d.comment && (
-                <Typography sx={{ fontSize: 12, color: "text.secondary", flex: 1, minWidth: 0 }} noWrap>
-                  {d.comment}
-                </Typography>
-              )}
-            </Stack>
-          ))}
-        </Stack>
-      )}
-
-      <Collapse in={open}>
-        <Divider sx={{ my: 1.75 }} />
-        {gap.standard_options_considered.length > 0 && (
-          <Box sx={{ mb: 1 }}>
-            <Typography sx={{ fontSize: 12, fontWeight: 700, color: "text.secondary" }}>
-              Standard options considered first
-            </Typography>
-            {gap.standard_options_considered.map((o, i) => (
-              <Typography key={i} sx={{ fontSize: 12.5 }}>· {o}</Typography>
-            ))}
-          </Box>
-        )}
-        {gap.impacts.length > 0 && (
-          <Box sx={{ mb: 1 }}>
-            <Typography sx={{ fontSize: 12, fontWeight: 700, color: "text.secondary" }}>Material impact</Typography>
-            {gap.impacts.map((im, i) => (
-              <Typography key={i} sx={{ fontSize: 12.5 }}>
-                · <b>{im.area}</b> {im.score}/5 — {im.note}
-              </Typography>
-            ))}
-          </Box>
-        )}
-        {gap.evidence.length > 0 && (
-          <Box sx={{ mb: 1 }}>
-            <Typography sx={{ fontSize: 12, fontWeight: 700, color: "text.secondary" }}>Evidence</Typography>
-            {gap.evidence.map((e, i) => (
-              <EvidenceRow key={i} ev={e} chunk={chunks?.[e.chunk_id]} session={session} />
-            ))}
-          </Box>
-        )}
-        {gap.open_questions.length > 0 && (
-          <Box>
-            <Typography sx={{ fontSize: 12, fontWeight: 700, color: "text.secondary" }}>Open</Typography>
-            {gap.open_questions.map((q, i) => (
-              <Typography key={i} sx={{ fontSize: 12.5 }}>· {q}</Typography>
-            ))}
-          </Box>
-        )}
-      </Collapse>
-    </Paper>
-  );
-}
-
 /** One past analysis, read inside the history drawer.
  *
  *  The page shows this run across five tabs and a dozen wide tables. None of
@@ -802,7 +691,7 @@ function GapCard({ gap, types, dispositions, states, onDecide, decisions = [], r
  *  the workshop has to decide, and the deviations in materiality order. The
  *  exports and "Load into page" are underneath for everything else.
  */
-function PastAnalysis({ run }: { run: RolloutRunDetail }) {
+function PastAnalysis({ run, showModel = true }: { run: RolloutRunDetail; showModel?: boolean }) {
   const sem = useSemantic();
   const analysis = "deviations" in run.analysis ? (run.analysis as RolloutAnalysis) : null;
   const scores = "counts" in run.scores ? (run.scores as RolloutScores) : null;
@@ -828,7 +717,7 @@ function PastAnalysis({ run }: { run: RolloutRunDetail }) {
         {scores?.subject_label && (
           <Chip size="small" variant="outlined" label={scores.subject_label} sx={{ height: 19, fontSize: 10 }} />
         )}
-        <Chip size="small" variant="outlined" label={run.model} sx={{ height: 19, fontSize: 10 }} />
+        {showModel && <Chip size="small" variant="outlined" label={run.model} sx={{ height: 19, fontSize: 10 }} />}
         {run.decisions.length > 0 && (
           <Tooltip title="Verdicts recorded against this analysis">
             <Chip size="small" variant="outlined" color="primary"
@@ -953,11 +842,18 @@ function Row({ label, value }: { label: string; value: string }) {
 
 /* -------------------------------------------------------------------- page */
 
-interface Props { active: boolean }
+interface Props {
+  active: boolean;
+  /** The model the analysis runs on, in the plan summary and the history.
+   *  Demo Mode turns it off: a client is shown the analysis, not what it
+   *  runs on. Its downloads leave the model out as well -- see clientExports. */
+  showTechDetails?: boolean;
+}
 
-export default function RolloutPage({ active }: Props) {
+export default function RolloutPage({ active, showTechDetails = true }: Props) {
   const theme = useTheme();
   const semantic = useSemantic();
+  const premium = usePremium();
   const [status, setStatus] = useState<RolloutStatus | null>(null);
   // Older servers report no `pdf` block at all. Treat that as "yes" rather
   // than hiding the button: the endpoint answers with its own 503 and the
@@ -998,6 +894,11 @@ export default function RolloutPage({ active }: Props) {
   // Which call's evidence is open. The log says a call happened; this says what
   // it brought back.
   const [traceCall, setTraceCall] = useState<AgentToolCall | null>(null);
+  // The investigation as the Evidence Agent's console shows it: the context
+  // each pass was handed, the reasoning between calls, rejected submissions,
+  // the gates -- with the tool calls in their place among them.
+  const [log, setLog] = useState<EvidenceLogEntry[]>([]);
+  const [logOpen, setLogOpen] = useState(false);
   const [asis, setAsis] = useState<AsIsModel | null>(null);
   const [analysis, setAnalysis] = useState<RolloutAnalysis | null>(null);
   const [scores, setScores] = useState<RolloutScores | null>(null);
@@ -1007,7 +908,14 @@ export default function RolloutPage({ active }: Props) {
   // arrives from a source citation rather than from the list.
   const [highlightGap, setHighlightGap] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
-  const [tab, setTab] = useState(0);
+  // Named rather than numbered: the workspace has a dozen tabs, and "show
+  // this gap in the register" should not depend on where Deviations sits.
+  const [tab, setTab] = useState<string>("summary");
+  // True while the New analysis screen is open over a loaded analysis. A run
+  // that finishes, or one loaded from history, returns to the workspace.
+  const [composing, setComposing] = useState(false);
+  // Which agenda item facilitator mode opens on; null while it is closed.
+  const [facilitating, setFacilitating] = useState<number | null>(null);
   const [history, setHistory] = useState<RolloutRunSummary[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [reviewer, setReviewer] = useState(() => {
@@ -1133,7 +1041,7 @@ export default function RolloutPage({ active }: Props) {
     if (running || !session) return;
     setRunning(true);
     setError(null); setAsis(null); setAnalysis(null); setScores(null); setGates(null);
-    setStages([]); setCalls([]); setRunId(null); setTab(0); setDecisions([]);
+    setStages([]); setCalls([]); setLog([]); setRunId(null); setTab("summary"); setDecisions([]); setComposing(false);
     setSources(null);
     const ctrl = new AbortController();
     controller.current = ctrl;
@@ -1153,6 +1061,7 @@ export default function RolloutPage({ active }: Props) {
             return [...next, { stage: d.stage, status: d.status, detail: d.detail }];
           }),
           toolCall: (d) => setCalls((prev) => [...prev, d]),
+          log: (e) => setLog((prev) => [...prev, e]),
           asis: setAsis,
           gate: setGates,
           analysis: setAnalysis,
@@ -1194,7 +1103,7 @@ export default function RolloutPage({ active }: Props) {
     try {
       await rollout.deleteRun(id);
       // A deleted run must not be left on screen as though it were still there.
-      if (runId === id) { setRunId(null); setCalls([]); setAsis(null); setAnalysis(null);
+      if (runId === id) { setRunId(null); setCalls([]); setLog([]); setAsis(null); setAnalysis(null);
                           setScores(null); setGates(null); setSources(null); setDecisions([]); }
       setHistory(await rollout.runs());
     } catch (e) {
@@ -1246,13 +1155,14 @@ export default function RolloutPage({ active }: Props) {
       // The log is part of the record now, so a reopened run shows its working
       // rather than its conclusions alone.
       setCalls(run.calls ?? []);
-      setStages([]); setError(null); setTab(0);
+      setLog(run.log?.length ? run.log : logFromCalls(run.calls ?? []));
+      setStages([]); setError(null); setTab("summary"); setComposing(false);
     } catch (e) {
       setError((e as Error).message);
     }
   }
 
-  async function decide(gapId: string, verdict: "accept" | "reject" | "defer") {
+  async function decide(gapId: string, verdict: "accept" | "reject" | "defer", comment?: string) {
     // No anonymous verdicts. This used to fall back to "unnamed", which meant
     // a click with an empty name field wrote a row nobody could be asked
     // about -- the opposite of what a decision log is for. The buttons are
@@ -1261,7 +1171,7 @@ export default function RolloutPage({ active }: Props) {
     setDeciding((d) => ({ ...d, [gapId]: verdict }));
     try {
       const saved = await rollout.decide(runId, {
-        gap_id: gapId, reviewer: reviewer.trim(), verdict,
+        gap_id: gapId, reviewer: reviewer.trim(), verdict, ...(comment ? { comment } : {}),
       });
       setDecisions((prev) => [...prev, saved]);
     } catch (e) {
@@ -1285,7 +1195,7 @@ export default function RolloutPage({ active }: Props) {
   // Arriving at a gap from somewhere else -- a source citation, an alignment
   // row -- should land on it, not at the top of a list of thirteen.
   useEffect(() => {
-    if (!highlightGap || tab !== 1) return;
+    if (!highlightGap || tab !== "deviations") return;
     const el = document.getElementById(`gap-${highlightGap}`);
     el?.scrollIntoView({ behavior: "smooth", block: "start" });
     const t = setTimeout(() => setHighlightGap(""), 2200);
@@ -1296,12 +1206,6 @@ export default function RolloutPage({ active }: Props) {
   const counts = scores?.counts;
   const must = useMemo(
     () => (analysis?.deviations ?? []).filter((d) => d.workshop_bucket === "MUST_DISCUSS"),
-    [analysis]);
-  const confirm = useMemo(
-    () => (analysis?.deviations ?? []).filter((d) => d.workshop_bucket === "CONFIRM"),
-    [analysis]);
-  const noTime = useMemo(
-    () => (analysis?.deviations ?? []).filter((d) => d.workshop_bucket === "NO_WORKSHOP_TIME"),
     [analysis]);
   const attachedRoles = useMemo(
     () => new Set((uploads?.files ?? []).map((f) => f.role)),
@@ -1325,280 +1229,119 @@ export default function RolloutPage({ active }: Props) {
          localization: true, score_b: true };
   const ready = !!plan?.ready && !scopeUnknown && !!status?.anthropic_key;
 
+  const workspace = !!(analysis && scores) && !composing;
+  const templateName = scope ? `${scope.code} ${scope.name}`
+    : (analysis?.template_process ?? "").split(" (")[0] || "Global Template";
+  const decided = new Set(decisions.map((d) => d.gap_id)).size;
+  const TABS: { key: string; label: string }[] = analysis ? [
+    { key: "summary", label: "Summary" },
+    { key: "brief", label: "Brief" },
+    { key: "workshop", label: `Workshop agenda (${scores?.agenda.length ?? must.length})` },
+    { key: "deviations", label: `Deviations (${analysis.deviations.length})` },
+    ...(asis ? [{ key: "process", label: `Process alignment (${asis.steps.length})` }] : []),
+    { key: "localization", label: subject.localization ? `Localization (${analysis.localization.length})` : "Localization — n/a" },
+    { key: "dimensions", label: "Dimensions" },
+    { key: "backlog", label: `Backlog (${analysis.backlog.length})` },
+    { key: "asis", label: `${subject.label} model (${asis?.steps.length ?? 0})` },
+    { key: "sources", label: `Sources${sources ? ` (${sources.documents.length})` : ""}` },
+    { key: "gates", label: "Quality gates" },
+    { key: "log", label: `Investigation${calls.length ? ` (${calls.length})` : ""}` },
+  ] : [];
+  const openGap = (gapId: string) => { setTab("deviations"); setHighlightGap(gapId); };
+  const setupStep = !(uploads?.files ?? []).some((f) => f.role === subject.role) ? 1 : ready ? 3 : 2;
+
+  const historyButton = (
+    <BandButton onClick={() => setHistoryOpen(true)} startIcon={<History size={14} />}
+                title="Past analyses — read one beside the one on the page">
+      {history.length ? `History (${history.length})` : "History"}
+    </BandButton>
+  );
+
   return (
-    <Box sx={{ height: "100%", overflow: "auto" }}>
-      <Box sx={{ maxWidth: 1320, mx: "auto", px: { xs: 2, md: 3 }, py: 4 }}>
-
-        {/* ------------------------------------------------------- the header */}
-        <Stack direction="row" spacing={1.5} sx={{ alignItems: "center", mb: 1.25, flexWrap: "wrap", gap: 1 }}>
-          <Box sx={{ width: 36, height: 36, borderRadius: 2, display: "grid", placeItems: "center",
-                     bgcolor: alpha(theme.palette.primary.main, 0.12), color: "primary.main" }}>
-            <Globe2 size={19} />
-          </Box>
-          <Typography variant="h6" sx={{ fontWeight: 800, letterSpacing: "-.02em" }}>
-            Fit-Gap Copilot
-          </Typography>
-          <Box sx={{ flex: 1 }} />
-          <Tooltip title="Past runs — read one here, beside the one on the page">
-            <Button size="small" variant="text" startIcon={<History size={14} />}
-                    onClick={() => setHistoryOpen(true)} sx={{ fontSize: 12.5 }}>
-              {history.length ? `${history.length} run${history.length === 1 ? "" : "s"}` : "History"}
-            </Button>
-          </Tooltip>
-          {runId && analysis && (
-            <>
-              <Tooltip title={pdfReady
-                ? "The whole analysis as a PDF — every section, every table, ready to print or send"
-                : `This server cannot render PDFs. ${status?.pdf?.detail ?? ""}`}>
-                <span>
-                  <Button size="small" variant="contained" disabled={!pdfReady}
-                          startIcon={<FileDown size={14} />}
-                          href={pdfReady ? rollout.exportUrl(runId, "pdf") : undefined}
-                          sx={{ fontSize: 12.5 }}>
-                    PDF
-                  </Button>
-                </span>
-              </Tooltip>
-              <Tooltip title="The same pack as Markdown, to paste into a wiki or Cloud ALM">
-                <Button size="small" variant="outlined" startIcon={<Download size={14} />}
-                        href={rollout.exportUrl(runId, "md")} sx={{ fontSize: 12.5 }}>
-                  Markdown
-                </Button>
-              </Tooltip>
-              <Button size="small" variant="text" href={rollout.exportUrl(runId, "json")}
-                      sx={{ fontSize: 12.5 }}>JSON</Button>
-            </>
-          )}
-        </Stack>
-        <Typography sx={{ fontSize: 13.5, lineHeight: 1.65, color: "text.secondary",
-                           maxWidth: 860, mb: 3.5 }}>
-          SAP Activate Fit-to-Standard. Reads one document set as the run's subject — a country's
-          As-Is, or SAP Best Practice content to find where the template has drifted from standard
-          — compares it against the Global Template, and turns the difference into a short list of
-          decisions. It does not replace the workshop; it makes it decision-oriented instead of
-          discovery-heavy.
-        </Typography>
-
-        {/* past runs, in a drawer beside the current one */}
-        <RunHistoryDrawer<RolloutRunDetail>
-          open={historyOpen}
-          onClose={() => setHistoryOpen(false)}
-          icon={<History size={18} />}
-          title="Past runs"
-          noun={["run", "runs"]}
-          items={historyCards}
-          currentId={runId}
-          onDelete={remove}
-          armDelete
-          deleteLabel="Delete this analysis and any decisions recorded against it"
-          fetchDetail={rollout.run}
-          renderDetail={(run) => <PastAnalysis run={run} />}
-          detailActions={(run) => (
-            <>
-              {pdfReady && (
-                <Button size="small" variant="outlined" startIcon={<FileDown size={13} />}
-                        href={rollout.exportUrl(run.id, "pdf")} sx={{ fontSize: 12 }}>
-                  PDF
-                </Button>
-              )}
-              <Button size="small" variant="text" startIcon={<Download size={13} />}
-                      href={rollout.exportUrl(run.id, "md")} sx={{ fontSize: 12 }}>
-                Markdown
-              </Button>
-            </>
-          )}
-          onLoadIntoPage={(id) => void loadRun(id)}
-          loadDisabled={running}
-          filterPlaceholder="Filter by scope, country or headline…"
-          emptyText="Nothing analysed yet. Run one and it will appear here."
-        />
-
-        {status && (!status.anthropic_key || status.error || !status.bpml.available) && (
-          <Alert severity="warning" sx={{ mb: 3, fontSize: 12.5 }}>
-            {!status.anthropic_key && <div>No <code>ANTHROPIC_API_KEY</code> is set, so no analysis can run.</div>}
-            {!status.bpml.available && <div>The BPML sheet is not readable, so the Global Template hierarchy is unavailable.</div>}
-            {status.error && <div>{status.error}</div>}
-          </Alert>
-        )}
-
-        {/* --------------------------------------------------------- the setup */}
-        <Paper sx={{ p: 2.75, mb: 3 }}>
-          <TextField
-            fullWidth multiline maxRows={3} value={question}
-            onChange={(e) => setQuestion(e.target.value)}
-            placeholder="Anything specific the rollout team needs from this analysis (optional)"
-            slotProps={{ input: {
-              sx: { fontSize: 14.5, alignItems: "flex-start" },
-              startAdornment: <Box sx={{ pt: 0.35, pr: 1.25, color: "primary.main" }}><Sparkles size={17} /></Box>,
-              endAdornment: clearAdornment(question, () => setQuestion(""),
-                                           { size: 16, label: "Clear question", top: true }),
-            } }}
+    <Box sx={{ height: "100%", overflow: "auto", bgcolor: "background.default" }}>
+      {workspace && analysis && scores ? (
+        <>
+          <ObjectHeader
+            breadcrumb={`Fit-Gap Copilot / Analyses${runId ? ` / ${runId}` : ""}`}
+            title={`${templateName}${country ? ` — ${country}` : ""}`}
+            badge={decided ? `${decided} of ${analysis.deviations.length} decided` : "Proposed · awaiting workshop"}
+            meta={`${subject.label} compared with the Global Template${
+              scope ? "" : analysis.template_process ? " · template process identified by the agent" : ""}${
+              question ? ` · “${question.length > 90 ? question.slice(0, 90) + "…" : question}”` : ""}`}
+            actions={
+              <>
+                {historyButton}
+                <BandButton onClick={() => setComposing(true)} startIcon={<Plus size={14} />}>New analysis</BandButton>
+                {runId && (
+                  <>
+                    <BandButton href={rollout.exportUrl(runId, "md")} startIcon={<Download size={14} />}
+                                title="The same pack as Markdown, to paste into a wiki or Cloud ALM">Markdown</BandButton>
+                    <BandButton href={rollout.exportUrl(runId, "json")}>JSON</BandButton>
+                    <BandButton primary href={pdfReady ? rollout.exportUrl(runId, "pdf") : undefined} disabled={!pdfReady} startIcon={<FileDown size={14} />}
+                                title={pdfReady ? "The workshop pack as a PDF: run-of-show, decisions so far, register, risk view and evidence"
+                                  : `This server cannot render PDFs. ${status?.pdf?.detail ?? ""}`}>
+                      Download PDF
+                    </BandButton>
+                  </>
+                )}
+              </>
+            }
+            score={{ value: scores.gt_alignment, band: scores.gt_band, label: "Alignment to the Global Template" }}
+            kpis={[
+              { label: "Harmonization potential",
+                value: scores.harmonization_potential === null ? "—" : `${scores.harmonization_potential}%`,
+                sub: scores.harmonization_band || "—" },
+              { label: "Localization-adjusted",
+                value: scores.localization_adjusted === null ? "—" : String(scores.localization_adjusted),
+                sub: subject.localization ? `${counts?.localization_confirmed ?? 0} confirmed statutory items` : "Not applicable" },
+              { label: "Deviations", value: String(counts?.deviations ?? analysis.deviations.length),
+                sub: `${counts?.by_materiality?.High ?? 0} high · ${counts?.workshop?.MUST_DISCUSS ?? 0} must discuss` },
+              { label: "SAP Best Practice",
+                value: scores.sap_bp_alignment === null ? "—" : `${scores.sap_bp_alignment}%`,
+                sub: scores.sap_bp_alignment === null
+                  ? (subject.score_b ? "No source attached" : "Not reported for this subject")
+                  : scores.sap_bp_band },
+            ]}
           />
 
-          <Sources
-            data={uploads} busy={uploading} error={uploadError} disabled={running}
-            accepted={status?.uploads?.accepted ?? [".pdf", ".docx", ".xlsx", ".pptx", ".txt"]}
-            roles={status?.uploads?.roles ?? [{ value: "as_is", label: "Country As-Is" }]}
-            subject={subject}
-            subjects={status?.subjects ?? []}
-            onSubject={(v) => { setSubjectKey(v); setSubjectTouched(true); }}
-            maxFiles={status?.uploads?.max_files ?? 12}
-            onAdd={addUploads} onRetag={retag} onRemove={removeUpload} onClear={clearUploads}
-          />
-
-          <Divider sx={{ my: 2 }} />
-
-          <Stack direction={{ xs: "column", md: "row" }} spacing={2}
-                 sx={{ alignItems: { md: "flex-start" }, mb: 3 }}>
-            <Select size="small" value={subjectKey} disabled={running}
-                    onChange={(e) => { setSubjectKey(e.target.value); setSubjectTouched(true); }}
-                    sx={{ fontSize: 12.5, minWidth: 210 }}>
-              {(status?.subjects ?? []).map((x) => (
-                <MenuItem key={x.value} value={x.value} sx={{ fontSize: 12.5 }}>
-                  Analyse: {x.label}
-                </MenuItem>
-              ))}
-            </Select>
-            <Typography sx={{ fontSize: 12.5, lineHeight: 1.6, color: "text.secondary",
-                               flex: 1, maxWidth: 620, pt: { md: 0.85 } }}>
-              {subject.value === "country_as_is"
-                ? "How far the country's current process is from the Global Template, with"
-                  + " localization as a lens."
-                : "How far the Global Template has drifted from SAP's delivered standard."
-                  + " No country, no localization — the findings are about the template."}
-              {!subjectTouched && inferredSubject === subject.value && (
-                <Box component="span" sx={{ display: "block", color: "text.disabled", mt: 0.75 }}>
-                  Chosen from what you attached — change it here if that is not what you meant.
-                </Box>
-              )}
-            </Typography>
-          </Stack>
-
-          <Stack direction={{ xs: "column", md: "row" }} useFlexGap
-                 sx={{ alignItems: { md: "center" }, flexWrap: "wrap", gap: 2, rowGap: 2.5 }}>
-            <TextField
-              size="small" label="Global Template process (optional)"
-              placeholder="A BPML code or name — leave empty to let the agent find it"
-              value={scopeText} onChange={(e) => setScopeText(e.target.value)}
-              onKeyDown={clearOnEscape(() => setScopeText(""))}
-              error={scopeUnknown}
-              helperText={scopeUnknown
-                ? "No BPML process matches. Correct it, or clear the field to let the agent choose."
-                : undefined}
-              sx={{ flex: "1 1 340px" }}
-              slotProps={{ input: {
-                startAdornment: <Box sx={{ pr: 1, color: "text.secondary" }}><Search size={15} /></Box>,
-                // The helper text tells you to clear this field to let the agent
-                // choose the scope itself, so it had better be one click.
-                endAdornment: clearAdornment(scopeText, () => setScopeText(""), { label: "Clear scope" }),
-              } }}
-            />
-            {subject.localization && (
-              <TextField size="small" label="Country" value={country} sx={{ width: 150 }}
-                         onChange={(e) => setCountry(e.target.value)} placeholder="India" />
-            )}
-            {scope ? (
-              <Stack direction="row" spacing={1.25} sx={{ alignItems: "center", px: 1.75, py: 1.15,
-                        borderRadius: 2, bgcolor: alpha(theme.palette.primary.main, 0.08) }}>
-                <Target size={14} color={theme.palette.primary.main} />
-                <Typography sx={{ fontSize: 13, fontWeight: 700 }}>{scope.code} {scope.name}</Typography>
-              </Stack>
-            ) : !scopeText.trim() ? (
-              // Said here rather than left blank: an empty required-looking
-              // field reads as something forgotten, not as a choice.
-              <Stack direction="row" spacing={1.25} sx={{ alignItems: "center", px: 1.75, py: 1.15,
-                        borderRadius: 2, bgcolor: alpha(theme.palette.text.primary, 0.05) }}>
-                <CircleHelp size={14} color={theme.palette.text.secondary} />
-                <Typography sx={{ fontSize: 12.5, color: "text.secondary" }}>
-                  The agent will identify the template process
+          <Paper square elevation={0} sx={{ borderBottom: 1, borderColor: "divider", px: { xs: 1, md: 3 },
+                                            display: "flex", alignItems: "center", gap: 2, flexWrap: "wrap" }}>
+            <Tabs value={tab} onChange={(_, v) => setTab(v)} variant="scrollable" scrollButtons="auto" allowScrollButtonsMobile
+                  sx={{ flex: 1, minWidth: 0, minHeight: 46,
+                        "& .MuiTab-root": { minHeight: 46, textTransform: "none", fontSize: 13.5, fontWeight: 500, px: 1.75 },
+                        "& .Mui-selected": { fontWeight: 600 } }}>
+              {TABS.map((t) => <Tab key={t.key} value={t.key} label={t.label} />)}
+            </Tabs>
+            {runId && (
+              <Stack direction="row" spacing={1} sx={{ alignItems: "center", py: 0.75 }}>
+                <Typography component="label" htmlFor="rollout-reviewer"
+                            sx={{ fontSize: 12, color: reviewer.trim() ? "text.secondary" : "error.main", whiteSpace: "nowrap" }}>
+                  Deciding as
                 </Typography>
+                <TextField id="rollout-reviewer" size="small" placeholder="Your name" value={reviewer}
+                           onChange={(e) => setReviewer(e.target.value)}
+                           error={!reviewer.trim() && decisions.length === 0}
+                           sx={{ width: 180, "& .MuiInputBase-input": { fontSize: 12.5, py: 0.75 },
+                                 "& .MuiOutlinedInput-root": { borderRadius: RADIUS } }} />
               </Stack>
-            ) : null}
-            <Box sx={{ flex: 1 }} />
-            <Button size="small" variant="text"
-                    endIcon={<ChevronDown size={15} style={{ transform: showOptions ? "rotate(180deg)" : undefined, transition: "transform .2s" }} />}
-                    onClick={() => setShowOptions((v) => !v)}>
-              Context
-            </Button>
-            {running ? (
-              <Button variant="outlined" color="error" startIcon={<Square size={15} />}
-                      onClick={() => { controller.current?.abort(); setRunning(false); }}>Stop</Button>
-            ) : (
-              <Button variant="contained" size="large" disabled={!ready} onClick={start}
-                      startIcon={<Scale size={16} />}>
-                Analyse
-              </Button>
             )}
-          </Stack>
-
-          {matches.length > 1 && (
-            <Stack direction="row" useFlexGap sx={{ flexWrap: "wrap", gap: 0.85, mt: 2 }}>
-              {matches.slice(0, 6).map((m) => (
-                <Chip key={m.code} size="small" label={`${m.code} ${m.name}`}
-                      variant={scope?.code === m.code ? "filled" : "outlined"}
-                      onClick={() => { setScope(m); setScopeText(m.code); }}
-                      sx={{ fontSize: 11.5, height: 26, maxWidth: 320 }} />
-              ))}
-            </Stack>
-          )}
-
-          <Collapse in={showOptions}>
-            <Stack direction={{ xs: "column", md: "row" }} spacing={2.5} sx={{ mt: 3, pt: 3, borderTop: 1, borderColor: "divider" }}>
-              <TextField size="small" label="Country context" value={countryContext} multiline minRows={2}
-                         onChange={(e) => setCountryContext(e.target.value)} sx={{ flex: "2 1 320px" }}
-                         placeholder="Company codes, sales/purchasing organisations, legal entities, shared-service model, tax context" />
-              <Stack spacing={1.5} sx={{ flex: "1 1 240px" }}>
-                <TextField size="small" label="SAP target solution / release" value={sapRelease}
-                           onChange={(e) => setSapRelease(e.target.value)}
-                           placeholder="S/4HANA Cloud Private Edition 2023" />
-                <TextField size="small" label="Global Template version" value={gtVersion}
-                           onChange={(e) => setGtVersion(e.target.value)} />
-              </Stack>
-              <Box sx={{ flex: "1 1 220px" }}>
-                <TextField size="small" fullWidth label="Your name (for decisions)" value={reviewer}
-                           onChange={(e) => setReviewer(e.target.value)} />
-              </Box>
-            </Stack>
-          </Collapse>
-
-          {plan && !plan.ready && (
-            <Alert severity="info" sx={{ mt: 2.5, py: 0.85, fontSize: 12.5 }}>{plan.blocker}</Alert>
-          )}
-          {plan?.ready && !running && !analysis && (
-            <Typography sx={{ fontSize: 12.5, color: "text.secondary", mt: 1.5 }}>
-              Two passes — read the {subject.label}, then compare it — roughly {plan.estimated_minutes} minutes and
-              ~{Math.round(plan.estimated_input_tokens / 1000)}k input tokens. Estimated, not measured.
-              {!plan.sap_bp_available && " No SAP Best Practice source is attached, so Score B will be reported as not assessable rather than guessed."}
-            </Typography>
-          )}
-        </Paper>
-
-        {error && <Alert severity="error" sx={{ mb: 2, fontSize: 12.5 }}>{error}</Alert>}
-
-        {/* ---------------------------------------------------------- progress */}
-        {(running || stages.length > 0) && !analysis && (
-          <Paper sx={{ p: 2.75, mb: 3 }}>
-            <SectionLabel icon={<ListChecks size={14} />}>Progress</SectionLabel>
-            <Stack spacing={1}>
-              {["asis", "compare", "gates"].map((key) => {
-                const s = stages.find((x) => x.stage === key);
-                const label = key === "asis" ? `Read the ${subject.label}`
-                  : key === "compare" ? "Compare against the Global Template" : "Quality gates";
-                return (
-                  <Stack key={key} direction="row" spacing={1.25} sx={{ alignItems: "center" }}>
-                    {s?.status === "done" ? <CheckCircle2 size={14} color={semantic.fit} />
-                      : s?.status === "running" ? <CircularProgress size={12} />
-                        : <Box sx={{ width: 14 }} />}
-                    <Typography sx={{ fontSize: 12.5, fontWeight: s ? 600 : 400,
-                                      color: s ? "text.primary" : "text.disabled" }}>{label}</Typography>
-                    {s?.detail && <Typography sx={{ fontSize: 12.5, color: "text.secondary" }}>— {s.detail}</Typography>}
-                  </Stack>
-                );
-              })}
-            </Stack>
           </Paper>
-        )}
 
+          <Box sx={{ px: { xs: 2, md: 4 }, py: 3 }}>
+            {error && <Alert severity="error" sx={{ mb: 2, fontSize: 12.5, borderRadius: RADIUS }}>{error}</Alert>}
+            {tab === "summary" && (
+              <SummaryView analysis={analysis} scores={scores} subject={subject} onGap={openGap} onTab={setTab} />
+            )}
+            {tab === "brief" && (
+              <BriefView analysis={analysis} scores={scores} subject={subject} country={country} onGap={openGap} />
+            )}
+            {tab === "process" && asis && (
+              <ProcessAlignmentView asis={asis} analysis={analysis} scores={scores} subject={subject}
+                                    decisions={decisionsByGap} reviewer={reviewer} deciding={deciding}
+                                    onDecide={runId ? (g, v) => void decide(g, v) : undefined} onOpenGap={openGap} />
+            )}
+            {tab === "log" && (
+              <Stack spacing={2}>
         {/* --------------------------------------------------- the investigation */}
         {/* Its own panel, not a corner of Progress. Progress renders only while
             there is no analysis yet, so the log used to vanish at the exact
@@ -1606,13 +1349,28 @@ export default function RolloutPage({ active }: Props) {
             always has an analysis, never showed one at all. The log is the
             working behind the answer; it outlives the run that produced it. */}
         {(calls.length > 0 || running || (runId && !running)) && (
-          <Paper sx={{ p: 2.75, mb: 3 }}>
+          <Paper variant="outlined" sx={{ p: 2.75, borderRadius: RADIUS }}>
             <SectionLabel icon={<ListChecks size={14} />}
-              right={calls.length ? (
-                <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
-                  {calls.length} call{calls.length === 1 ? "" : "s"}
-                </Typography>
-              ) : undefined}>
+              right={
+                <Stack direction="row" spacing={1.5} sx={{ alignItems: "center" }}>
+                  {calls.length > 0 && (
+                    <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
+                      {calls.length} call{calls.length === 1 ? "" : "s"}
+                    </Typography>
+                  )}
+                  <Tooltip title={log.length
+                    ? `Open the step-by-step log — the context each pass was handed, the agent's reasoning, every call, rejected submissions and the gates (${log.length} steps)`
+                    : "The step-by-step log appears here as the run goes"}>
+                    <span>
+                      <Button variant="outlined" size="small" disabled={log.length === 0}
+                              startIcon={<Terminal size={15} />} onClick={() => setLogOpen(true)}
+                              sx={{ textTransform: "none", borderRadius: RADIUS }}>
+                        Logs{log.length ? ` (${log.length})` : ""}
+                      </Button>
+                    </span>
+                  </Tooltip>
+                </Stack>
+              }>
               Investigation
             </SectionLabel>
             {calls.length === 0 && !running ? (
@@ -1702,206 +1460,32 @@ export default function RolloutPage({ active }: Props) {
             )}
           </Paper>
         )}
-
-        {/* ----------------------------------------------- §16.1 the fit header */}
-        {scores && (
-          <Paper sx={{ p: 2.75, mb: 3 }}>
-            <SectionLabel icon={<Scale size={14} />}
-              right={<Typography sx={{ fontSize: 12, color: "text.secondary" }}>
-                {counts?.fit_areas ?? 0} fit · {counts?.deviations ?? 0} deviations ·
-                {" "}{counts?.localization_confirmed ?? 0} confirmed localization
-              </Typography>}>
-              Fit summary{scope ? ` — ${scope.code} ${scope.name}` : ""}{country ? ` · ${country}` : ""}
-            </SectionLabel>
-
-            {!scope && analysis?.template_process && (
-              <Alert severity="info" icon={<Target size={15} />} sx={{ mb: 2.5, py: 0.85, fontSize: 12.5 }}>
-                No Global Template process was named, so the agent compared the {subject.label} against{" "}
-                <b>{analysis.template_process}</b>.
-              </Alert>
-            )}
-
-            <Stack direction="row" useFlexGap sx={{ flexWrap: "wrap", gap: 2 }}>
-              <ScoreTile label="Global Template" value={scores.gt_alignment} band={scores.gt_band} />
-              <ScoreTile label="SAP Best Practice" value={scores.sap_bp_alignment} band={scores.sap_bp_band}
-                         hint={scores.sap_bp_note || "No SAP Best Practice source"}
-                         accent={theme.palette.secondary?.main} />
-              <ScoreTile label="Localization-adjusted" value={scores.localization_adjusted}
-                         band={`${scores.localization_share}% of divergence is confirmed localization`}
-                         hint={scores.subject && scores.subject !== "country_as_is"
-                           ? `Not applicable: localization is a country question and a ${
-                               scores.subject_label ?? "non-country"} run has no country in it.`
-                           : undefined}
-                         accent={theme.palette.info.main} />
-              <ScoreTile label="Harmonization potential" value={scores.harmonization_potential}
-                         band={scores.harmonization_band} accent={theme.palette.success.main} />
-            </Stack>
-
-            {scores.pattern && (
-              <Alert severity="info" icon={<CircleHelp size={15} />} sx={{ mt: 2.5, py: 0.85, fontSize: 12.5 }}>
-                {scores.pattern}
-              </Alert>
-            )}
-
-            <Stack direction="row" spacing={1.5} sx={{ mt: 2.5, alignItems: "center", flexWrap: "wrap", gap: 1.25 }}>
-              <Chip size="small" color="error" label={`${counts?.workshop?.MUST_DISCUSS ?? 0} decisions`}
-                    sx={{ height: 24, fontSize: 12.5, fontWeight: 700 }} />
-              <Chip size="small" color="warning" label={`${counts?.workshop?.CONFIRM ?? 0} to confirm`}
-                    sx={{ height: 24, fontSize: 12.5 }} />
-              <Chip size="small" label={`${counts?.workshop?.NO_WORKSHOP_TIME ?? 0} need no floor time`}
-                    sx={{ height: 24, fontSize: 12.5 }} />
-              <Typography sx={{ fontSize: 12.5, color: "text.secondary" }}>
-                ≈{counts?.workshop_minutes ?? 0} min of focused discussion
-              </Typography>
-            </Stack>
-
-            <Typography sx={{ fontSize: 11, color: "text.secondary", mt: 2.5, fontStyle: "italic" }}>
-              {scores.formula}
-            </Typography>
-            {analysis?.headline && (
-              <Typography sx={{ fontSize: 14, lineHeight: 1.6, mt: 2.5, pt: 2.5,
-                               borderTop: 1, borderColor: "divider" }}>{analysis.headline}</Typography>
-            )}
-          </Paper>
-        )}
-
-        {/* -------------------------------------------------------- the results */}
-        {analysis && scores && (
-          <Paper sx={{ mb: 3.5 }}>
-            {/* Who is deciding, at the point of deciding. It lives in the run
-                options too, but that panel is collapsed by default -- which is
-                how a session's worth of verdicts ended up filed under no name
-                at all. */}
-            {runId && (
-              <Stack direction="row" spacing={1.25}
-                     sx={{ px: 2, pt: 1.75, alignItems: "center", flexWrap: "wrap", gap: 1 }}>
-                <TextField size="small" placeholder="Your name" value={reviewer}
-                           onChange={(e) => setReviewer(e.target.value)}
-                           error={!reviewer.trim() && decisions.length === 0}
-                           sx={{ width: 220, "& .MuiInputBase-input": { fontSize: 12.5 } }} />
-                <Typography sx={{ fontSize: 12.5, color: reviewer.trim() ? "text.secondary" : "error.main" }}>
-                  {reviewer.trim()
-                    ? `Accept, defer and reject are recorded against ${reviewer.trim()}.`
-                    : "Name yourself to accept, defer or reject a gap — a verdict nobody owns is not a decision."}
-                </Typography>
-                <Box sx={{ flex: 1 }} />
-                {decisions.length > 0 && (
-                  <Chip size="small" label={`${new Set(decisions.map((d) => d.gap_id)).size} of `
-                        + `${analysis.deviations.length} decided`}
-                        sx={{ height: 22, fontSize: 11 }} />
-                )}
               </Stack>
             )}
-            <Tabs value={tab} onChange={(_, v) => setTab(v)} variant="scrollable" scrollButtons="auto"
-                  sx={{ borderBottom: 1, borderColor: "divider", px: 1 }}>
-              <Tab label={`Workshop (${must.length})`} sx={{ fontSize: 12.5, minHeight: 44 }} />
-              <Tab label={`Deviations (${analysis.deviations.length})`} sx={{ fontSize: 12.5, minHeight: 44 }} />
-              <Tab label={subject.localization
-                            ? `Localization (${analysis.localization.length})`
-                            : "Localization — n/a"}
-                   sx={{ fontSize: 12.5, minHeight: 44 }} />
-              <Tab label="Alignment" sx={{ fontSize: 12.5, minHeight: 44 }} />
-              <Tab label={`Backlog (${analysis.backlog.length})`} sx={{ fontSize: 12.5, minHeight: 44 }} />
-              <Tab label={`${subject.label} (${asis?.steps.length ?? 0})`}
-                   sx={{ fontSize: 12.5, minHeight: 44 }} />
-              <Tab label="Quality" sx={{ fontSize: 12.5, minHeight: 44 }} />
-              <Tab label={`Sources${sources ? ` (${sources.documents.length})` : ""}`}
-                   sx={{ fontSize: 12.5, minHeight: 44 }} />
-            </Tabs>
-
+            {tab === "workshop" && (
+              <WorkshopAgendaView analysis={analysis} scores={scores} subject={subject} types={types} states={states}
+                                  decisions={decisionsByGap} reviewer={reviewer} deciding={deciding}
+                                  onDecide={runId ? (g, v, c) => void decide(g, v, c) : undefined}
+                                  onOpenGap={openGap} onFacilitate={setFacilitating} />
+            )}
+            {tab === "deviations" && (
+              <DeviationRegisterView deviations={analysis.deviations} subject={subject} types={types}
+                                     dispositions={dispositions} states={states} decisions={decisionsByGap}
+                                     reviewer={reviewer} deciding={deciding}
+                                     onDecide={runId ? (g, v, c) => void decide(g, v, c) : undefined}
+                                     focusGap={highlightGap} fileStem={runId ?? "fit-gap"}
+                                     renderEvidence={(e) => <EvidenceRow ev={e} chunk={sources?.chunks?.[e.chunk_id]} session={session} />} />
+            )}
+            <FacilitatorView open={facilitating !== null} start={facilitating ?? 0} onClose={() => setFacilitating(null)}
+                             analysis={analysis} scores={scores} subject={subject} country={country}
+                             decisions={decisionsByGap} reviewer={reviewer} onReviewer={setReviewer} deciding={deciding}
+                             onDecide={runId ? (g, v, c) => void decide(g, v, c) : undefined} />
+            {["localization", "dimensions", "backlog", "asis", "gates", "sources"].includes(tab) && (
+              <Paper variant="outlined" sx={{ borderRadius: RADIUS }}>
             <Box sx={{ p: 2 }}>
               {/* ------------------------------------------------ workshop scope */}
-              {tab === 0 && (
-                <Stack spacing={1.5}>
-                  <Typography sx={{ fontSize: 12.5, color: "text.secondary" }}>
-                    Legal and localization blockers first, then controls and financial impact, then the
-                    rest by materiality. Every item carries an explicit decision, not a discussion topic.
-                  </Typography>
-                  {scores.agenda.map((item) => {
-                    const gap = analysis.deviations.find((d) => d.gap_id === item.gap_id);
-                    return gap ? (
-                      <Box key={item.gap_id}>
-                        <Typography sx={{ fontSize: 12.5, fontWeight: 700, color: "text.secondary", mb: 0.4 }}>
-                          {item.position}. ~{item.minutes} min
-                        </Typography>
-                        <GapCard gap={gap} types={types} dispositions={dispositions} states={states}
-                                 onDecide={runId ? (v) => decide(gap.gap_id, v) : undefined}
-                                 decisions={decisionsByGap[gap.gap_id]}
-                                 reviewer={reviewer} busy={deciding[gap.gap_id]}
-                                 subjectLabel={subject.label}
-                                 chunks={sources?.chunks} session={session} />
-                      </Box>
-                    ) : null;
-                  })}
-                  {must.length === 0 && (
-                    <Alert severity="success" sx={{ fontSize: 12.5 }}>
-                      Nothing needs floor time. Every difference is either a confirmed fit or a
-                      batch confirmation.
-                    </Alert>
-                  )}
-                  {(confirm.length > 0 || analysis.fit_areas.length > 0) && (
-                    <>
-                      <Divider sx={{ my: 1.5 }} />
-                      <SectionLabel icon={<CheckCircle2 size={14} />}>Batch-confirm, no discussion</SectionLabel>
-                      {analysis.fit_areas.map((f, i) => (
-                        <Stack key={i} direction="row" spacing={1.25} sx={{ alignItems: "flex-start" }}>
-                          <CheckCircle2 size={13} color={semantic.fit} style={{ marginTop: 3, flexShrink: 0 }} />
-                          <Typography sx={{ fontSize: 12.5 }}>
-                            {f.statement}
-                            {(f.as_is_step_id || f.gt_step_ref) && (
-                              <Box component="span" sx={{ color: "text.secondary" }}>
-                                {" "}({[f.as_is_step_id, f.gt_step_ref].filter(Boolean).join(" · ")})
-                              </Box>
-                            )}
-                          </Typography>
-                        </Stack>
-                      ))}
-                      {confirm.map((d) => (
-                        <Stack key={d.gap_id} direction="row" spacing={1.25} sx={{ alignItems: "flex-start", mt: 0.85 }}>
-                          <AlertTriangle size={13} color={semantic.minor} style={{ marginTop: 3, flexShrink: 0 }} />
-                          <Typography sx={{ fontSize: 12.5 }}>
-                            <b>{d.gap_id}</b> — {d.exact_difference}
-                          </Typography>
-                        </Stack>
-                      ))}
-                    </>
-                  )}
-                  {noTime.length > 0 && (
-                    <Typography sx={{ fontSize: 12.5, color: "text.secondary" }}>
-                      {noTime.length} further difference{noTime.length === 1 ? " needs" : "s need"} no
-                      workshop time; see the Deviations tab.
-                    </Typography>
-                  )}
-                </Stack>
-              )}
-
-              {/* --------------------------------------- the deviation register */}
-              {tab === 1 && (
-                <Stack spacing={1.5}>
-                  {analysis.deviations.map((d) => (
-                    <Box key={d.gap_id} id={`gap-${d.gap_id}`}
-                         sx={{ scrollMarginTop: 80, borderRadius: 2,
-                               transition: "box-shadow .4s",
-                               boxShadow: highlightGap === d.gap_id
-                                 ? `0 0 0 2px ${theme.palette.primary.main}` : "none" }}>
-                      <GapCard gap={d} types={types} dispositions={dispositions}
-                               states={states} onDecide={runId ? (v) => decide(d.gap_id, v) : undefined}
-                               decisions={decisionsByGap[d.gap_id]}
-                               reviewer={reviewer} busy={deciding[d.gap_id]}
-                               subjectLabel={subject.label}
-                               chunks={sources?.chunks} session={session} />
-                    </Box>
-                  ))}
-                  {analysis.deviations.length === 0 && (
-                    <Typography sx={{ fontSize: 12.5, color: "text.secondary" }}>
-                      No material deviation was found between the {subject.label} and the Global Template.
-                    </Typography>
-                  )}
-                </Stack>
-              )}
-
               {/* ------------------------------------------ localization advisory */}
-              {tab === 2 && (
+              {tab === "localization" && (
                 <Stack spacing={1.5}>
                   <Typography sx={{ fontSize: 12.5, color: "text.secondary" }}>
                     {subject.localization
@@ -1943,8 +1527,9 @@ export default function RolloutPage({ active }: Props) {
               )}
 
               {/* --------------------------------------------- scores and heatmap */}
-              {tab === 3 && (
+              {tab === "dimensions" && (
                 <Stack spacing={2}>
+                  <Typography sx={{ fontSize: 12, color: "text.secondary", fontStyle: "italic" }}>{scores.formula}</Typography>
                   <Box>
                     <SectionLabel icon={<Scale size={14} />}>Alignment by dimension</SectionLabel>
                     <Stack spacing={1.25}>
@@ -1953,7 +1538,7 @@ export default function RolloutPage({ active }: Props) {
                                       deviations={analysis.deviations.filter(
                                         (d) => d.dimension === row.dimension)}
                                       chunks={sources?.chunks} session={session}
-                                      onGap={(ref) => { setTab(1); setHighlightGap(ref); }}>
+                                      onGap={(ref) => { setTab("deviations"); setHighlightGap(ref); }}>
                           <Stack direction="row" spacing={1.25} sx={{ alignItems: "center" }}>
                             <Typography sx={{ fontSize: 12.5, fontWeight: 600, minWidth: 220 }}>
                               {row.label}
@@ -1986,7 +1571,7 @@ export default function RolloutPage({ active }: Props) {
                                onClick={row.deviations ? () => {
                                  const first = analysis.deviations.find(
                                    (d) => d.dimension === row.dimension);
-                                 if (first) { setTab(1); setHighlightGap(first.gap_id); }
+                                 if (first) { setTab("deviations"); setHighlightGap(first.gap_id); }
                                } : undefined}
                                sx={{ alignItems: "center", py: 1, borderBottom: 1,
                                      borderColor: "divider",
@@ -2021,7 +1606,7 @@ export default function RolloutPage({ active }: Props) {
               )}
 
               {/* ------------------------------------------- backlog candidates */}
-              {tab === 4 && (
+              {tab === "backlog" && (
                 <Stack spacing={1.5}>
                   <Typography sx={{ fontSize: 12.5, color: "text.secondary" }}>
                     Candidates only. A hypothesis does not become project scope until the workshop
@@ -2075,7 +1660,7 @@ export default function RolloutPage({ active }: Props) {
               )}
 
               {/* ------------------------------------------------ the As-Is model */}
-              {tab === 5 && asis && (
+              {tab === "asis" && asis && (
                 <Stack spacing={1.5}>
                   <Typography sx={{ fontSize: 12.5, color: "text.secondary" }}>
                     {asis.process_name}
@@ -2124,7 +1709,7 @@ export default function RolloutPage({ active }: Props) {
               )}
 
               {/* -------------------------------------------------- quality gates */}
-              {tab === 6 && (
+              {tab === "gates" && (
                 <Stack spacing={1.25}>
                   <Stack direction="row" spacing={1.5} sx={{ alignItems: "center", flexWrap: "wrap", gap: 0.75 }}>
                     <Chip size="small" color={gates?.hard ? "error" : "success"}
@@ -2153,7 +1738,7 @@ export default function RolloutPage({ active }: Props) {
               )}
 
               {/* --------------------------------------------- traceability */}
-              {tab === 7 && (
+              {tab === "sources" && (
                 <Stack spacing={1.5}>
                   {!sources ? (
                     <Typography sx={{ fontSize: 12.5, color: "text.secondary" }}>
@@ -2179,7 +1764,7 @@ export default function RolloutPage({ active }: Props) {
                       {sources.documents.map((doc) => (
                         <SourceDocument key={doc.document} doc={doc} sources={sources}
                                         session={session} onGap={(ref) => {
-                                          setTab(1);
+                                          setTab("deviations");
                                           setHighlightGap(ref);
                                         }} />
                       ))}
@@ -2188,14 +1773,420 @@ export default function RolloutPage({ active }: Props) {
                 </Stack>
               )}
             </Box>
+              </Paper>
+            )}
+          </Box>
+        </>
+      ) : (
+        <>
+          <ObjectHeader
+            breadcrumb="Fit-Gap Copilot / New analysis"
+            title="Compare a process with the Global Template"
+            meta="SAP Activate Fit-to-Standard. Reads the subject you attach, compares it against the Global Template, and turns the difference into a short list of decisions for the workshop."
+            actions={
+              <>
+                {historyButton}
+                {analysis && scores && (
+                  <BandButton onClick={() => setComposing(false)} startIcon={<ArrowLeft size={14} />}>Back to the analysis</BandButton>
+                )}
+              </>
+            }
+          />
+          <Paper square elevation={0} sx={{ borderBottom: 1, borderColor: "divider", px: { xs: 2, md: 4 }, display: "flex", gap: 4, flexWrap: "wrap" }}>
+            {["Sources", "Scope", "Review and run"].map((label, i) => {
+              const n = i + 1;
+              const on = n === setupStep;
+              const done = n < setupStep;
+              return (
+                <Stack key={label} direction="row" spacing={1.25}
+                       sx={{ alignItems: "center", py: 1.75, borderBottom: 2, borderColor: on ? premium.accent : "transparent" }}>
+                  <Box sx={{ width: 26, height: 26, borderRadius: "13px", display: "grid", placeItems: "center",
+                             fontSize: 12.5, fontWeight: 600,
+                             bgcolor: on || done ? "text.primary" : "action.selected",
+                             color: on || done ? "background.paper" : "text.secondary" }}>
+                    {done ? <CheckCircle2 size={14} /> : n}
+                  </Box>
+                  <Typography sx={{ fontSize: 13.5, fontWeight: on ? 600 : 500, color: on ? "text.primary" : "text.secondary" }}>{label}</Typography>
+                </Stack>
+              );
+            })}
+          </Paper>
+
+          <Box sx={{ px: { xs: 2, md: 4 }, py: 3 }}>
+        {status && (!status.anthropic_key || status.error || !status.bpml.available) && (
+          <Alert severity="warning" sx={{ mb: 3, fontSize: 12.5, borderRadius: RADIUS }}>
+            {!status.anthropic_key && <div>No <code>ANTHROPIC_API_KEY</code> is set, so no analysis can run.</div>}
+            {!status.bpml.available && <div>The BPML sheet is not readable, so the Global Template hierarchy is unavailable.</div>}
+            {status.error && <div>{status.error}</div>}
+          </Alert>
+        )}
+            <Box sx={{ display: "grid", gap: 3, alignItems: "start", gridTemplateColumns: { xs: "1fr", lg: "minmax(0, 1fr) 380px" } }}>
+              <Stack spacing={3} sx={{ minWidth: 0 }}>
+                <Section title="1. Sources" hint={`The ${subject.label} is required; the rest are optional baselines`}>
+                  <Sources
+                    data={uploads} busy={uploading} error={uploadError} disabled={running}
+                    accepted={status?.uploads?.accepted ?? [".pdf", ".docx", ".xlsx", ".pptx", ".txt"]}
+                    roles={status?.uploads?.roles ?? [{ value: "as_is", label: "Country As-Is" }]}
+                    subject={subject}
+                    subjects={status?.subjects ?? []}
+                    onSubject={(v) => { setSubjectKey(v); setSubjectTouched(true); }}
+                    maxFiles={status?.uploads?.max_files ?? 12}
+                    onAdd={addUploads} onRetag={retag} onRemove={removeUpload} onClear={clearUploads}
+                  />
+                </Section>
+
+                <Section title="2. Scope">
+                  <Stack spacing={2.5}>
+                    <Box sx={{ display: "grid", gap: 2, gridTemplateColumns: { xs: "1fr", md: subject.localization ? "220px 160px minmax(0, 1fr)" : "220px minmax(0, 1fr)" } }}>
+                      <Stack spacing={0.6}>
+                        <Typography component="label" htmlFor="rollout-subject" sx={{ fontSize: 12, color: "text.secondary" }}>Analyse</Typography>
+                        <Select id="rollout-subject" size="small" value={subjectKey} disabled={running}
+                                onChange={(e) => { setSubjectKey(e.target.value); setSubjectTouched(true); }}
+                                sx={{ fontSize: 13, borderRadius: RADIUS }}>
+                          {(status?.subjects ?? []).map((x) => (
+                            <MenuItem key={x.value} value={x.value} sx={{ fontSize: 13 }}>{x.label}</MenuItem>
+                          ))}
+                        </Select>
+                      </Stack>
+                      {subject.localization && (
+                        <Stack spacing={0.6}>
+                          <Typography component="label" htmlFor="rollout-country" sx={{ fontSize: 12, color: "text.secondary" }}>Country</Typography>
+                          <TextField id="rollout-country" size="small" value={country} placeholder="India"
+                                     onChange={(e) => setCountry(e.target.value)}
+                                     sx={{ "& .MuiOutlinedInput-root": { borderRadius: RADIUS } }} />
+                        </Stack>
+                      )}
+                      <Stack spacing={0.6}>
+                        <Typography component="label" htmlFor="rollout-scope" sx={{ fontSize: 12, color: "text.secondary" }}>
+                          Global Template process (optional)
+                        </Typography>
+                        <TextField
+                          id="rollout-scope" size="small"
+                          placeholder="A BPML code or name — or leave empty to let the agent find it"
+                          value={scopeText} onChange={(e) => setScopeText(e.target.value)}
+                          onKeyDown={clearOnEscape(() => setScopeText(""))}
+                          error={scopeUnknown}
+                          helperText={scopeUnknown
+                            ? "No BPML process matches. Correct it, or clear the field to let the agent choose."
+                            : scope ? `${scope.code} ${scope.name}` : "The agent will identify the template process."}
+                          sx={{ "& .MuiOutlinedInput-root": { borderRadius: RADIUS } }}
+                          slotProps={{ input: {
+                            startAdornment: <Box sx={{ pr: 1, color: "text.secondary", display: "flex" }}><Search size={15} /></Box>,
+                            endAdornment: clearAdornment(scopeText, () => setScopeText(""), { label: "Clear scope" }),
+                          } }}
+                        />
+                      </Stack>
+                    </Box>
+                    {matches.length > 1 && (
+                      <Stack direction="row" useFlexGap sx={{ flexWrap: "wrap", gap: 0.85, mt: -1 }}>
+                        {matches.slice(0, 6).map((m) => (
+                          <Chip key={m.code} size="small" label={`${m.code} ${m.name}`}
+                                variant={scope?.code === m.code ? "filled" : "outlined"}
+                                onClick={() => { setScope(m); setScopeText(m.code); }}
+                                sx={{ fontSize: 11.5, height: 26, maxWidth: 320, borderRadius: RADIUS }} />
+                        ))}
+                      </Stack>
+                    )}
+                    <Typography sx={{ fontSize: 12.5, color: "text.secondary", mt: -1 }}>
+                      {subject.value === "country_as_is"
+                        ? "How far the country's current process is from the Global Template, with localization as a lens."
+                        : "How far the Global Template has drifted from SAP's delivered standard. No country, no localization — the findings are about the template."}
+                      {!subjectTouched && inferredSubject === subject.value && " Chosen from what you attached."}
+                    </Typography>
+                    <Stack spacing={0.6}>
+                      <Typography component="label" htmlFor="rollout-question" sx={{ fontSize: 12, color: "text.secondary" }}>
+                        Anything specific the rollout team needs (optional)
+                      </Typography>
+                      <TextField
+                        id="rollout-question" fullWidth multiline minRows={2} maxRows={4} value={question}
+                        onChange={(e) => setQuestion(e.target.value)}
+                        sx={{ "& .MuiOutlinedInput-root": { borderRadius: RADIUS, fontSize: 13.5 } }}
+                        slotProps={{ input: {
+                          endAdornment: clearAdornment(question, () => setQuestion(""), { size: 16, label: "Clear question", top: true }),
+                        } }}
+                      />
+                    </Stack>
+                    <Box>
+                      <Button size="small" variant="text" onClick={() => setShowOptions((v) => !v)} sx={{ textTransform: "none", px: 0 }}
+                              endIcon={<ChevronDown size={15} style={{ transform: showOptions ? "rotate(180deg)" : undefined, transition: "transform .2s" }} />}>
+                        Context: company codes, SAP release, template version, your name
+                      </Button>
+                      <Collapse in={showOptions}>
+                        <Stack direction={{ xs: "column", md: "row" }} spacing={2.5} sx={{ mt: 2 }}>
+                          <TextField size="small" label="Country context" value={countryContext} multiline minRows={2}
+                                     onChange={(e) => setCountryContext(e.target.value)} sx={{ flex: "2 1 320px" }}
+                                     placeholder="Company codes, sales/purchasing organisations, legal entities, shared-service model, tax context" />
+                          <Stack spacing={1.5} sx={{ flex: "1 1 240px" }}>
+                            <TextField size="small" label="SAP target solution / release" value={sapRelease}
+                                       onChange={(e) => setSapRelease(e.target.value)}
+                                       placeholder="S/4HANA Cloud Private Edition 2023" />
+                            <TextField size="small" label="Global Template version" value={gtVersion}
+                                       onChange={(e) => setGtVersion(e.target.value)} />
+                          </Stack>
+                          <Box sx={{ flex: "1 1 220px" }}>
+                            <TextField size="small" fullWidth label="Your name (for decisions)" value={reviewer}
+                                       onChange={(e) => setReviewer(e.target.value)} />
+                          </Box>
+                        </Stack>
+                      </Collapse>
+                    </Box>
+                  </Stack>
+                </Section>
+              </Stack>
+
+              <Box sx={{ position: { lg: "sticky" }, top: { lg: 16 } }}>
+                <Section title="3. Review and run">
+                  <Stack spacing={1.75}>
+                    <Box sx={{ display: "grid", gridTemplateColumns: "128px minmax(0, 1fr)", rowGap: 1.1, columnGap: 1.5, fontSize: 13 }}>
+                      <Typography sx={{ fontSize: 13, color: "text.secondary" }}>Subject</Typography>
+                      <Typography sx={{ fontSize: 13 }}>{subject.label}{subject.localization && country ? ` · ${country}` : ""}</Typography>
+                      <Typography sx={{ fontSize: 13, color: "text.secondary" }}>Attached</Typography>
+                      <Typography sx={{ fontSize: 13 }}>
+                        {(uploads?.files ?? []).length ? plural((uploads?.files ?? []).length, "document") : "Nothing yet"}
+                      </Typography>
+                      <Typography sx={{ fontSize: 13, color: "text.secondary" }}>Template process</Typography>
+                      <Typography sx={{ fontSize: 13 }}>{scope ? `${scope.code} ${scope.name}` : "Found by the agent"}</Typography>
+                      <Typography sx={{ fontSize: 13, color: "text.secondary" }}>Passes</Typography>
+                      <Typography sx={{ fontSize: 13 }}>Read the {subject.label}, then compare</Typography>
+                      {plan && (
+                        <>
+                          {showTechDetails && (
+                            <>
+                              <Typography sx={{ fontSize: 13, color: "text.secondary" }}>Model</Typography>
+                              <Typography sx={{ fontSize: 12.5, fontFamily: MONO }}>{plan.model}</Typography>
+                            </>
+                          )}
+                          <Typography sx={{ fontSize: 13, color: "text.secondary" }}>Estimate</Typography>
+                          <Typography sx={{ fontSize: 13 }}>
+                            ~{Math.round(plan.estimated_input_tokens / 1000)}k input tokens · ~{plan.estimated_minutes} min
+                          </Typography>
+                        </>
+                      )}
+                    </Box>
+                    {plan && !plan.ready && (
+                      <Alert severity="info" variant="outlined" sx={{ py: 0.5, fontSize: 12.5, borderRadius: RADIUS }}>{plan.blocker}</Alert>
+                    )}
+                    {plan?.ready && !plan.sap_bp_available && (
+                      <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
+                        No SAP Best Practice source is attached, so that score is reported as not assessable rather than guessed.
+                      </Typography>
+                    )}
+                    <Typography sx={{ fontSize: 12, color: "text.secondary", borderTop: 1, borderColor: "divider", pt: 1.5 }}>
+                      You get a deviation register, dimension ratings, a localization advisory and a workshop agenda.
+                      Every finding stays proposed until someone accepts it.
+                    </Typography>
+                    {running ? (
+                      <Button variant="outlined" color="error" size="large" startIcon={<Square size={15} />}
+                              onClick={() => { controller.current?.abort(); setRunning(false); }}
+                              sx={{ textTransform: "none", borderRadius: RADIUS }}>
+                        Stop
+                      </Button>
+                    ) : (
+                      <Button variant="contained" size="large" disableElevation disabled={!ready} onClick={start}
+                              startIcon={<Scale size={16} />} sx={{ textTransform: "none", borderRadius: RADIUS, py: 1.25 }}>
+                        Run analysis
+                      </Button>
+                    )}
+                  </Stack>
+                </Section>
+              </Box>
+            </Box>
+
+            {error && <Alert severity="error" sx={{ mt: 3, fontSize: 12.5, borderRadius: RADIUS }}>{error}</Alert>}
+            {(running || stages.length > 0) && (
+              <Stack spacing={2} sx={{ mt: 3 }}>
+        {/* ---------------------------------------------------------- progress */}
+        {(running || stages.length > 0) && !analysis && (
+          <Paper variant="outlined" sx={{ p: 2.75, borderRadius: RADIUS }}>
+            <SectionLabel icon={<ListChecks size={14} />}>Progress</SectionLabel>
+            <Stack spacing={1}>
+              {["asis", "compare", "gates"].map((key) => {
+                const s = stages.find((x) => x.stage === key);
+                const label = key === "asis" ? `Read the ${subject.label}`
+                  : key === "compare" ? "Compare against the Global Template" : "Quality gates";
+                return (
+                  <Stack key={key} direction="row" spacing={1.25} sx={{ alignItems: "center" }}>
+                    {s?.status === "done" ? <CheckCircle2 size={14} color={semantic.fit} />
+                      : s?.status === "running" ? <CircularProgress size={12} />
+                        : <Box sx={{ width: 14 }} />}
+                    <Typography sx={{ fontSize: 12.5, fontWeight: s ? 600 : 400,
+                                      color: s ? "text.primary" : "text.disabled" }}>{label}</Typography>
+                    {s?.detail && <Typography sx={{ fontSize: 12.5, color: "text.secondary" }}>— {s.detail}</Typography>}
+                  </Stack>
+                );
+              })}
+            </Stack>
           </Paper>
         )}
-      </Box>
+        {/* --------------------------------------------------- the investigation */}
+        {/* Its own panel, not a corner of Progress. Progress renders only while
+            there is no analysis yet, so the log used to vanish at the exact
+            moment the run finished -- and a run reopened from history, which
+            always has an analysis, never showed one at all. The log is the
+            working behind the answer; it outlives the run that produced it. */}
+        {(calls.length > 0 || running || (runId && !running)) && (
+          <Paper variant="outlined" sx={{ p: 2.75, borderRadius: RADIUS }}>
+            <SectionLabel icon={<ListChecks size={14} />}
+              right={
+                <Stack direction="row" spacing={1.5} sx={{ alignItems: "center" }}>
+                  {calls.length > 0 && (
+                    <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
+                      {calls.length} call{calls.length === 1 ? "" : "s"}
+                    </Typography>
+                  )}
+                  <Tooltip title={log.length
+                    ? `Open the step-by-step log — the context each pass was handed, the agent's reasoning, every call, rejected submissions and the gates (${log.length} steps)`
+                    : "The step-by-step log appears here as the run goes"}>
+                    <span>
+                      <Button variant="outlined" size="small" disabled={log.length === 0}
+                              startIcon={<Terminal size={15} />} onClick={() => setLogOpen(true)}
+                              sx={{ textTransform: "none", borderRadius: RADIUS }}>
+                        Logs{log.length ? ` (${log.length})` : ""}
+                      </Button>
+                    </span>
+                  </Tooltip>
+                </Stack>
+              }>
+              Investigation
+            </SectionLabel>
+            {calls.length === 0 && !running ? (
+              <Typography sx={{ fontSize: 12.5, color: "text.secondary" }}>
+                This run was recorded before the log kept what each call returned.
+                Run the analysis again to get a log you can open.
+              </Typography>
+            ) : (
+            <Box ref={logRef}
+                 sx={{ mt: 1.5, maxHeight: 220, overflowY: "auto", p: 1, borderRadius: 1.5,
+                       bgcolor: alpha(theme.palette.text.primary, 0.035) }}>
+              {calls.some((c) => c.trace) ? (
+                <Typography sx={{ fontSize: 10.5, color: "text.disabled", mb: 0.75 }}>
+                  Click a call to see what it returned.
+                </Typography>
+              ) : !running && calls.length > 0 ? (
+                <Typography sx={{ fontSize: 10.5, color: "text.disabled", mb: 0.75 }}>
+                  This run was recorded before the log kept what each call returned.
+                </Typography>
+              ) : null}
+              {calls.map((c, i) => (
+                <Stack key={i} direction="row" spacing={1}
+                       onClick={c.trace ? () => setTraceCall(c) : undefined}
+                       role={c.trace ? "button" : undefined}
+                       tabIndex={c.trace ? 0 : undefined}
+                       onKeyDown={c.trace ? (e) => {
+                         if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setTraceCall(c); }
+                       } : undefined}
+                       sx={{ alignItems: "baseline", fontFamily: "monospace",
+                             // Only a call that kept a trace opens anything. A
+                             // failed one stays a log line rather than a button
+                             // that opens an apology.
+                             cursor: c.trace ? "pointer" : "default",
+                             borderRadius: 0.75, px: 0.5, mx: -0.5, py: 0.15,
+                             transition: "background-color .12s",
+                             "&:hover": c.trace
+                               ? { bgcolor: alpha(theme.palette.text.primary, 0.06) }
+                               : undefined,
+                             "&:focus-visible": {
+                               outline: `2px solid ${theme.palette.primary.main}`,
+                               outlineOffset: 1,
+                             } }}>
+                  <Typography component="span" sx={{ fontSize: 10.5, color: "text.disabled",
+                                                     minWidth: 22, textAlign: "right" }}>
+                    {i + 1}
+                  </Typography>
+                  <Typography component="span"
+                              sx={{ fontSize: 10.5, minWidth: 62,
+                                    color: ENGINE_COLOUR[c.engine] ?? "primary.main",
+                                    textDecoration: c.trace ? "underline" : "none",
+                                    textDecorationStyle: "dotted",
+                                    textUnderlineOffset: 3 }}>
+                    {c.tool}
+                  </Typography>
+                  <Typography component="span"
+                              sx={{ fontSize: 12, flex: 1,
+                                    color: c.error ? "error.main" : "text.secondary",
+                                    wordBreak: "break-word" }}>
+                    {c.summary || c.error}
+                    {/* Which store the call read. The corpus is one table
+                        with a category per row and the attachment is in a
+                        database of its own, so "searched" without saying
+                        where is not an answer. */}
+                    {c.sources?.label ? (
+                      <Box component="span" sx={{ color: "text.disabled" }}>
+                        {"  ·  "}{String(c.sources.label)}
+                      </Box>
+                    ) : null}
+                  </Typography>
+                  <Typography component="span" sx={{ fontSize: 10.5, color: "text.disabled" }}>
+                    {c.ms}ms
+                  </Typography>
+                </Stack>
+              ))}
+              {running && (
+                // Between tool calls the agent is generating, which is most
+                // of the wall clock. A log that goes quiet for a minute with
+                // no line saying why reads as a hang.
+                <Stack direction="row" spacing={1} sx={{ alignItems: "center", mt: calls.length ? 0.5 : 0 }}>
+                  <CircularProgress size={9} />
+                  <Typography sx={{ fontSize: 12, color: "text.disabled", fontStyle: "italic" }}>
+                    {runningStage === "gates" ? "checking the analysis…" : "the agent is thinking…"}
+                  </Typography>
+                </Stack>
+              )}
+        </Box>
+            )}
+          </Paper>
+        )}
+              </Stack>
+            )}
+          </Box>
+        </>
+      )}
 
       {/* What one call in the log returned. The Evidence Agent's panel, on the
           Fit-Gap Copilot's calls -- the two share five of their tools, so the
           reader should not meet a different panel depending on which agent
           they happen to be reading. */}
+      {/* On the New analysis screen too: its last section is the form a reader
+          fills in, and it should not sit against the bottom edge either. */}
+      <ScrollRunway />
+
+      {/* past runs, in a drawer beside the current one. Outside both views:
+          the workspace and New analysis each have a History button, and a
+          drawer that lives inside one of them does nothing for the other. */}
+      <RunHistoryDrawer<RolloutRunDetail>
+        open={historyOpen}
+        onClose={() => setHistoryOpen(false)}
+        icon={<History size={18} />}
+        title="Past runs"
+        noun={["run", "runs"]}
+        items={historyCards}
+        currentId={runId}
+        onDelete={remove}
+        armDelete
+        deleteLabel="Delete this analysis and any decisions recorded against it"
+        fetchDetail={rollout.run}
+        renderDetail={(run) => <PastAnalysis run={run} showModel={showTechDetails} />}
+        detailActions={(run) => (
+          <>
+            {pdfReady && (
+              <Button size="small" variant="outlined" startIcon={<FileDown size={13} />}
+                      href={rollout.exportUrl(run.id, "pdf")} sx={{ fontSize: 12 }}>
+                PDF
+              </Button>
+            )}
+            <Button size="small" variant="text" startIcon={<Download size={13} />}
+                    href={rollout.exportUrl(run.id, "md")} sx={{ fontSize: 12 }}>
+              Markdown
+            </Button>
+          </>
+        )}
+        onLoadIntoPage={(id) => void loadRun(id)}
+        loadDisabled={running}
+        filterPlaceholder="Filter by scope, country or headline…"
+        emptyText="Nothing analysed yet. Run one and it will appear here."
+      />
+      <AgentLogDrawer open={logOpen} onClose={() => setLogOpen(false)} log={log} running={running}
+                      onOpenCall={(i) => { const c = calls[i]; if (c) setTraceCall(c); }} />
       <AgentTraceDrawer
         open={Boolean(traceCall)}
         onClose={() => setTraceCall(null)}

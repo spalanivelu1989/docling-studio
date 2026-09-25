@@ -17,6 +17,7 @@ CONTRADICTED = -0.25        # a retrieved passage opposes it
 MACHINE_READ = -0.15        # the only support is a mostly transcribed document
 CODE_ABSENT = -0.10         # an identifier in the claim appears in no chunk
 CAP_DISCUSSION = 0.40       # email, minutes, transcript: discussion, not state
+CAP_EXTERNAL = 0.35         # only web pages: SAP or regulatory reference, not the programme
 CAP_TEMPLATE = 0.30         # blank template or unfilled boilerplate
 GRAPH_ONLY = 0.35           # carried by graph structure, no passage quoted
 CONTEXT_ONLY = 0.20         # only context cited: unweighted, not false
@@ -117,6 +118,15 @@ def score(
             detail="the only support is an email or meeting note, which records "
                    "discussion rather than an implemented state"))
         total = min(total, CAP_DISCUSSION)
+
+    # A web page found by the gated search says what SAP or a regulator says
+    # in general. It can support a claim; it cannot say what this programme
+    # decided, so a claim resting on nothing else stays below one that does.
+    if all((retrieved.get(str(s.chunk_id)) or {}).get("external") for s in supporting):
+        terms.append(ScoreTerm(
+            rule="external_only", cap=CAP_EXTERNAL,
+            detail="the only support is an external web page, not a programme document"))
+        total = min(total, CAP_EXTERNAL)
 
     # --- did the identifiers survive into the evidence? ----------------------
     missing = _missing_identifiers(identifiers or [], supporting, retrieved)
