@@ -8,6 +8,7 @@ InsightLens has no need for: telling the three sides of the comparison apart.
   read_sources   the attachments, filtered by the role they were given
   list_sources   what is attached, in which role, and what the corpus holds
   compare_entities  what the subject mentions that the corpus already knows
+  search_sap_best_practice  the SAP Best Practice documents indexed in the corpus
 
 Keeping the sides separate is not tidiness. A three-way comparison collapses
 into a two-document diff the moment the agent cannot say which source a
@@ -42,6 +43,46 @@ SIDES = {
 }
 
 
+# The corpus category SAP Best Practice content is indexed under. Quotes from
+# it are the SAP side of a country comparison even when nothing is attached as
+# SAP Best Practice -- the documents are already in the organizational memory.
+SAP_BP_CATEGORY = "SAP"
+
+
+def sap_bp_indexed(session: Session) -> int:
+    """How many SAP Best Practice documents this run may read in the corpus.
+    Zero when the run's categories leave the SAP category out."""
+    if session.categories and SAP_BP_CATEGORY not in session.categories:
+        return 0
+    for code, docs, chunks in _corpus_totals(session):
+        if code == SAP_BP_CATEGORY and chunks:
+            return docs
+    return 0
+
+
+def is_sap_bp_chunk(rec: dict) -> bool:
+    """Whether a retrieved chunk really is SAP Best Practice content: attached
+    in that role, or indexed under the SAP category. The agent names a quote's
+    side itself, and a template chunk quoted as SAP standard would give the
+    template's answer twice under two names."""
+    return rec.get("side") == "sap_bp" or str(rec.get("category") or "").upper() == SAP_BP_CATEGORY
+
+
+def search_sap_best_practice(session: Session, query: str, k: int = 8) -> dict:
+    """Hybrid search restricted to the SAP Best Practice documents in the
+    corpus, each result marked as the sap_bp side."""
+    if session.categories and SAP_BP_CATEGORY not in session.categories:
+        return {"error": (f"this run may not read the {SAP_BP_CATEGORY} category, where SAP "
+                          "Best Practice content is indexed")}
+    out = ftools.search_corpus(session, query, k, {"categories": [SAP_BP_CATEGORY]})
+    for r in out.get("results", []):
+        r["side"] = "sap_bp"
+        r["side_label"] = "SAP Best Practice (indexed)"
+    if not out.get("results"):
+        out["note"] = "no indexed SAP Best Practice document matches this query"
+    return out
+
+
 def list_sources(session: Session) -> dict:
     """What the agent has to work with, and what it does not.
 
@@ -65,7 +106,8 @@ def list_sources(session: Session) -> dict:
         "attached": {uploads.ROLE_LABEL[r]: v for r, v in by_role.items()},
         "corpus_categories": corpus,
         "missing_roles": [uploads.ROLE_LABEL[r] for r in missing],
-        "note": _source_note(by_role, corpus),
+        "sap_best_practice_indexed": sap_bp_indexed(session),
+        "note": _source_note(by_role, corpus, sap_bp_indexed(session)),
     }
 
 
@@ -76,7 +118,7 @@ def _corpus_totals(session: Session) -> list[tuple[str, int, int]]:
         return []
 
 
-def _source_note(by_role: dict, corpus: list) -> str:
+def _source_note(by_role: dict, corpus: list, sap_bp_docs: int = 0) -> str:
     parts = []
     if "as_is" not in by_role:
         parts.append("No document is tagged as the country As-Is, so there is nothing to analyse "
@@ -86,8 +128,13 @@ def _source_note(by_role: dict, corpus: list) -> str:
                      "indexed corpus via search_corpus."
                      if corpus else
                      "No Global Template document is attached and no corpus category is in scope.")
-    if "sap_bp" not in by_role:
-        parts.append("No SAP Best Practice source is attached. Do not rate the SAP Best Practice "
+    if "sap_bp" not in by_role and sap_bp_docs:
+        parts.append(f"No SAP Best Practice document is attached, but {sap_bp_docs} SAP Best "
+                     f"Practice document(s) are indexed in the corpus under {SAP_BP_CATEGORY}. "
+                     "Read them with search_sap_best_practice, quote them with side sap_bp, and "
+                     "rate the SAP Best Practice fit from what they say.")
+    elif "sap_bp" not in by_role:
+        parts.append("No SAP Best Practice source is attached or indexed. Do not rate the SAP Best Practice "
                      "score, and do not describe SAP standard behaviour you have not read. "
                      "Leave sap_bp_fit_rating null and explain this in sap_bp_note.")
     return " ".join(parts)
@@ -264,6 +311,23 @@ def definitions(stage: str) -> list[dict]:
             },
         },
         {
+            "name": "search_sap_best_practice",
+            "description": (
+                "Hybrid search over the SAP Best Practice documents indexed in the corpus -- "
+                "SAP's delivered standard process, scope item by scope item. Every result is "
+                "the sap_bp side. Use it to find what SAP standard does at each step of the "
+                "process, and quote it with side sap_bp."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"},
+                    "k": {"type": "integer", "description": "1-12, default 8"},
+                },
+                "required": ["query"],
+            },
+        },
+        {
             "name": "compare_entities",
             "description": ("The systems, BPML codes, dash codes and tickets the documents that "
                             "are the SUBJECT of this run mention, each marked according to "
@@ -319,7 +383,7 @@ def definitions(stage: str) -> list[dict]:
 # says which database. list_sources returns an inventory of what is attached,
 # which is not evidence and has no panel behind it.
 ENGINE_OF = {
-    "search_corpus": "rag", "get_chunk": "rag", "read_sources": "rag",
+    "search_corpus": "rag", "search_sap_best_practice": "rag", "get_chunk": "rag", "read_sources": "rag",
     "graph_entity": "graph", "graph_neighbors": "graph", "compare_entities": "graph",
     "get_scope": "bpml",
     "list_sources": "session",
@@ -334,6 +398,7 @@ DISPATCH = {
     "get_chunk": ftools.get_chunk,
     "get_scope": ftools.get_scope,
     "search_corpus": ftools.search_corpus,
+    "search_sap_best_practice": search_sap_best_practice,
     "graph_entity": ftools.graph_entity,
     "graph_neighbors": ftools.graph_neighbors,
     # Gated in guardrails/web.py; only offered when switched on.
@@ -348,6 +413,9 @@ def summarise(name: str, args: dict, result: dict) -> str:
     if name == "read_sources":
         n = len(result.get("results", []))
         return f'"{str(args.get("query", ""))[:44]}" in {result.get("side", "")} → {n} chunk{"s" if n != 1 else ""}'
+    if name == "search_sap_best_practice":
+        n = len(result.get("results", []))
+        return f'"{str(args.get("query", ""))[:44]}" in SAP Best Practice → {n} chunk{"s" if n != 1 else ""}'
     if name == "list_sources":
         attached = result.get("attached", {})
         return " · ".join(f"{k}: {len(v)}" for k, v in attached.items()) or "nothing attached"
@@ -377,6 +445,8 @@ def describe_sources(name: str, args: dict, result: dict, session: Session) -> d
         where = uploads.schema_name(session.uploads) if session.uploads else "session schema"
         return {"kind": "session-graph", "categories": [uploads.CATEGORY],
                 "label": f"session store ({where})"}
+    if name == "search_sap_best_practice":
+        return ftools.describe_sources("search_corpus", args, result, session)
     return ftools.describe_sources(name, args, result, session)
 
 

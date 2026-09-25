@@ -259,7 +259,11 @@ class Deviation(BaseModel):
     gap_id: str
     as_is_step_id: str = ""
     gt_step_ref: str = ""
-    sap_bp_reference: str | None = None
+    sap_bp_reference: str | None = Field(
+        default=None,
+        description=("What SAP Best Practice does at this point, in one sentence, and which SAP "
+                     "Best Practice document says so. Null when no SAP source was read."),
+    )
 
     as_is_statement: str
     gt_statement: str

@@ -299,6 +299,9 @@ def to_markdown(run: dict) -> str:
             if d.get("sap_bp_reference"):
                 w(f"- **SAP Best Practice** — {d['sap_bp_reference']}")
             w(f"- **Difference** — {d.get('exact_difference', '')}")
+            w(f"- **Fit** — Global Template {d['gt_fit_rating']}/4"
+              + (f" · SAP Best Practice {d['sap_bp_fit_rating']}/4"
+                 if d.get("sap_bp_fit_rating") is not None else ""))
             w(f"- **Localization** — {_loc(d['localization_state'])}")
             w(f"- **Workshop** — {_BUCKET.get(d.get('workshop_bucket'), d.get('workshop_bucket', ''))}"
               + (f", ~{d['workshop_minutes']} min" if d.get("workshop_minutes") else "")

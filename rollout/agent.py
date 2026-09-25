@@ -33,8 +33,10 @@ from . import tools
 from .schemas import SUBJECTS, Analysis, AsIsModel, RunRequest, Subject
 
 MODEL = os.environ.get("ROLLOUT_MODEL") or os.environ.get("RAG_ANSWER_MODEL", "claude-opus-5")
+# The comparison reads two sides now -- the template and SAP Best Practice --
+# so it is given room for the second side's searches.
 MAX_TOOL_CALLS = {"asis": int(os.environ.get("ROLLOUT_MAX_TOOL_CALLS_ASIS", "14")),
-                  "compare": int(os.environ.get("ROLLOUT_MAX_TOOL_CALLS", "22"))}
+                  "compare": int(os.environ.get("ROLLOUT_MAX_TOOL_CALLS", "30"))}
 # Two different limits, because they guard two different things.
 #
 # MAX_INPUT_TOKENS is a limit on CONTEXT: how much the model is reading in one
@@ -128,13 +130,40 @@ def system_compare(subject: Subject) -> str:
     if subject.localization:
         frame = (
             "    Country As-Is  \u2194  Global Template  \u2194  SAP Best Practice\n\n"
-            "with country localization as a contextual lens."
+            "with country localization as a contextual lens. Every step of the country's "
+            "process is checked against BOTH the Global Template and SAP Best Practice: the "
+            "analysis is a Global Template comparison and an SAP Best Practice comparison of "
+            "the same As-Is, side by side."
         )
         sources = (
-            "1. list_sources, to see which sides you actually have a source for. If no SAP Best "
-            "Practice source is attached, you cannot rate the SAP Best Practice score -- leave "
-            "every sap_bp_fit_rating null and say why in sap_bp_note."
+            "1. list_sources, to see which sides you actually have a source for. SAP Best "
+            "Practice content is already indexed in the corpus: read it with "
+            "search_sap_best_practice, and with read_sources side=\"sap_bp\" if an SAP Best "
+            "Practice document is also attached. Only if neither exists is the SAP Best Practice "
+            "comparison not assessable -- then leave every sap_bp_fit_rating null and say why "
+            "in sap_bp_note."
         )
+        sap_side = (
+            "\n   Then establish the SAP Best Practice side the same way: search_sap_best_practice "
+            "for SAP's standard version of this process -- the scope item and its process steps, "
+            "roles, approvals and documents. Search more than once, by step, not only by the "
+            "process name. Say which SAP Best Practice process you compared against in "
+            "sap_bp_note."
+        )
+        sap_check = (
+            " Then ask the same questions of SAP Best Practice: does SAP's standard process "
+            "have this step, at this point, done the same way? A step that matches the template "
+            "but departs from SAP standard is still a fit_area; add a line to open_questions "
+            "naming it as a template finding for design review."
+        )
+        sap_rating = (
+            ", rate the template fit 0-4 AND the SAP Best Practice fit 0-4 (sap_bp_fit_rating). "
+            "In sap_bp_reference say, in one sentence, what SAP standard does at this point and "
+            "which SAP Best Practice document says so, and quote that document verbatim with "
+            "side sap_bp. Where the country follows SAP standard and the template departs from "
+            "it, say so in exact_difference: that is a template finding, not a country failure"
+        )
+        sap_dims = ", and 0-4 against SAP Best Practice in sap_bp_rating"
         localization = (
             "decide the localization state honestly, "
         )
@@ -155,9 +184,12 @@ def system_compare(subject: Subject) -> str:
             "the subject of this run; the Global Template is what you compare them against."
         )
         localization = ""
+        sap_side = sap_check = sap_dims = ""
+        sap_rating = ", and rate the template fit 0-4"
     body = SYSTEM_COMPARE_TEMPLATE.format(
         reading=subject.reading, subject_label=subject.label, noun=subject.noun,
         finding=subject.finding, frame=frame, sources=sources, localization=localization,
+        sap_side=sap_side, sap_check=sap_check, sap_rating=sap_rating, sap_dims=sap_dims,
     )
     return (f"{body}\n{EVIDENCE_RULES}\n{GUARDRAILS}\n{NARRATION}\n"
             "Answer in British English. Keep every statement short enough for a business "
@@ -211,7 +243,7 @@ template's equivalent of this process yourself: search_corpus for what it actual
 graph_entity on the systems, dash codes and tickets it mentions, and get_scope on any BPML code \
 that comes back. Either way, record what you settled on in `template_process` -- an analysis \
 that does not say what it compared against cannot be audited. If you cannot identify one, say \
-so there and keep every rating and finding to what you can actually evidence.
+so there and keep every rating and finding to what you can actually evidence.{sap_side}
 3. compare_entities, to see which systems, codes and tickets in the subject the corpus already \
 knows. Each shared entity tells you what to search the corpus for.
 4. search_corpus for the template's version of each part of the process. Run at least one \
@@ -219,11 +251,11 @@ query containing the exact BPML code verbatim. graph_entity and graph_neighbors 
 system, ticket or dash code to what is linked to it.
 5. For every step of the subject, ask: does an equivalent template step exist; at the same \
 point in the process; with an equivalent actor, business rule, threshold, system capability, \
-control, data and exception path? A step that matches is a fit_area -- name it, so the \
-workshop can confirm it in one batch instead of walking through it.
+control, data and exception path?{sap_check} A step that matches the template is a \
+fit_area -- name it, so the workshop can confirm it in one batch instead of walking through it.
 6. For every material difference, write one deviation. Classify it with the taxonomy, say \
-exactly what the difference is in one sentence, {localization}assess materiality, and rate the \
-template fit 0-4. Put it on ONE of the seven scored dimensions -- the one it mostly loads onto.
+exactly what the difference is in one sentence, {localization}assess materiality{sap_rating}. \
+Put the deviation on ONE of the seven scored dimensions -- the one it mostly loads onto.
 7. Decide the workshop bucket:
    - MUST_DISCUSS: the difference is material, or legal relevance is uncertain, or a business \
 rule changes the outcome, or an approval or control differs, or development may be needed, or \
@@ -233,8 +265,8 @@ owner and a realistic length in minutes.
    - CONFIRM: minor or configurable, or the design is equivalent and only a local value \
 differs. A business owner should confirm it, but it does not need floor time.
    - NO_WORKSHOP_TIME: a clear semantic match with no decision left.
-8. Rate all seven dimensions 0-4 for the template comparison, with a one-line note for each \
-saying what drove the rating.
+8. Rate all seven dimensions 0-4 for the template comparison{sap_dims}, with a one-line note \
+for each saying what drove the rating.
 9. Produce backlog candidates ONLY for findings you can evidence, and only where a validated \
 need is visible. Every candidate names the gap it came from. A hypothesis is not scope.
 10. submit_analysis, once.

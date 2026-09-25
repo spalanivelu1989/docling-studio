@@ -75,7 +75,9 @@ def preview(req: RunRequest) -> dict:
         "blocker": "" if ready else
                    (f"Attach the {subject.label} documentation and tag it "
                     f"\"{subject.label}\" — there is nothing to analyse without it."),
-        "sap_bp_available": by_role.get("sap_bp", 0) > 0 and subject.score_b,
+        # Attached, or indexed in the corpus: either gives the SAP side a source.
+        "sap_bp_available": subject.score_b and (by_role.get("sap_bp", 0) > 0 or tools.sap_bp_indexed(
+            ftools.Session(categories=tuple(c.strip().upper() for c in (req.categories or []) if c.strip()))) > 0),
         "model": agent.MODEL,
         "max_tool_calls": agent.MAX_TOOL_CALLS,
         # Two passes, and the comparison pass re-reads the corpus; measured
@@ -129,6 +131,9 @@ def run(req: RunRequest) -> Iterator[Event]:
     # -- and so the tools that read "the subject" read this run's subject.
     sess = ftools.Session(categories=categories, uploads=session_id,
                           subject_role=subject.role)
+    # SAP Best Practice is read from an attachment or from the SAP documents
+    # already indexed in the corpus; either one is a source the gates accept.
+    sap_bp_source = "sap_bp" in roles or tools.sap_bp_indexed(sess) > 0
 
     conn = store.connect()
     # Bound before the try so the error path below can always close it.
@@ -192,7 +197,7 @@ def run(req: RunRequest) -> Iterator[Event]:
             "prompt_hash": record["prompt_hash"],
             "corpus_fingerprint": record["corpus_fingerprint"],
             "categories": list(categories), "uploads": record["uploads"],
-            "sap_bp_available": "sap_bp" in roles,
+            "sap_bp_available": sap_bp_source,
         }
 
         # Every tool call, kept as it happens rather than at the end: a run
@@ -299,7 +304,7 @@ def run(req: RunRequest) -> Iterator[Event]:
         with run.step("check-quality-gates", as_type="evaluator",
                       input={"deviations": len(analysis.deviations)}) as gate_span:
             analysis, issues = gates.check(analysis, asis, sess,
-                                           has_sap_bp_source="sap_bp" in roles,
+                                           has_sap_bp_source=sap_bp_source,
                                            scope_named=scope is not None,
                                            subject=subject)
             gate_summary = {**gates.summarise(issues),

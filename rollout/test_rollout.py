@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import pydantic  # noqa: E402
 
 from fitgap import tools as ftools  # noqa: E402
-from rollout import gates, scoring  # noqa: E402
+from rollout import gates, scoring, tools as rtools  # noqa: E402
 from rollout.schemas import (DEVIATION_TYPES, DIMENSIONS, DISPOSITIONS,  # noqa: E402
                              SUBJECTS,
                              LOCALIZATION_STATES, Analysis, AsIsModel, AsIsStep,
@@ -509,6 +509,73 @@ def test_the_best_practice_prompt_says_there_is_no_country():
     assert "no country in this run" in text
     # And it must not still be describing a three-way comparison.
     assert "three-way" not in text.lower()
+
+
+def test_the_country_prompt_compares_against_the_template_and_sap_best_practice():
+    # A country run is a Global Template comparison and an SAP Best Practice
+    # comparison of the same As-Is, and the SAP side is read from the corpus.
+    from rollout import agent
+
+    text = agent.system_compare(COUNTRY)
+    assert "BOTH the Global Template and SAP Best Practice" in text
+    assert "search_sap_best_practice" in text
+    assert "sap_bp_fit_rating" in text and "sap_bp_rating" in text
+    # The Best Practice run has SAP as its subject, not as a third side.
+    assert "search_sap_best_practice" not in agent.system_compare(BP)
+
+
+def test_an_indexed_sap_best_practice_quote_keeps_the_rating_without_an_attachment():
+    sess = session_with("country does X")
+    sess.retrieved["SAP:7"] = {"full_text": "SAP standard does Z", "category": "SAP"}
+    a = analysis(dimension_ratings=[rate("rules", 2, bp=3)], deviations=[
+        dev(sap_bp_fit_rating=3, sap_bp_reference="SAP does Z (BKP1)",
+            evidence=[ev("country does X"), ev("SAP standard does Z", side="sap_bp", chunk="SAP:7")]),
+    ])
+    out, issues = gates.check(a, AsIsModel(), sess, has_sap_bp_source=True)
+    assert out.deviations[0].sap_bp_fit_rating == 3
+    assert out.dimension_ratings[0].sap_bp_rating == 3
+    assert not [i for i in issues if i.gate == "QG5"]
+
+
+def test_a_template_chunk_quoted_as_sap_best_practice_is_dropped():
+    # The side is the agent's label. A template chunk passed off as SAP
+    # standard would give the template's answer twice under two names.
+    sess = session_with("country does X")
+    sess.retrieved["PKG:3"] = {"full_text": "template does Y", "category": "PKG"}
+    a = analysis(deviations=[
+        dev(sap_bp_fit_rating=4,
+            evidence=[ev("country does X"), ev("template does Y", side="sap_bp", chunk="PKG:3")]),
+    ])
+    out, issues = gates.check(a, AsIsModel(), sess, has_sap_bp_source=True)
+    assert [e.chunk_id for e in out.deviations[0].evidence] == ["UPLOAD:1"]
+    assert out.deviations[0].sap_bp_fit_rating is None
+    assert any("not from an SAP Best Practice document" in i.detail for i in issues)
+
+
+def test_the_sap_best_practice_search_reads_only_the_sap_category():
+    seen = {}
+
+    def fake(session, query, k=8, filters=None):
+        seen["filters"] = filters
+        return {"query": query, "results": [{"chunk_id": "SAP:1", "text": "t"}]}
+
+    real = rtools.ftools.search_corpus
+    rtools.ftools.search_corpus = fake
+    try:
+        out = rtools.search_sap_best_practice(ftools.Session(), "returns approval")
+        refused = rtools.search_sap_best_practice(ftools.Session(categories=("PKG",)), "x")
+    finally:
+        rtools.ftools.search_corpus = real
+    assert seen["filters"] == {"categories": ["SAP"]}
+    assert out["results"][0]["side"] == "sap_bp"
+    assert "error" in refused
+
+
+def test_the_source_note_points_at_indexed_sap_best_practice():
+    note = rtools._source_note({"as_is": [{}]}, [{"category": "SAP"}], sap_bp_docs=3)
+    assert "search_sap_best_practice" in note
+    assert "Do not rate" not in note
+    assert "Do not rate" in rtools._source_note({"as_is": [{}]}, [], sap_bp_docs=0)
 
 
 # --- source traceability -----------------------------------------------------

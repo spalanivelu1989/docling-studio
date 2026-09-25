@@ -251,9 +251,12 @@ export default function DeviationRegisterView({
                 </Stack>
                 <Typography component="h2" sx={{ fontSize: 17, fontWeight: 600, lineHeight: 1.45 }}>{gap.exact_difference}</Typography>
                 {loc && <Typography sx={{ fontSize: 12.5, fontWeight: 600, color: "info.main" }}>{loc}</Typography>}
-                <Box sx={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", border: 1, borderColor: "divider", borderRadius: RADIUS }}>
+                <Box sx={{ display: "grid", gridTemplateColumns: { xs: "repeat(2, minmax(0, 1fr))", sm: `repeat(${subject.score_b ? 4 : 3}, minmax(0, 1fr))` },
+                           border: 1, borderColor: "divider", borderRadius: RADIUS }}>
                   {[
                     { l: "GT fit", v: `${gap.gt_fit_rating}/4`, mono: true },
+                    // Null is "no SAP source was read", not a mismatch, so it is a dash.
+                    ...(subject.score_b ? [{ l: "SAP BP fit", v: gap.sap_bp_fit_rating === null ? "—" : `${gap.sap_bp_fit_rating}/4`, mono: true }] : []),
                     { l: "Harmonisation", v: `${gap.harmonization_potential}%`, mono: true },
                     { l: "Evidence confidence", v: gap.evidence_confidence, mono: false },
                   ].map((k, i) => (
@@ -280,7 +283,7 @@ export default function DeviationRegisterView({
                 </Stack>
                 {gap.sap_bp_reference && (
                   <Stack spacing={0.5}>
-                    <Typography sx={{ fontSize: 12, fontWeight: 600, color: "text.secondary" }}>SAP standard</Typography>
+                    <Typography sx={{ fontSize: 12, fontWeight: 600, color: "text.secondary" }}>SAP Best Practice</Typography>
                     <Typography sx={{ fontSize: 13, lineHeight: 1.55 }}>{gap.sap_bp_reference}</Typography>
                   </Stack>
                 )}

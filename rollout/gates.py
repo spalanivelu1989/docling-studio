@@ -21,6 +21,8 @@ from __future__ import annotations
 from fitgap import tools as ftools
 from fitgap.verifier import quote_in_chunk
 
+from .tools import is_sap_bp_chunk
+
 from .schemas import (BUILD_DISPOSITIONS, SUBJECTS, Analysis, AsIsModel, Deviation,
                       Evidence, QualityIssue)
 
@@ -47,6 +49,14 @@ def _prune(items: list[Evidence], session: ftools.Session, where: str,
             issues.append(QualityIssue(
                 gate="QG2", severity="hard", gap_id=gap_id,
                 detail=f'{where}: the quote "{ev.quote[:60]}…" is not in chunk {ev.chunk_id}; evidence dropped'))
+            continue
+        # The side is the agent's own label. SAP standard is the one side a
+        # wrong label turns into a claim about SAP, so it is checked.
+        if ev.side == "sap_bp" and not is_sap_bp_chunk(session.retrieved.get(ev.chunk_id, {})):
+            issues.append(QualityIssue(
+                gate="QG2", severity="hard", gap_id=gap_id,
+                detail=(f"{where}: chunk {ev.chunk_id} was quoted as SAP Best Practice but is not "
+                        "from an SAP Best Practice document; evidence dropped")))
             continue
         kept.append(ev)
     return kept
