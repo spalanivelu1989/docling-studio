@@ -364,7 +364,8 @@ export default function LandingPage({ onNavigate, reachable }: {
 
 /** "How It Works": the end-to-end processing architecture. Its own component
  *  so the Demo Mode landing page shows the same section -- with `hideModels`,
- *  which names what each step does rather than the AI models it runs on. */
+ *  which names what each step does rather than the models, libraries and
+ *  services it runs on. */
 export function ArchitectureSection({ hideModels = false }: { hideModels?: boolean }) {
   return (
     <Box sx={{ mb: { xs: 8, md: 12 } }}>
@@ -400,28 +401,32 @@ export function ArchitectureSection({ hideModels = false }: { hideModels?: boole
             number="01"
             title="Ingestion & Normalization"
             icon={<FileSpreadsheet size={20} />}
-            desc="Upload PPTX, DOCX, XLSX, PDF, or images. LibreOffice and Poppler render visual pages for preview while raw OOXML/PDF DOMs are queued for extraction."
+            desc={hideModels
+              ? "Upload PPTX, DOCX, XLSX, PDF, or images. Every page is rendered for preview while the original file is queued for extraction."
+              : "Upload PPTX, DOCX, XLSX, PDF, or images. LibreOffice and Poppler render visual pages for preview while raw OOXML/PDF DOMs are queued for extraction."}
           />
           <PipelineStep
             number="02"
             title="Structure Extraction"
             icon={<Cpu size={20} />}
-            desc="Docling engine extracts semantic hierarchies. OpenPyXL reads spreadsheet tables. Specialized parser resolves native PPTX connector arrows into Mermaid diagrams."
+            desc={hideModels
+              ? "The document's structure is extracted: headings, sections, tables and lists. Spreadsheet tables are read cell by cell, and connector arrows in slides are rebuilt as process diagrams."
+              : "Docling engine extracts semantic hierarchies. OpenPyXL reads spreadsheet tables. Specialized parser resolves native PPTX connector arrows into Mermaid diagrams."}
           />
           <PipelineStep
             number="03"
             title="Vision AI & OCR Augmentation"
             icon={<Sparkles size={20} />}
             desc={hideModels
-              ? "Multimodal vision AI transcribes flattened infographics and complex visuals. Tesseract OCR handles scanned document text."
+              ? "Multimodal vision AI transcribes flattened infographics and complex visuals. Scanned pages are read with optical character recognition."
               : "Multimodal AI (Claude 3.7 / GPT-4o) transcribes flattened infographics and complex visuals. Tesseract OCR handles scanned document text."}
           />
           <PipelineStep
             number="04"
-            title="pgvector Ingestion & RAG"
+            title={hideModels ? "Indexing, Hybrid Search & RAG" : "pgvector Ingestion & RAG"}
             icon={<DatabaseZap size={20} />}
             desc={hideModels
-              ? "Converted Markdown is chunked with header preservation, embedded with a locally hosted embedding model, and stored in PostgreSQL pgvector for hybrid semantic and keyword search."
+              ? "The extracted text is split into passages that keep their section headings, embedded, and indexed for hybrid search by meaning and by exact keyword. Retrieval-augmented generation (RAG) then answers questions only from the passages it retrieves, citing each one."
               : "Converted Markdown is chunked with header preservation, embedded with Ollama BGE-M3 (1024d), and stored in PostgreSQL pgvector for hybrid semantic and keyword search."}
           />
           <PipelineStep
