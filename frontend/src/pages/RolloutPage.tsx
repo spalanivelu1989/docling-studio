@@ -34,6 +34,7 @@ import WorkshopAgendaView from "../components/rollout/WorkshopAgendaView";
 import ObjectHeader, { BandButton } from "../components/rollout/ObjectHeader";
 import { MONO, RADIUS, usePremium } from "../components/rollout/premium";
 import ProcessAlignmentView from "../components/rollout/ProcessAlignmentView";
+import ScoreCards from "../components/rollout/ScoreCards";
 import SummaryView, { Section } from "../components/rollout/SummaryView";
 
 /** A log for a run recorded before the reasoning was kept: its tool calls,
@@ -1203,7 +1204,6 @@ export default function RolloutPage({ active, showTechDetails = true }: Props) {
   }, [highlightGap, tab]);
 
   const runningStage = stages.find((s) => s.status === "running")?.stage ?? "";
-  const counts = scores?.counts;
   const must = useMemo(
     () => (analysis?.deviations ?? []).filter((d) => d.workshop_bucket === "MUST_DISCUSS"),
     [analysis]);
@@ -1286,22 +1286,6 @@ export default function RolloutPage({ active, showTechDetails = true }: Props) {
                 )}
               </>
             }
-            score={{ value: scores.gt_alignment, band: scores.gt_band, label: "Alignment to the Global Template" }}
-            kpis={[
-              { label: "Harmonization potential",
-                value: scores.harmonization_potential === null ? "—" : `${scores.harmonization_potential}%`,
-                sub: scores.harmonization_band || "—" },
-              { label: "Localization-adjusted",
-                value: scores.localization_adjusted === null ? "—" : String(scores.localization_adjusted),
-                sub: subject.localization ? `${counts?.localization_confirmed ?? 0} confirmed statutory items` : "Not applicable" },
-              { label: "Deviations", value: String(counts?.deviations ?? analysis.deviations.length),
-                sub: `${counts?.by_materiality?.High ?? 0} high · ${counts?.workshop?.MUST_DISCUSS ?? 0} must discuss` },
-              { label: "SAP Best Practice",
-                value: scores.sap_bp_alignment === null ? "—" : `${scores.sap_bp_alignment}%`,
-                sub: scores.sap_bp_alignment === null
-                  ? (subject.score_b ? "No source attached" : "Not reported for this subject")
-                  : scores.sap_bp_band },
-            ]}
           />
 
           <Paper square elevation={0} sx={{ borderBottom: 1, borderColor: "divider", px: { xs: 1, md: 3 },
@@ -1329,6 +1313,9 @@ export default function RolloutPage({ active, showTechDetails = true }: Props) {
 
           <Box sx={{ px: { xs: 2, md: 4 }, py: 3 }}>
             {error && <Alert severity="error" sx={{ mb: 2, fontSize: 12.5, borderRadius: RADIUS }}>{error}</Alert>}
+            {tab === "summary" && (
+              <ScoreCards analysis={analysis} scores={scores} subject={subject} types={types} onTab={setTab} />
+            )}
             {tab === "summary" && (
               <SummaryView analysis={analysis} scores={scores} subject={subject} onGap={openGap} onTab={setTab} />
             )}
@@ -1971,11 +1958,13 @@ export default function RolloutPage({ active, showTechDetails = true }: Props) {
                     )}
                     {plan?.ready && !plan.sap_bp_available && (
                       <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
-                        No SAP Best Practice source is attached, so that score is reported as not assessable rather than guessed.
+                        No SAP Best Practice source is attached or indexed, so that score is reported as not assessable rather than guessed.
                       </Typography>
                     )}
                     <Typography sx={{ fontSize: 12, color: "text.secondary", borderTop: 1, borderColor: "divider", pt: 1.5 }}>
-                      You get a deviation register, dimension ratings, a localization advisory and a workshop agenda.
+                      {subject.score_b && plan?.sap_bp_available
+                        ? "You get a Global Template and an SAP Best Practice comparison of the same process, a deviation register, dimension ratings, a localization advisory and a workshop agenda."
+                        : "You get a deviation register, dimension ratings, a localization advisory and a workshop agenda."}{" "}
                       Every finding stays proposed until someone accepts it.
                     </Typography>
                     {running ? (
