@@ -45,6 +45,36 @@ const STEPS: Omit<Step, "status" | "detail" | "ms">[] = [
   { key: "answer", name: "Write answer", tech: "Claude", idle: "Answer only from the excerpts, with citations", icon: <Sparkles size={16} /> },
 ];
 
+/** A pipeline step as Demo Mode shows it: what the step does, with the
+ *  embedding model, the database and the answer model taken out. The server's
+ *  stage lines name all three, so they are rewritten here rather than there --
+ *  the main app keeps them. */
+const CLIENT_TECH: Record<string, string> = {
+  embed: "Meaning-based embedding",
+  vector: "Search by meaning",
+  keyword: "Search by exact words and codes",
+  fuse: "Both result lists combined",
+  answer: "Written only from the excerpts",
+};
+
+function clientStep(s: Step): Step {
+  let detail = s.detail;
+  if (s.key === "embed") {
+    detail = s.status === "done" ? "Question ready for meaning-based search"
+      : s.status === "running" ? "Reading the question for meaning"
+      : s.status === "pending" ? "Turn the question into a meaning-based search" : detail;
+  } else if (s.key === "vector" && s.status === "running") {
+    detail = "Finding the passages closest in meaning";
+  } else if (s.key === "answer" && s.status !== "pending") {
+    detail = detail
+      .replace(/^Sending (\d+) excerpts to .*/, "Sending $1 excerpts to the answer model")
+      .replace(/^.* is reasoning over the excerpts$/, "Reasoning over the excerpts")
+      .replace(/^.* is writing$/, "Writing the answer")
+      .replace(/^[^:]*: ([\d,]+) tokens in, ([\d,]+) out$/, "Answer written: $1 tokens in, $2 out");
+  }
+  return { ...s, tech: CLIENT_TECH[s.key] ?? s.tech, detail };
+}
+
 const freshSteps = (mode: SearchMode): Step[] =>
   STEPS.map((s) => {
     const skipped = (mode === "keyword" && (s.key === "embed" || s.key === "vector")) || (mode === "vector" && s.key === "keyword");
@@ -112,19 +142,52 @@ export default function AskPage({ active, showTechDetails = true }: {
     [scope],
   );
 
-  // Tokens arrive faster than it is worth re-rendering Markdown; flush a few
-  // times a second.
+  // The typewriter. Text reaches the page a sentence at a time -- the server
+  // holds each one back until it ends, so a phone number split across two
+  // tokens is still redacted -- and pasting it in whole reads as blocks
+  // appearing. Instead it is revealed a few characters a frame: steadily when
+  // the buffer is short, faster when it builds up, so the page never falls
+  // more than about a second behind the model. `typing` outlives `running`
+  // until the last character is out.
+  const [typing, setTyping] = useState(false);
+  const streaming = useRef(false);
   useEffect(() => {
-    if (!running) return;
-    const t = setInterval(() => {
-      if (pending.current) {
-        const chunk = pending.current;
-        pending.current = "";
-        setAnswer((a) => a + chunk);
+    if (!typing) return;
+    let raf = 0;
+    let last = performance.now();
+    let carry = 0;
+    const tick = (now: number) => {
+      const backlog = pending.current.length;
+      if (backlog) {
+        const perSecond = Math.max(120, backlog * 1.2);
+        carry += (perSecond * (now - last)) / 1000;
+        const n = Math.min(backlog, Math.floor(carry));
+        if (n > 0) {
+          carry -= n;
+          const chunk = pending.current.slice(0, n);
+          pending.current = pending.current.slice(n);
+          setAnswer((a) => a + chunk);
+        }
+      } else {
+        carry = 0;
+        if (!streaming.current) { setTyping(false); return; }
       }
-    }, 60);
-    return () => clearInterval(t);
-  }, [running]);
+      last = now;
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [typing]);
+
+  // Stopping, failing or leaving for a saved run shows what has arrived at
+  // once rather than typing out an answer nobody is waiting for.
+  const flushTyping = useCallback(() => {
+    streaming.current = false;
+    const rest = pending.current;
+    pending.current = "";
+    if (rest) setAnswer((a) => a + rest);
+    setTyping(false);
+  }, []);
 
   async function executeAsk(overrideQuestion?: string) {
     const q = (typeof overrideQuestion === "string" ? overrideQuestion : question).trim();
@@ -136,6 +199,8 @@ export default function AskPage({ active, showTechDetails = true }: {
     setSources([]);
     setAnswer("");
     pending.current = "";
+    streaming.current = true;
+    setTyping(true);
     setDone(null);
     setError(null);
     setRunning(true);
@@ -147,6 +212,7 @@ export default function AskPage({ active, showTechDetails = true }: {
     const ctrl = new AbortController();
     controller.current = ctrl;
     const fail = (message: string) => {
+      flushTyping();
       setError(message);
       setSteps((ss) => {
         const i = ss.findIndex((s) => s.status === "running");
@@ -185,9 +251,9 @@ export default function AskPage({ active, showTechDetails = true }: {
     } catch (err) {
       fail((err as Error).name === "AbortError" ? "Stopped" : (err as Error).message);
     } finally {
-      const rest = pending.current;
-      pending.current = "";
-      if (rest) setAnswer((a) => a + rest);
+      // The rest of the buffer is left to the typewriter, which stops itself
+      // once it is empty.
+      streaming.current = false;
       controller.current = null;
       setRunning(false);
     }
@@ -204,6 +270,7 @@ export default function AskPage({ active, showTechDetails = true }: {
     try {
       const r = await askHistory.run(id);
       controller.current?.abort();
+      flushTyping();
       setQuestion(r.question);
       setPicked(ASK_SAMPLES.find((q) => q.question === r.question) ?? null);
       setAsked(r.question);
@@ -392,7 +459,7 @@ export default function AskPage({ active, showTechDetails = true }: {
         actions={
           <>
             <BandButton onClick={() => setHistoryOpen(true)} startIcon={<HistoryIcon size={14} />}>History</BandButton>
-            {answer && !running && (
+            {answer && !running && !typing && (
               <BandButton startIcon={copied ? <Check size={14} /> : <Copy size={14} />}
                           onClick={async () => {
                             await navigator.clipboard.writeText(answer);
@@ -579,7 +646,7 @@ export default function AskPage({ active, showTechDetails = true }: {
               {answer ? (
                 <Box
                   sx={
-                    running
+                    running || typing
                       ? {
                           "& > div > :last-child::after": {
                             content: '""', display: "inline-block", width: ".5em", height: "1em", ml: "2px", verticalAlign: "-2px",
@@ -636,9 +703,7 @@ export default function AskPage({ active, showTechDetails = true }: {
               <Section pad={false} title="Pipeline" hint={done ? `${done.seconds}s total` : running ? "running" : undefined}>
             <Box component="ol" sx={{ listStyle: "none", m: 0, p: 0, py: 1 }}>
               {steps.map((s, i) => (
-                <PipelineStep key={s.key} step={{ ...s, tech: !showTechDetails
-                    ? (s.key === "embed" ? "Meaning-based embedding" : s.key === "answer" ? "Written only from the excerpts" : s.tech)
-                    : s.key === "embed" && status ? `Ollama ${status.embed_model} (${status.embed_dimension || 1024}d)` : s.key === "answer" ? answerModel : s.tech }} last={i === steps.length - 1} next={steps[i + 1]?.status} />
+                <PipelineStep key={s.key} step={!showTechDetails ? clientStep(s) : { ...s, tech: s.key === "embed" && status ? `Ollama ${status.embed_model} (${status.embed_dimension || 1024}d)` : s.key === "answer" ? answerModel : s.tech }} last={i === steps.length - 1} next={steps[i + 1]?.status} />
               ))}
             </Box>
               </Section>
