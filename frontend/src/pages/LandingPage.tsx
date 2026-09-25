@@ -20,6 +20,7 @@ import {
   Brain,
   FolderArchive,
   MessageSquareText,
+  Network,
   ScanEye,
   Sparkles,
   Workflow,
@@ -389,11 +390,9 @@ export function ArchitectureSection({ hideModels = false }: { hideModels?: boole
         <Box
           sx={{
             display: "grid",
-            // Five steps. Four columns would leave the last one alone on a
-            // row of its own, which reads as an afterthought rather than
-            // the stage it is.
-            gridTemplateColumns: { xs: "1fr", sm: "repeat(2, 1fr)",
-                                   md: "repeat(3, 1fr)", lg: "repeat(5, 1fr)" },
+            // Six steps, as two rows of three. Six across leaves each
+            // description a column too narrow to read.
+            gridTemplateColumns: { xs: "1fr", sm: "repeat(2, 1fr)", md: "repeat(3, 1fr)" },
             gap: 2.5,
           }}
         >
@@ -427,9 +426,17 @@ export function ArchitectureSection({ hideModels = false }: { hideModels?: boole
           />
           <PipelineStep
             number="05"
+            title="Knowledge Graph"
+            icon={<Network size={20} />}
+            desc="Every indexed document is read into one graph of business streams, core systems, BPML processes and SPARK specifications, linked to the documents that mention them. The graph shows how the programme connects, and the agents follow its links to find the right documents to search."
+          />
+          <PipelineStep
+            number="06"
             title="Agent Memory & Recall"
             icon={<Brain size={20} />}
-            desc="The Evidence Agent keeps what each investigation established in Hindsight, an open-source agent memory service running locally. A later run is handed those notes before its first search, so it knows where to look instead of rediscovering it. Memory steers the search; it can never be cited, because a claim still needs a quote retrieved in that run."
+            desc={hideModels
+              ? "The Evidence Agent keeps what each investigation established in its agent memory service. A later run is handed those notes before its first search, so it knows where to look instead of rediscovering it. Memory steers the search; it can never be cited, because a claim still needs a quote retrieved in that run."
+              : "The Evidence Agent keeps what each investigation established in Hindsight, an open-source agent memory service running locally. A later run is handed those notes before its first search, so it knows where to look instead of rediscovering it. Memory steers the search; it can never be cited, because a claim still needs a quote retrieved in that run."}
           />
         </Box>
       </Paper>

@@ -753,6 +753,8 @@ export default function EvidencePage({ active, showTechDetails = true }: {
   const memoryTip = holdout
     ? "Memory is off under holdout. Holdout measures the agent against a corpus it cannot look "
       + "the answer up in, and an earlier run's answer arriving through memory would hand it back."
+    : !showTechDetails && !mem?.available
+    ? "Agent memory is not available right now."
     : !mem?.configured
     ? "Memory is switched off: HINDSIGHT_URL is empty."
     : !mem.available
