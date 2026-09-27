@@ -17,6 +17,7 @@ import {
 } from "@mui/material";
 import { alpha, useTheme, type Theme } from "@mui/material/styles";
 import ModelView from "../components/ModelView";
+import CypherView from "../components/CypherView";
 import { clearAdornment, clearOnEscape } from "../components/ClearAdornment";
 import ProcessFlowView from "../components/ProcessFlowView";
 import * as d3 from "d3";
@@ -53,6 +54,7 @@ import {
   Zap,
   ZoomIn,
   ZoomOut,
+  Terminal,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -172,7 +174,7 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
   // ontology it was meant to build, with each label and relationship marked
   // built / partial / absent. The model is fetched the first time it is asked
   // for -- most visits never open it.
-  const [viewMode, setViewMode] = useState<"graph" | "model" | "process">("graph");
+  const [viewMode, setViewMode] = useState<"graph" | "model" | "process" | "cypher">("graph");
   const [model, setModel] = useState<GraphModel | null>(null);
   const [modelError, setModelError] = useState<string | null>(null);
   const [selectedModelNode, setSelectedModelNode] = useState<ModelNode | null>(null);
@@ -1345,7 +1347,7 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
               borderColor: "divider",
             }}
           >
-            {(["graph", "process", "model"] as const).map((mode) => {
+            {(["graph", "process", "model", "cypher"] as const).map((mode) => {
               const active = viewMode === mode;
               return (
                 <Button
@@ -1358,6 +1360,8 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
                       <Network size={13} />
                     ) : mode === "process" ? (
                       <GitBranch size={13} />
+                    ) : mode === "cypher" ? (
+                      <Terminal size={13} />
                     ) : (
                       <Layers size={13} />
                     )
@@ -1380,7 +1384,7 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
                     transition: "all 0.15s ease",
                   }}
                 >
-                  {mode === "graph" ? "Graph" : mode === "process" ? "Process" : "Model"}
+                  {mode === "graph" ? "Graph" : mode === "process" ? "Process" : mode === "cypher" ? "Cypher" : "Model"}
                 </Button>
               );
             })}
@@ -2177,6 +2181,15 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
             }}
           >
             <ProcessFlowView graph={graphData} onFocusNode={focusGraphNode} />
+          </Box>
+        )}
+
+        {/* Cypher, against the graph's Neo4j copy. Over the canvas, like the
+            model view below, for the same reason. */}
+        {viewMode === "cypher" && (
+          <Box sx={{ position: "absolute", inset: 0, bgcolor: "background.default", zIndex: 5,
+                     display: "flex", flexDirection: "column" }}>
+            <CypherView onFocusNode={focusGraphNode} />
           </Box>
         )}
 

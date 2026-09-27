@@ -22,4 +22,16 @@ else
   echo "Hindsight: not installed (see docs/agent-memory.md) -- the agent runs without memory."
 fi
 
+# Neo4j, for Cypher over the knowledge graph (docs/neo4j.md). Optional: the app
+# loads the graph into it once it answers, and runs without it when it does not.
+if curl -sf -m 2 http://127.0.0.1:7474 >/dev/null 2>&1; then
+  echo "Neo4j: already running on 127.0.0.1:7474."
+elif ! grep -q '^NEO4J_PASSWORD=.' .env 2>/dev/null; then
+  echo "Neo4j: NEO4J_PASSWORD is not set in .env -- Cypher is off (see docs/neo4j.md)."
+elif command -v docker >/dev/null 2>&1 && docker compose -f compose.neo4j.yml up -d >/dev/null 2>&1; then
+  echo "Neo4j: started (compose.neo4j.yml); the graph loads into it once it answers."
+else
+  echo "Neo4j: could not start the container (is Docker/Podman running?) -- Cypher is off."
+fi
+
 exec .venv/bin/uvicorn app:app --port "${PORT:-8000}" --reload

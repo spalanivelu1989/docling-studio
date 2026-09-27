@@ -681,13 +681,15 @@ Known limits:
 
 ## Solvay SPARK Knowledge Graph & Query Engine
 
-Docling Studio includes an interactive enterprise Knowledge Graph (354 nodes, 560 edges) constructed from Solvay SPARK project specifications, business streams, core systems, and BPML process taxonomies.
+Docling Studio includes an interactive enterprise Knowledge Graph (2,390 entities and 4,789 relationships, plus a passage layer of 8,867 chunks) constructed from Solvay SPARK project specifications, business streams, core systems, and BPML process taxonomies.
 
 Users can explore the ontology visually via an interactive D3 force-directed canvas and ask natural language questions (e.g. *"What specs are linked to Salesforce?"*, *"How does eCommerce connect to S/4HANA?"*, *"What is BPML process O-020-090?"*).
 
+**Cypher.** The graph is also loaded into a local Neo4j (`compose.neo4j.yml`, started by `./run.sh`) and can be queried with Cypher — in the **Cypher** view on the Knowledge Graph page, in Neo4j Browser at <http://localhost:7474>, or through `POST /api/graph/cypher` (read-only, enforced by Neo4j). `knowledge_graph.json` stays the source of truth; the Neo4j copy is replaced whenever the graph is rebuilt. See [docs/neo4j.md](docs/neo4j.md).
+
 ### How Our Graph Algorithm Works Compared to Neo4j
 
-When you ask a question in the Knowledge Graph tab, **no SQL query is written or executed**. 
+When you ask a natural-language question in the Knowledge Graph tab, **no SQL or Cypher query is written or executed** (Cypher is available separately, in the Cypher view). 
 
 Instead, the system relies on deterministic in-memory graph traversal algorithms. Here is how our architecture compares to **Neo4j** and traditional **Relational SQL**:
 

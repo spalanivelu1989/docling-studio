@@ -77,6 +77,12 @@ async def lifespan(_app: FastAPI):
     instead of a run that produces no trace and says nothing about why; a
     checkout with no Langfuse keys logs that tracing is off and carries on."""
     print(tracing.start())
+    # The graph's Neo4j copy, for Cypher: refreshed in the background when it
+    # holds an older build, and left alone (with a log line) when Neo4j is not
+    # running -- the rest of the app does not need it.
+    import kg_neo4j_load
+
+    kg_neo4j_load.sync_in_background()
     yield
     tracing.shutdown()
     try:
@@ -406,9 +412,100 @@ def _entity_layer(graph: dict) -> dict:
 
 @app.post("/api/graph/rebuild")
 def rebuild_graph(categories: list[str] | None = Query(default=None)) -> dict:
-    return _entity_layer(knowledge_graph.filter_by_categories(
-        knowledge_graph.extract_graph(force=True), categories
-    ))
+    graph = knowledge_graph.extract_graph(force=True)
+    # Neo4j holds a copy for Cypher; refresh it without making the rebuild
+    # wait for it, or fail because it is not running.
+    import kg_neo4j_load
+
+    kg_neo4j_load.sync_in_background()
+    return _entity_layer(knowledge_graph.filter_by_categories(graph, categories))
+
+
+# --- Cypher, through the graph's Neo4j copy (kg_neo4j_load.py) -----------------
+
+
+class CypherRequest(BaseModel):
+    query: str = Field(min_length=1, max_length=20000)
+    params: dict = Field(default_factory=dict)
+    limit: int = 200
+
+
+class CypherQuestion(BaseModel):
+    question: str = Field(min_length=3, max_length=2000)
+
+
+@app.post("/api/graph/cypher/generate")
+def graph_cypher_generate(req: CypherQuestion) -> dict:
+    """Write a Cypher query from a plain-English question with Claude, checked
+    against Neo4j (EXPLAIN, read-only) before it is returned. It is not run
+    here: the page shows it and runs it through /api/graph/cypher."""
+    import anthropic
+
+    import kg_neo4j_load
+    import kg_nl2cypher
+
+    ok, why = kg_neo4j_load.configured()
+    if not ok:
+        raise HTTPException(503, why)
+    try:
+        return kg_nl2cypher.generate(req.question)
+    except anthropic.AuthenticationError:
+        raise HTTPException(503, "The Claude API key is missing or invalid (ANTHROPIC_API_KEY in .env).")
+    except RuntimeError as exc:
+        raise HTTPException(502, str(exc))
+    except anthropic.APIStatusError as exc:
+        raise HTTPException(502, f"Claude API error ({exc.status_code}): {exc.message}")
+
+
+@app.get("/api/graph/neo4j/status")
+def neo4j_status() -> dict:
+    """Whether Neo4j is up, and whether it holds the current build of the graph,
+    with the Cypher examples and the plain-English questions the view offers."""
+    import kg_neo4j_load
+    import kg_nl2cypher
+
+    return {**kg_neo4j_load.status(), "questions": kg_nl2cypher.QUESTIONS}
+
+
+@app.post("/api/graph/neo4j/sync")
+def neo4j_sync(force: bool = False) -> dict:
+    """Load the graph into Neo4j now (it replaces what is there)."""
+    import kg_neo4j_load
+
+    ok, why = kg_neo4j_load.configured()
+    if not ok:
+        raise HTTPException(503, why)
+    try:
+        return kg_neo4j_load.load(force=force)
+    except Exception as exc:
+        raise HTTPException(503, f"Could not load the graph into Neo4j: {type(exc).__name__}: {exc}")
+
+
+@app.post("/api/graph/cypher")
+def graph_cypher(req: CypherRequest) -> dict:
+    """Run a read-only Cypher query against the graph.
+
+    Read-only is enforced by Neo4j (the query runs in a READ transaction, where
+    a write is refused), rows are capped and the query is cancelled after a
+    timeout -- see kg_neo4j_load.query."""
+    import kg_neo4j_load
+
+    ok, why = kg_neo4j_load.configured()
+    if not ok:
+        raise HTTPException(503, why)
+    try:
+        from neo4j.exceptions import Neo4jError, ServiceUnavailable
+    except ImportError:
+        raise HTTPException(503, "the neo4j Python driver is not installed")
+    try:
+        return kg_neo4j_load.query(req.query, req.params, req.limit)
+    except ServiceUnavailable:
+        raise HTTPException(503, "Neo4j is not running. Start it with: "
+                                 "docker compose -f compose.neo4j.yml up -d")
+    except Neo4jError as exc:
+        # The database's own message: a syntax error, a refused write, a
+        # timeout. It is what a Cypher author needs to fix the query.
+        raise HTTPException(400, {"code": exc.code, "message": exc.message})
 
 
 @app.get("/api/graph/model")

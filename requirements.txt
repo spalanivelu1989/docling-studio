@@ -56,3 +56,5 @@ weasyprint
 # rollout/workshop_export.py: the workshop outcome as Word. Pulled in by docling
 # too, listed because it is imported directly. Excel uses openpyxl, above.
 python-docx
+# Cypher over the knowledge graph's Neo4j copy (kg_neo4j_load.py, compose.neo4j.yml)
+neo4j>=5.20

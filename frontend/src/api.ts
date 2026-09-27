@@ -319,7 +319,67 @@ export const api = {
    *  instances follow them. */
   graphModel: (categories: string[] = []) =>
     fetch(`/api/graph/model${categoryQuery(categories)}`).then((r) => json<GraphModel>(r)),
+  /** The graph's Neo4j copy: whether it is up, and whether it holds this build. */
+  neo4jStatus: () => fetch("/api/graph/neo4j/status").then((r) => json<Neo4jStatus>(r)),
+  neo4jSync: (force = false) =>
+    fetch(`/api/graph/neo4j/sync${force ? "?force=true" : ""}`, { method: "POST" })
+      .then((r) => json<Record<string, unknown>>(r)),
+  /** Plain English to Cypher with Claude; checked by Neo4j, not run. */
+  generateCypher: (question: string) =>
+    fetch("/api/graph/cypher/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question }),
+    }).then((r) => json<GeneratedCypher>(r)),
+  /** A read-only Cypher query; writes are refused by Neo4j itself. */
+  cypher: (query: string, limit = 200, params: Record<string, unknown> = {}) =>
+    fetch("/api/graph/cypher", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query, limit, params }),
+    }).then((r) => json<CypherResult>(r)),
 };
+
+export interface Neo4jStatus {
+  configured: boolean;
+  reachable: boolean;
+  uri: string;
+  browser: string;
+  detail: string;
+  current?: boolean;
+  loaded?: { nodes: number; relationships: number; loaded_at: string; sources: string } | null;
+  examples: { title: string; query: string }[];
+  /** Plain-English questions for the generator, grouped. */
+  questions?: { group: string; questions: string[] }[];
+  max_rows: number;
+  timeout: number;
+}
+
+export interface GeneratedCypher {
+  question: string;
+  answerable: boolean;
+  cypher: string;
+  explanation: string;
+  assumptions: string[];
+  /** Planned by Neo4j without error, and read-only. */
+  valid: boolean;
+  error: string;
+  attempts: number;
+  /** The database's objections the model corrected along the way. */
+  corrections: string[];
+  model: string;
+  seconds: number;
+  trace_url: string;
+}
+
+export interface CypherResult {
+  columns: string[];
+  rows: unknown[][];
+  truncated: boolean;
+  limit: number;
+  ms: number;
+  notifications: string[];
+}
 
 /** The graph's own schema, as a Neo4j Data Importer model. */
 export interface ModelConstraint {
