@@ -11,10 +11,12 @@
         "Document"
       ],
       "properties": {
-        "count": "83",
+        "count": "218",
         "filename": "string",
         "source": "string",
+        "category": "string",
         "format": "string",
+        "bytes": "integer",
         "chars": "integer"
       },
       "style": {
@@ -57,7 +59,8 @@
       "properties": {
         "count": "18",
         "code": "string",
-        "description": "string"
+        "description": "string",
+        "kind": "string"
       },
       "style": {
         "node-color": "#E0F2FE",
@@ -76,7 +79,7 @@
         "Spec"
       ],
       "properties": {
-        "count": "47",
+        "count": "165",
         "ticket": "string",
         "is_primary": "boolean"
       },
@@ -97,7 +100,7 @@
         "Process"
       ],
       "properties": {
-        "count": "202",
+        "count": "1985",
         "code": "string",
         "description": "string",
         "in_bpml": "boolean",
@@ -108,36 +111,60 @@
         "border-color": "#10B981",
         "radius": 100
       }
+    },
+    {
+      "id": "n5",
+      "position": {
+        "x": -520,
+        "y": 420
+      },
+      "caption": "",
+      "labels": [
+        "Chunk"
+      ],
+      "properties": {
+        "count": "8867",
+        "chunk_key": "string",
+        "chunk_index": "integer",
+        "heading_path": "string",
+        "category": "string",
+        "tokens": "integer"
+      },
+      "style": {
+        "node-color": "#F8FAFC",
+        "border-color": "#94A3B8",
+        "radius": 100
+      }
     }
   ],
   "relationships": [
     {
       "id": "r0",
-      "type": "SUBPROCESS_OF",
-      "fromId": "n4",
-      "toId": "n4",
+      "type": "HAS_CHUNK",
+      "fromId": "n0",
+      "toId": "n5",
       "properties": {
-        "count": "185"
+        "count": "8867"
       },
       "style": {}
     },
     {
       "id": "r1",
-      "type": "INTERACTS_WITH",
-      "fromId": "n0",
+      "type": "MENTIONS",
+      "fromId": "n5",
       "toId": "n2",
       "properties": {
-        "count": "70"
+        "count": "3998"
       },
       "style": {}
     },
     {
       "id": "r2",
-      "type": "BELONGS_TO",
-      "fromId": "n0",
-      "toId": "n1",
+      "type": "MENTIONS",
+      "fromId": "n5",
+      "toId": "n4",
       "properties": {
-        "count": "70"
+        "count": "2695"
       },
       "style": {}
     },
@@ -147,77 +174,77 @@
       "fromId": "n0",
       "toId": "n4",
       "properties": {
-        "count": "70"
+        "count": "1947"
       },
       "style": {}
     },
     {
       "id": "r4",
-      "type": "REFERENCES_TICKET",
-      "fromId": "n0",
-      "toId": "n3",
+      "type": "SUBPROCESS_OF",
+      "fromId": "n4",
+      "toId": "n4",
       "properties": {
-        "count": "41"
+        "count": "1846"
       },
       "style": {}
     },
     {
       "id": "r5",
-      "type": "RUNS_ON",
+      "type": "MENTIONS_SYSTEM",
       "fromId": "n0",
       "toId": "n2",
       "properties": {
-        "count": "40"
+        "count": "556"
       },
       "style": {}
     },
     {
       "id": "r6",
-      "type": "USES_UI",
-      "fromId": "n0",
-      "toId": "n2",
+      "type": "MENTIONS",
+      "fromId": "n5",
+      "toId": "n1",
       "properties": {
-        "count": "28"
+        "count": "316"
       },
       "style": {}
     },
     {
       "id": "r7",
-      "type": "INTERFACES_WITH",
+      "type": "BELONGS_TO",
       "fromId": "n0",
-      "toId": "n2",
+      "toId": "n1",
       "properties": {
-        "count": "21"
+        "count": "237"
       },
       "style": {}
     },
     {
       "id": "r8",
-      "type": "IMPLEMENTS_TICKET",
-      "fromId": "n0",
+      "type": "MENTIONS",
+      "fromId": "n5",
       "toId": "n3",
       "properties": {
-        "count": "13"
+        "count": "228"
       },
       "style": {}
     },
     {
       "id": "r9",
-      "type": "INTEGRATES_WITH",
+      "type": "REFERENCES_TICKET",
       "fromId": "n0",
-      "toId": "n2",
+      "toId": "n3",
       "properties": {
-        "count": "12"
+        "count": "190"
       },
       "style": {}
     },
     {
       "id": "r10",
-      "type": "CONNECTS_TO",
+      "type": "IMPLEMENTS_TICKET",
       "fromId": "n0",
-      "toId": "n2",
+      "toId": "n3",
       "properties": {
-        "count": "10"
+        "count": "13"
       },
       "style": {}
     }

@@ -1752,9 +1752,10 @@
                 </table>
               </div>
               <p>Relationships come from co-occurrence within a document and from structure:
-                <code>specifies_process</code> (1,947), <code>subprocess_of</code> (1,846), <code>belongs_to</code>,
-                <code>interacts_with</code>, <code>references_ticket</code>, <code>runs_on</code>, <code>uses_ui</code>,
-                <code>interfaces_with</code>, and three more, 11 types in all. Queries use in-memory breadth-first
+                <code>specifies_process</code> (1,947), <code>subprocess_of</code> (1,846), <code>mentions_system</code> (556),
+                <code>belongs_to</code>, <code>references_ticket</code> and <code>implements_ticket</code> — six types, each
+                carrying the rule that made it and the chunks it came from. A passage layer links 8,867 chunks to the
+                entities they name. Queries use in-memory breadth-first
                 search for paths and a 2-hop "bridge" expansion to get from a platform, through an interface spec, to its tickets.</p>
             </div>
             <div class="why">

@@ -4,7 +4,7 @@
  *  inspector carries the score's arithmetic as a table, the graph facts and
  *  every quote, so nothing the old claim cards showed is lost. */
 import {
-  Box, Button, ButtonBase, InputAdornment, Stack, TextField, ToggleButton, ToggleButtonGroup,
+  Box, Button, ButtonBase, InputAdornment, Link, Stack, TextField, ToggleButton, ToggleButtonGroup,
   Typography, useTheme,
 } from "@mui/material";
 import { alpha } from "@mui/material/styles";
@@ -70,12 +70,14 @@ const csvCell = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
 
 type Filter = "all" | "Strong" | "Moderate" | "Weak" | "opposed" | "graph";
 
-export default function ClaimsView({ claims, focus, renderSource, fileStem }: {
+export default function ClaimsView({ claims, focus, renderSource, fileStem, onTrace }: {
   claims: EvidenceClaim[];
   /** A claim to open, when the reader arrives from the Answer tab. */
   focus?: { index: number; at: number } | null;
   renderSource: (s: EvidenceSource, key: number) => ReactNode;
   fileStem: string;
+  /** Open this claim's lineage on the Investigation tab. */
+  onTrace?: (index: number) => void;
 }) {
   const theme = useTheme();
   const p = usePremium();
@@ -244,6 +246,12 @@ export default function ClaimsView({ claims, focus, renderSource, fileStem }: {
                   ))}
                 </Box>
                 {claim.note && <Typography sx={{ fontSize: 12.5, color: "warning.main" }}>{claim.note}</Typography>}
+                {onTrace && (
+                  <Link component="button" onClick={() => onTrace(sel)}
+                        sx={{ fontSize: 12.5, color: p.accent, alignSelf: "flex-start", textDecorationColor: "inherit" }}>
+                    Trace how this was found — the calls, queries, graph lookups and reasoning behind it →
+                  </Link>
+                )}
               </Stack>
 
               <Block title="HOW THE SCORE WAS REACHED">

@@ -52,6 +52,9 @@ interface Props {
   citedEdges: string[];
   /** Open the document behind a retrieved chunk in the full inspector. */
   onOpenChunk?: (hit: EvidenceRagHit, walk: string[]) => void;
+  /** Chunks the reader came here to check -- a quote traced from a finding.
+   *  Outlined and scrolled to; `cited` keeps its meaning for the rest. */
+  focus?: string[];
 }
 
 const ENGINE_FACE: Record<string, { name: string; colour: string; icon: typeof Search }> = {
@@ -76,6 +79,7 @@ export default function AgentTraceDrawer({
   citedNodes,
   citedEdges,
   onOpenChunk,
+  focus = [],
 }: Props) {
   const theme = useTheme();
   const face = ENGINE_FACE[call?.engine ?? ""] ?? {
@@ -131,7 +135,7 @@ export default function AgentTraceDrawer({
         {call && <Preamble call={call} />}
         {!trace && <Empty call={call} />}
         {trace?.kind === "rag" && (
-          <RagTrace trace={trace} cited={cited} onOpenChunk={onOpenChunk} />
+          <RagTrace trace={trace} cited={cited} onOpenChunk={onOpenChunk} focus={focus} />
         )}
         {trace?.kind === "graph" && (
           <GraphTrace trace={trace} citedNodes={citedNodes} citedEdges={citedEdges} theme={theme} />
@@ -209,10 +213,12 @@ function RagTrace({
   trace,
   cited,
   onOpenChunk,
+  focus = [],
 }: {
   trace: EvidenceRagTrace;
   cited: string[];
   onOpenChunk?: (hit: EvidenceRagHit, walk: string[]) => void;
+  focus?: string[];
 }) {
   const theme = useTheme();
   const walk = useMemo(() => trace.hits.map((h) => h.chunk_id), [trace.hits]);
@@ -254,10 +260,14 @@ function RagTrace({
       <Stack spacing={1.25} sx={{ mt: 1.5 }}>
         {trace.hits.map((h) => {
           const isCited = citedSet.has(h.chunk_id);
+          const isFocus = focus.includes(h.chunk_id);
           return (
             <Box
               key={h.chunk_id + h.rank}
+              ref={isFocus ? (el: HTMLDivElement | null) => el?.scrollIntoView({ block: "center" }) : undefined}
               sx={{
+                outline: isFocus ? `2px solid ${theme.palette.primary.main}` : "none",
+                outlineOffset: 2,
                 border: 1,
                 borderColor: isCited ? alpha(theme.palette.success.main, 0.5) : "divider",
                 borderRadius: 1,
@@ -853,6 +863,13 @@ function StepList({ trace, citedEdges }: { trace: EvidenceGraphTrace; citedEdges
                              color: citedEdges.has(e.id) ? "success.main" : "inherit" }}>
                     {labelOf(e.target)}
                   </Box>
+                  {e.chunks?.length ? (
+                    <Tooltip title={`Extracted from ${e.chunks.join(", ")}${e.mentions ? ` · named ${e.mentions} time(s) in the document` : ""}`}>
+                      <Box component="span" sx={{ fontFamily: "ui-monospace, monospace", fontSize: 10, color: "text.disabled" }}>
+                        {e.chunks[0]}{e.chunks.length > 1 ? ` +${e.chunks.length - 1}` : ""}
+                      </Box>
+                    </Tooltip>
+                  ) : null}
                 </Stack>
               ))}
               {list.length > 8 && (

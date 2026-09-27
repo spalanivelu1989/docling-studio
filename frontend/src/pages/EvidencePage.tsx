@@ -15,7 +15,7 @@ import {
   type EvidenceRunDetail, type EvidenceRunSummary, type EvidenceStatus,
   type EvidenceToolCall, type ScoreTerm,
   type EvidenceRagHit,
-  type Source, type Stance,
+  type Source, type Stance, type Lineage,
 } from "../api";
 import { EVIDENCE_SAMPLES, type SampleQuestion } from "../data/evidenceSamples";
 import { surface } from "../theme";
@@ -27,6 +27,7 @@ import MemoryReflectDrawer from "../components/MemoryReflectDrawer";
 import ScrollRunway from "../components/ScrollRunway";
 import RunHistoryDrawer, { type HistoryCard } from "../components/RunHistoryDrawer";
 import ClaimsView, { ScoreBar, strength } from "../components/evidence/ClaimsView";
+import InvestigationView from "../components/InvestigationView";
 import ObjectHeader, { BandButton } from "../components/rollout/ObjectHeader";
 import { MONO, RADIUS, usePremium } from "../components/rollout/premium";
 import { Section } from "../components/rollout/SummaryView";
@@ -652,6 +653,18 @@ export default function EvidencePage({ active, showTechDetails = true }: {
     return seen;
   }, [answer]);
 
+  // Lineage is computed from the stored run, so it is asked for only once the
+  // investigation has finished and been recorded.
+  useEffect(() => { setLineage(null); setLineageError(""); }, [runId]);
+  useEffect(() => {
+    if (tab !== "investigation" || !runId || running || !answer) return;
+    let live = true;
+    evidence.lineage(runId)
+      .then((l) => { if (live) { setLineage(l); setLineageError(""); } })
+      .catch((e) => { if (live) setLineageError(`Could not trace this investigation: ${(e as Error).message}`); });
+    return () => { live = false; };
+  }, [tab, runId, running, answer]);
+
   /** `walk` is the list the inspector pages through with prev/next. It
    *  defaults to the answer's citations, which is what a reader opening a
    *  claim wants; a passage opened from a retrieval trace passes that call's
@@ -695,6 +708,13 @@ export default function EvidencePage({ active, showTechDetails = true }: {
   // it brought back, which is the question a reader has the moment they doubt
   // the answer.
   const [traceCall, setTraceCall] = useState<EvidenceToolCall | null>(null);
+  // The chunks to pick out in the call drawer when it is opened from a quote.
+  const [traceHighlight, setTraceHighlight] = useState<string[]>([]);
+  // The run's lineage (evidence/lineage.py), fetched when the Investigation
+  // tab is opened on a finished run, and the claim to open there.
+  const [lineage, setLineage] = useState<Lineage | null>(null);
+  const [lineageError, setLineageError] = useState("");
+  const [traceFocus, setTraceFocus] = useState<string | null>(null);
 
   // What the finished answer actually rests on, so a trace can mark the part of
   // its haul that carried a claim. Retrieval is keyed by chunk, the graph by
@@ -895,11 +915,19 @@ export default function EvidencePage({ active, showTechDetails = true }: {
   const TABS = [
     { key: "answer", label: "Answer", show: !!answer },
     { key: "claims", label: `Claims (${claims.length})`, show: !!answer },
-    { key: "investigation", label: `Investigation${calls.length ? ` (${calls.length})` : ""}`, show: calls.length > 0 || running },
+    { key: "investigation", label: `Traceability${calls.length ? ` (${calls.length})` : ""}`, show: calls.length > 0 || running || !!(runId && answer) },
     { key: "memory", label: `Memory${memory?.recalled ? ` (${memory.recalled})` : ""}`, show: showMemory },
   ].filter((t) => t.show);
   const current = TABS.some((t) => t.key === tab) ? tab : TABS[0]?.key ?? "";
   const openClaim = (index: number) => { setTab("claims"); setFocusClaim({ index, at: Date.now() }); };
+  const traceClaim = (index: number) => { setTraceFocus(`C${index + 1}`); setTab("investigation"); };
+  const openCall = (i: number, chunks?: string[]) => {
+    const c = calls[i];
+    if (!c) return;
+    setTraceHighlight(chunks ?? []);
+    setTraceCall(c);
+  };
+  const traceable = !!(runId && answer && !running);
   const shownQuestion = answer?.question || (running ? question : "");
 
   return (
@@ -1065,10 +1093,16 @@ export default function EvidencePage({ active, showTechDetails = true }: {
 
         {current === "claims" && answer && (
           <ClaimsView claims={claims} focus={focusClaim} fileStem={runId ?? "evidence"}
+                      onTrace={traceable ? traceClaim : undefined}
                       renderSource={(s, i) => <SourceRow key={i} s={s} onInspect={inspect} busy={inspectBusy === s.chunk_id} />} />
         )}
 
-        {current === "investigation" && (
+        {current === "investigation" && traceable && (
+          <InvestigationView exportUrl={(f) => evidence.lineageExportUrl(runId!, f)} lineage={lineage}
+                             error={lineageError} focus={traceFocus} onOpenCall={openCall}
+                             onOpenLogs={() => setLogOpen(true)} logCount={log.length} />
+        )}
+        {current === "investigation" && !traceable && (
           <>
         {/* the investigation, live */}
         {calls.length > 0 && (
@@ -1326,14 +1360,15 @@ export default function EvidencePage({ active, showTechDetails = true }: {
         onClose={() => setLogOpen(false)}
         log={log}
         running={running}
-        onOpenCall={(i) => { const c = calls[i]; if (c) setTraceCall(c); }}
+        onOpenCall={(i) => openCall(i)}
       />
 
       <AgentTraceDrawer
         open={Boolean(traceCall)}
-        onClose={() => setTraceCall(null)}
+        onClose={() => { setTraceCall(null); setTraceHighlight([]); }}
         call={traceCall}
         cited={citedChunks}
+        focus={traceHighlight}
         citedNodes={citedGraph.nodes}
         citedEdges={citedGraph.edges}
         onOpenChunk={openTraceChunk}

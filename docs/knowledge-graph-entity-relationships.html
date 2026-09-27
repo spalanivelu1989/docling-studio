@@ -1555,17 +1555,14 @@
                   </tr>
                 </thead>
                 <tbody>
-                  <tr><td><code>belongs_to</code></td><td>document</td><td>stream</td><td>Belongs to Stream</td><td>70</td><td><code>\bL2C\b</code> / <code>\bI2D\b</code> / <code>\bR2R\b</code> / <code>\bP2P\b</code> matches</td></tr>
-                  <tr><td><code>runs_on</code></td><td>document</td><td>system</td><td>Executes on S/4</td><td>40</td><td><code>\bS[/ ]?4[\s/-]?HANA\b|\bS/4\b|\bS4\b</code> matches</td></tr>
-                  <tr><td><code>uses_ui</code></td><td>document</td><td>system</td><td>Fiori Custom App</td><td>28</td><td><code>\bfiori\b</code> matches</td></tr>
-                  <tr><td><code>interacts_with</code></td><td>document</td><td>system</td><td>Interacts with ECC</td><td>70</td><td>any of <code>ECC</code>, <code>WP1</code>, <code>PF1</code>, <code>M3</code>, <code>EWM</code>, <code>GTS</code>, <code>MDG</code>, <code>SAP TM</code> matches</td></tr>
-                  <tr><td><code>connects_to</code></td><td>document</td><td>system</td><td>eCommerce Portal</td><td>10</td><td><code>\be[-\s]?commerce\b</code> matches</td></tr>
-                  <tr><td><code>integrates_with</code></td><td>document</td><td>system</td><td>Integrates with CRM</td><td>12</td><td><code>\bsalesforce\b</code> or <code>\bCPI\b</code> matches</td></tr>
-                  <tr><td><code>interfaces_with</code></td><td>document</td><td>system</td><td>Tax Engine Interface</td><td>21</td><td>any of <code>SOVOS</code>, <code>Esker</code>, <code>Elemica</code>, <code>Coface</code>, <code>OMP</code> matches</td></tr>
-                  <tr><td><code>specifies_process</code></td><td>document</td><td>process</td><td>Specifies Process</td><td>70</td><td><code>(?&lt;![A-Za-z0-9-])([A-Za-z][A-Za-z0-9]{0,3})-(\d{2,3}(?:-\d{2,3})+)\b</code> in the <strong>body only</strong></td></tr>
-                  <tr><td><code>subprocess_of</code></td><td>process</td><td>process</td><td>Subprocess of</td><td>185</td><td><strong>Not matched — looked up.</strong> See below.</td></tr>
+                  <tr><td><code>belongs_to</code></td><td>document</td><td>stream</td><td>Belongs to Stream</td><td>237</td><td><code>\bL2C\b</code> / <code>\bI2D\b</code> / <code>\bR2R\b</code> / <code>\bP2P\b</code> matches</td></tr>
+                  <tr><td><code>mentions_system</code></td><td>document</td><td>system</td><td>Mentions system</td><td>556</td><td>the system's word-bounded pattern (<code>SYSTEM_RE</code>) matches</td></tr>
+                  <tr><td><code>specifies_process</code></td><td>document</td><td>process</td><td>Specifies Process</td><td>1,947</td><td><code>(?&lt;![A-Za-z0-9-])([A-Za-z][A-Za-z0-9]{0,3})-(\d{2,3}(?:-\d{2,3})+)\b</code> in the <strong>body only</strong></td></tr>
+                  <tr><td><code>subprocess_of</code></td><td>process</td><td>process</td><td>Subprocess of</td><td>1,846</td><td><strong>Not matched — looked up.</strong> See below.</td></tr>
                   <tr><td><code>implements_ticket</code></td><td>document</td><td>spec</td><td>Primary Specification</td><td>13</td><td><code>\bSPARK[-_ ]?(\d{4,6})\b</code> matches <strong>and</strong> the bare number appears in the filename</td></tr>
-                  <tr><td><code>references_ticket</code></td><td>document</td><td>spec</td><td>References Ticket</td><td>41</td><td>Same match, but the number is <strong>not</strong> in the filename</td></tr>
+                  <tr><td><code>references_ticket</code></td><td>document</td><td>spec</td><td>References Ticket</td><td>190</td><td>Same match, but the number is <strong>not</strong> in the filename</td></tr>
+                  <tr><td><code>has_chunk</code></td><td>document</td><td>chunk</td><td>Has chunk</td><td>8,867</td><td>every chunk the retrieval index holds for the document</td></tr>
+                  <tr><td><code>mentions</code></td><td>chunk</td><td>stream, system, process, spec</td><td>Mentions</td><td>7,237</td><td>the same patterns, run per chunk, kept only where the document is linked to the entity</td></tr>
                 </tbody>
               </table>
             </div>
@@ -1590,20 +1587,35 @@
             </div>
 
             <div class="why">
-              <span class="label">Why six relations all point at systems</span>
+              <span class="label">One relationship type per meaning</span>
               <p>
-                They are one-per-platform: the relation name tells you which system it
-                points at, so <code>interacts_with</code> only ever means ECC. The UI
-                labels are hard-coded per system too, which is why
-                <code>runs_on</code> always reads "Executes on S/4" regardless of the
-                document.
+                Document → system links used to come in six types — <code>runs_on</code>,
+                <code>interacts_with</code>, <code>integrates_with</code>,
+                <code>interfaces_with</code>, <code>uses_ui</code>, <code>connects_to</code> —
+                picked by <em>which system</em> was named, never by what the document said:
+                every S/4HANA link was <code>runs_on</code>. All the extractor knows is that
+                a document names a system, so there is now one type,
+                <code>mentions_system</code>, and the kind of system is a property of the
+                node: <code>kind</code> is <code>sap</code>, <code>legacy_erp</code>,
+                <code>crm</code>, <code>middleware</code>, <code>sap_ui</code>,
+                <code>portal</code> or <code>third_party</code>.
+              </p>
+              <p>
+                Every relationship out of a document also carries its evidence:
+                <code>method</code> (the rule that made it), <code>mentions</code> (how often
+                the document names the target), <code>chunk_count</code> and up to five
+                <code>chunks</code> — retrieval chunk keys such as <code>PKG:10003882</code>
+                that open the exact passage. The passage layer,
+                <code>(:Document)-[:HAS_CHUNK]-&gt;(:Chunk)-[:MENTIONS]-&gt;(entity)</code>,
+                holds the rest. Presentation — <code>degree</code>, <code>size</code>,
+                <code>color</code> — is computed on load, not stored.
               </p>
             </div>
 
             <h3>Read versus derived</h3>
             <p>
-              Nine relations are <strong>read</strong> — a pattern matched text, so you
-              can open the source document and see it. <code>subprocess_of</code> is
+              Every relationship out of a document is <strong>read</strong> — a pattern
+              matched text, and its <code>chunks</code> property says where. <code>subprocess_of</code> is
               <strong>derived</strong>: it appears in no document.
             </p>
 
@@ -1744,19 +1756,18 @@
 <pre>                              ( :Stream )
                                count: 4
                                    ▲
-                                   │  :BELONGS_TO · 70
+                                   │  :BELONGS_TO · 237
                                    │
    ( :Spec )   ◀───────────── ( :Document ) ─────────────▶   ( :System )
-   count: 47                   count: 83                      count: 18
-                                   │
-     :IMPLEMENTS_TICKET · 13       │           :INTERACTS_WITH · 70
-     :REFERENCES_TICKET · 41       │           :RUNS_ON · 40
-                                   │           :USES_UI · 28
-              :SPECIFIES_PROCESS · 70          :INTERFACES_WITH · 21
-                                   │           :INTEGRATES_WITH · 12
-                                   ▼           :CONNECTS_TO · 10
-                             ( :Process )   ⟲ :SUBPROCESS_OF · 185
-                              count: 202</pre>
+   count: 165                  count: 218                     count: 18
+                                   │                          :MENTIONS_SYSTEM · 556
+     :IMPLEMENTS_TICKET · 13       │
+     :REFERENCES_TICKET · 190      ├─── :HAS_CHUNK · 8,867 ──▶ ( :Chunk )  count: 8,867
+                                   │                              │ :MENTIONS · 7,237
+              :SPECIFIES_PROCESS · 1,947                          ▼ to :System, :Process,
+                                   ▼                                 :Stream, :Spec
+                             ( :Process )   ⟲ :SUBPROCESS_OF · 1,846
+                              count: 1,985</pre>
 
             <p>
               The same thing rendered, with each label's property model beside it:
@@ -1765,7 +1776,7 @@
             <figure class="shot">
               <img
                 src="kg-neo4j-schema.png"
-                alt="Five ellipses in Neo4j style — :Document in the centre with :Stream above, :System to the right, :Spec to the left and :Process below — joined by arrows carrying screaming-snake relationship types and counts, with a self-loop on :Process and a property box beside each label."
+                alt="Six ellipses in Neo4j style — :Document with :Stream, :System, :Spec and :Process around it and :Chunk below it, joined by arrows carrying screaming-snake relationship types and counts; dashed :MENTIONS arrows run from :Chunk to the entities, :Process has a self-loop, and a property box sits beside each label."
               />
               <figcaption>
                 The meta-graph. Circle colours match the node types on the Knowledge
@@ -1777,9 +1788,10 @@
             <div class="why">
               <span class="label">What the shape tells you</span>
               <p>
-                It is a star, not a web. <code>:Stream</code>, <code>:System</code>,
-                <code>:Process</code> and <code>:Spec</code> never touch each other —
-                they are joined only by the <code>:Document</code> that mentions them.
+                The entity layer is a star, not a web. <code>:Stream</code>,
+                <code>:System</code>, <code>:Process</code> and <code>:Spec</code> never touch
+                each other — they are joined only by the <code>:Document</code> (and, one
+                level down, the <code>:Chunk</code>) that mentions them.
                 The one exception is <code>:SUBPROCESS_OF</code>, the self-loop on
                 <code>:Process</code>, which chains a BPML step up to its parent.
               </p>
@@ -1794,23 +1806,23 @@
               </p>
             </div>
 
-            <h3>The eleven patterns</h3>
+            <h3>The patterns</h3>
             <p>
               Every relationship type in the graph, as a Cypher pattern. This is the
               whole schema:
             </p>
 
-<pre>(:Process)-[:SUBPROCESS_OF]->(:Process)         185
-(:Document)-[:INTERACTS_WITH]->(:System)         70
-(:Document)-[:BELONGS_TO]->(:Stream)             70
-(:Document)-[:SPECIFIES_PROCESS]->(:Process)     70
-(:Document)-[:REFERENCES_TICKET]->(:Spec)        41
-(:Document)-[:RUNS_ON]->(:System)                40
-(:Document)-[:USES_UI]->(:System)                28
-(:Document)-[:INTERFACES_WITH]->(:System)        21
-(:Document)-[:IMPLEMENTS_TICKET]->(:Spec)        13
-(:Document)-[:INTEGRATES_WITH]->(:System)        12
-(:Document)-[:CONNECTS_TO]->(:System)            10</pre>
+<pre>(:Document)-[:HAS_CHUNK]->(:Chunk)               8867
+(:Chunk)-[:MENTIONS]->(:System)                  3998
+(:Chunk)-[:MENTIONS]->(:Process)                 2695
+(:Document)-[:SPECIFIES_PROCESS]->(:Process)     1947
+(:Process)-[:SUBPROCESS_OF]->(:Process)          1846
+(:Document)-[:MENTIONS_SYSTEM]->(:System)         556
+(:Chunk)-[:MENTIONS]->(:Stream)                   316
+(:Document)-[:BELONGS_TO]->(:Stream)              237
+(:Chunk)-[:MENTIONS]->(:Spec)                     228
+(:Document)-[:REFERENCES_TICKET]->(:Spec)         190
+(:Document)-[:IMPLEMENTS_TICKET]->(:Spec)          13</pre>
 
             <h3>One document, as Browser draws a result set</h3>
             <p>
@@ -1820,8 +1832,8 @@
             </p>
             <p>
               This one document is worth the space because it carries
-              <strong>seven of the eleven relationship types in only seven
-              relationships</strong>, which no other document in the corpus manages. It
+              <strong>most of the entity layer's relationship types in only a handful of
+              relationships</strong>. It
               is the whole vocabulary in one screen, and every id on it is real.
             </p>
 
@@ -1978,23 +1990,24 @@ plantuml -tpng docs/kg-neo4j-*.puml</pre>
               <summary>The same schema as Mermaid, for inline rendering</summary>
               <div class="disclose-body">
                 <pre>flowchart TD
-    DOC["(:Document)&lt;br/&gt;83"]
+    DOC["(:Document)&lt;br/&gt;218"]
     STR(["(:Stream)&lt;br/&gt;4"])
     SYS(["(:System)&lt;br/&gt;18"])
-    PROC["(:Process)&lt;br/&gt;202"]
-    SPEC["(:Spec)&lt;br/&gt;47"]
+    PROC["(:Process)&lt;br/&gt;1,985"]
+    SPEC["(:Spec)&lt;br/&gt;165"]
+    CH["(:Chunk)&lt;br/&gt;8,867"]
 
-    DOC --&gt;|":BELONGS_TO · 70"| STR
-    DOC --&gt;|":RUNS_ON · 40"| SYS
-    DOC --&gt;|":USES_UI · 28"| SYS
-    DOC --&gt;|":INTERACTS_WITH · 70"| SYS
-    DOC --&gt;|":CONNECTS_TO · 10"| SYS
-    DOC --&gt;|":INTEGRATES_WITH · 12"| SYS
-    DOC --&gt;|":INTERFACES_WITH · 21"| SYS
-    DOC --&gt;|":SPECIFIES_PROCESS · 70"| PROC
+    DOC --&gt;|":BELONGS_TO · 237"| STR
+    DOC --&gt;|":MENTIONS_SYSTEM · 556"| SYS
+    DOC --&gt;|":SPECIFIES_PROCESS · 1947"| PROC
     DOC --&gt;|":IMPLEMENTS_TICKET · 13"| SPEC
-    DOC --&gt;|":REFERENCES_TICKET · 41"| SPEC
-    PROC --&gt;|":SUBPROCESS_OF · 185"| PROC</pre>
+    DOC --&gt;|":REFERENCES_TICKET · 190"| SPEC
+    PROC --&gt;|":SUBPROCESS_OF · 1846"| PROC
+    DOC --&gt;|":HAS_CHUNK · 8867"| CH
+    CH -.-&gt;|":MENTIONS"| SYS
+    CH -.-&gt;|":MENTIONS"| PROC
+    CH -.-&gt;|":MENTIONS"| STR
+    CH -.-&gt;|":MENTIONS"| SPEC</pre>
               </div>
             </details>
           </section>

@@ -778,7 +778,7 @@
                 <span class="card-title">2. Relationships (The Verbs / Edges)</span>
                 <p>
                   A <strong>Relationship</strong> is the directed line connecting two nodes. It explains <em>how</em> they relate. 
-                  Examples: <code>[Salesforce]</code> ➔ <em>(integrates_with)</em> ➔ <code>[Doc 14]</code> ➔ <em>(runs_on)</em> ➔ <code>[SAP S/4HANA]</code>.
+                  Examples: <code>[Salesforce]</code> ⬅ <em>(mentions_system)</em> ⬅ <code>[Doc 14]</code> ➔ <em>(mentions_system)</em> ➔ <code>[SAP S/4HANA]</code>.
                 </p>
               </div>
 
@@ -890,7 +890,7 @@
                 <div class="flow-role">Phase 3: Link Synthesizer</div>
                 <div class="flow-box">
                   <strong>Semantic Edge Linking</strong>
-                  <span>Creates directed relationships: <code>belongs_to</code>, <code>runs_on</code>, <code>specifies_process</code>, and <code>subprocess_of</code>.</span>
+                  <span>Creates directed relationships: <code>belongs_to</code>, <code>mentions_system</code>, <code>specifies_process</code>, and <code>subprocess_of</code>.</span>
                 </div>
               </div>
 
@@ -921,10 +921,9 @@
                 <span class="card-title">Rule B: Enterprise System Fingerprinting</span>
                 <p>
                   The engine examines document text for system signatures:
-                  <code>S/4HANA</code> / <code>S4</code> ➔ <code>runs_on</code> edge.<br />
-                  <code>ECC</code> ➔ <code>interacts_with</code> edge.<br />
-                  <code>Salesforce</code> ➔ <code>integrates_with</code> edge.<br />
-                  <code>SOVOS</code> ➔ <code>interfaces_with</code> edge (tax compliance).
+                  Any of the 18 systems' word-bounded patterns ➔ one <code>mentions_system</code> edge.<br />
+                  What kind of system it is (<code>sap</code>, <code>legacy_erp</code>, <code>middleware</code>, …) is the System node's <code>kind</code> property, not the edge's type.<br />
+                  Each edge records its evidence: <code>method</code>, <code>mentions</code>, <code>chunk_count</code> and the <code>chunks</code> that name the system.
                 </p>
               </div>
 
@@ -1003,7 +1002,7 @@ for prefix, code_num in found_codes:
                   <tr>
                     <td><strong>Query Method</strong></td>
                     <td><strong>Natural Language Graph AI</strong> + Automated BFS Pathfinding + regex entity disambiguation. Users ask questions in plain English.</td>
-                    <td>Users must learn and write formal <strong>Cypher queries</strong> (e.g. <code>MATCH (a)-[:RUNS_ON]->(b) WHERE b.name = 'S4' RETURN a</code>).</td>
+                    <td>Users must learn and write formal <strong>Cypher queries</strong> (e.g. <code>MATCH (a)-[:MENTIONS_SYSTEM]->(b) WHERE b.code = 'S4HANA' RETURN a</code>).</td>
                   </tr>
                   <tr>
                     <td><strong>Multi-Hop Pathfinding</strong></td>
@@ -1235,18 +1234,18 @@ for prefix, code_num in found_codes:
                 <p>To register a new major technical platform with its own dedicated color in <code>knowledge_graph.py</code>, simply add an entry to <code>SYSTEMS</code>:</p>
                 <pre class="language-python">SYSTEMS = {
     # Existing systems...
-    "S4HANA": {"label": "SAP S/4HANA", "desc": "Target ERP platform", "color": "#0284c7"},
+    "S4HANA": {"label": "SAP S/4HANA", "desc": "Target ERP platform"},
     
     # Adding a new system takes 4 lines:
     "Ariba": {
         "label": "SAP Ariba",
         "desc": "Cloud procurement and supplier collaboration network.",
-        "color": "#059669",
     },
-}</pre>
-                <p>Then add one keyword check in the file loop:</p>
-                <pre class="language-python">if "Ariba" in content or "ariba" in content:
-    add_edge(doc_id, "system:Ariba", "integrates_with", "Procurement Network")</pre>
+}
+SYSTEM_KIND["Ariba"] = "third_party"</pre>
+                <p>Then add its pattern:</p>
+                <pre class="language-python">SYSTEM_RE["Ariba"] = re.compile(r"\bariba\b", re.I)
+# The file loop then adds a mentions_system edge, with its evidence, wherever it matches.</pre>
               </div>
             </details>
           </section>
@@ -1480,7 +1479,7 @@ for (const node of nodes) {
                   1. The engine identifies <code>system:Salesforce</code> and <code>system:SOVOS</code>.<br />
                   2. BFS pathfinding traverses the adjacency matrix and discovers that there is no direct cable between Salesforce and SOVOS.<br />
                   3. Instead, it uncovers a <strong>2-hop mediated bridge</strong>:<br />
-                  <code>[Salesforce]</code> ➔ <em>(integrates_with)</em> ➔ <code>[Doc: FDD_SD_L2C_O-030-010]</code> ➔ <em>(interfaces_with)</em> ➔ <code>[SOVOS]</code>.<br />
+                  <code>[Salesforce]</code> ⬅ <em>(mentions_system)</em> ⬅ <code>[Doc: FDD_SD_L2C_O-030-010]</code> ➔ <em>(mentions_system)</em> ➔ <code>[SOVOS]</code>.<br />
                   4. The Graph AI explains: <em>"Salesforce passes order creation headers into the SD order intake specification, which routes line-item VAT calculations through the SOVOS tax interface."</em>
                 </p>
               </div>

@@ -25,13 +25,15 @@ note top of STREAM
 code: string
 description: string
 end note
-usecase ":Spec\ncount: 47" as SPEC #FFEDD5;line:F97316
+usecase ":Spec\ncount: 165" as SPEC #FFEDD5;line:F97316
 note left of SPEC
 is_primary: boolean
 ticket: string
 end note
-usecase ":Document\ncount: 83" as DOCUMENT #F1F5F9;line:64748B
+usecase ":Document\ncount: 218" as DOCUMENT #F1F5F9;line:64748B
 note top of DOCUMENT
+bytes: integer
+category: string
 chars: integer
 filename: string
 format: string
@@ -41,24 +43,33 @@ usecase ":System\ncount: 18" as SYSTEM #E0F2FE;line:0284C7
 note right of SYSTEM
 code: string
 description: string
+kind: string
 end note
-usecase ":Process\ncount: 202" as PROCESS #DCFCE7;line:10B981
+usecase ":Process\ncount: 1985" as PROCESS #DCFCE7;line:10B981
 note bottom of PROCESS
 code: string
 description: string
 in_bpml: boolean
 jira_key: string
 end note
+usecase ":Chunk\ncount: 8867" as CHUNK #F8FAFC;line:94A3B8
+note left of CHUNK
+category: string
+chunk_index: integer
+chunk_key: string
+heading_path: string
+tokens: integer
+end note
 
-DOCUMENT -up-> STREAM : ":BELONGS_TO · 70"
-DOCUMENT -left-> SPEC : ":REFERENCES_TICKET · 41"
+DOCUMENT -up-> STREAM : ":BELONGS_TO · 237"
+DOCUMENT -left-> SPEC : ":REFERENCES_TICKET · 190"
 DOCUMENT -left-> SPEC : ":IMPLEMENTS_TICKET · 13"
-DOCUMENT -right-> SYSTEM : ":INTERACTS_WITH · 70"
-DOCUMENT -right-> SYSTEM : ":RUNS_ON · 40"
-DOCUMENT -right-> SYSTEM : ":USES_UI · 28"
-DOCUMENT -right-> SYSTEM : ":INTERFACES_WITH · 21"
-DOCUMENT -right-> SYSTEM : ":INTEGRATES_WITH · 12"
-DOCUMENT -right-> SYSTEM : ":CONNECTS_TO · 10"
-PROCESS --> PROCESS : ":SUBPROCESS_OF · 185"
-DOCUMENT -down-> PROCESS : ":SPECIFIES_PROCESS · 70"
+DOCUMENT -right-> SYSTEM : ":MENTIONS_SYSTEM · 556"
+DOCUMENT -down-> PROCESS : ":SPECIFIES_PROCESS · 1947"
+PROCESS --> PROCESS : ":SUBPROCESS_OF · 1846"
+DOCUMENT -down-> CHUNK : ":HAS_CHUNK · 8867"
+CHUNK ..> STREAM : ":MENTIONS · 316"
+CHUNK ..> SPEC : ":MENTIONS · 228"
+CHUNK ..> SYSTEM : ":MENTIONS · 3998"
+CHUNK ..> PROCESS : ":MENTIONS · 2695"
 @enduml

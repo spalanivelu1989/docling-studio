@@ -714,7 +714,7 @@ When a user submits a query via the Knowledge Graph query bar or clicks an entit
 2. **Breadth-First Search (BFS) Shortest Path**:
    - When searching for connections between two systems (e.g. `Solvay@eCommerce` and `SAP S/4HANA`), the engine executes a queue-based BFS traversal over the adjacency list:
      ```
-     [System: eCommerce] ➔ (runs_on) ➔ [Doc: Interface Spec] ➔ (runs_on) ➔ [System: SAP S/4HANA]
+     [System: eCommerce] ⬅ (mentions_system) ⬅ [Doc: Interface Spec] ➔ (mentions_system) ➔ [System: SAP S/4HANA]
      ```
    - Returns the exact hop count, ordered sequence of nodes, and edge relationship labels.
 

@@ -25,6 +25,7 @@ LABEL_TYPE = {
     "Document": "document",
     "Process": "process",
     "Spec": "spec",
+    "Chunk": "chunk",
 }
 
 SAMPLE = 14
@@ -52,9 +53,11 @@ def _instances(graph: dict[str, Any], node_type: str | None) -> list[dict[str, A
             detail = f"{detail} · {n['jira_key']}" if detail else n["jira_key"]
         if n["type"] == "spec" and n.get("is_primary"):
             detail = "primary specification"
+        if n["type"] == "chunk":
+            detail = n.get("heading_path") or ""
         out.append({
             "id": n["id"],
-            "label": n.get("code") or n.get("ticket") or n["label"],
+            "label": n.get("code") or n.get("ticket") or n.get("chunk_key") or n["label"],
             "detail": detail,
             "degree": n.get("degree", 0),
         })
@@ -84,12 +87,22 @@ def load_model(graph: dict[str, Any] | None = None) -> dict[str, Any]:
         import knowledge_graph
         graph = knowledge_graph.extract_graph()
 
+    # The whole property graph, the passage layer included, so :Chunk and its
+    # relationships are counted like any other label.
+    import knowledge_graph
+
+    all_nodes, all_edges = knowledge_graph.property_graph(graph)
+    graph = {**graph, "nodes": all_nodes, "edges": all_edges}
+    type_of = {n["id"]: n["type"] for n in all_nodes}
     counts: dict[str, int] = {}
-    for n in graph["nodes"]:
+    for n in all_nodes:
         counts[n["type"]] = counts.get(n["type"], 0) + 1
-    rel_counts: dict[str, int] = {}
-    for e in graph["edges"]:
-        rel_counts[e["relation"]] = rel_counts.get(e["relation"], 0) + 1
+    # Per (from type, relation, to type): MENTIONS leaves :Chunk for four
+    # labels, and one total repeated on all four arrows would be wrong on each.
+    rel_counts: dict[tuple[str, str, str], int] = {}
+    for e in all_edges:
+        key = (type_of.get(e["source"], ""), e["relation"], type_of.get(e["target"], ""))
+        rel_counts[key] = rel_counts.get(key, 0) + 1
 
     labels_by_id = {n["$id"]: n for n in schema["nodeLabels"]}
     node_label = {
@@ -138,7 +151,9 @@ def load_model(graph: dict[str, Any] | None = None) -> dict[str, Any]:
             "type": rel_token[r["type"]["$ref"].lstrip("#")],
             "from": r["from"]["$ref"].lstrip("#"),
             "to": r["to"]["$ref"].lstrip("#"),
-            "count": rel_counts.get(rel_token[r["type"]["$ref"].lstrip("#")].lower(), 0),
+            "count": rel_counts.get((LABEL_TYPE.get(node_label[r["from"]["$ref"].lstrip("#")]["token"], ""),
+                                     rel_token[r["type"]["$ref"].lstrip("#")].lower(),
+                                     LABEL_TYPE.get(node_label[r["to"]["$ref"].lstrip("#")]["token"], "")), 0),
         }
         for r in schema["relationshipObjectTypes"]
     ]

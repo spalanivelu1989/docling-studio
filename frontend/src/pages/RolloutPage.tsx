@@ -14,7 +14,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   fitgap, rollout, runRollout, sessionUploads, uploadSessionDocuments,
-  type AgentToolCall, type AsIsModel, type EvidenceLogEntry, type BpmlProcess, type Deviation,
+  type AgentToolCall, type AsIsModel, type Lineage, type EvidenceLogEntry, type BpmlProcess, type Deviation,
   type Materiality, type RolloutAnalysis, type RolloutDecision, type RolloutGates,
   type RolloutSourceChunk, type RolloutSourceDocument, type RolloutSources,
   type RolloutSubject,
@@ -31,6 +31,7 @@ import BriefView from "../components/rollout/BriefView";
 import type { DecisionExtra } from "../components/rollout/decision";
 import DeviationRegisterView from "../components/rollout/DeviationRegisterView";
 import FacilitatorView, { type WorkshopDraft } from "../components/rollout/FacilitatorView";
+import InvestigationView from "../components/InvestigationView";
 import WorkshopAgendaView from "../components/rollout/WorkshopAgendaView";
 import ObjectHeader, { BandButton } from "../components/rollout/ObjectHeader";
 import { MONO, RADIUS, usePremium } from "../components/rollout/premium";
@@ -896,6 +897,13 @@ export default function RolloutPage({ active, showTechDetails = true }: Props) {
   // Which call's evidence is open. The log says a call happened; this says what
   // it brought back.
   const [traceCall, setTraceCall] = useState<AgentToolCall | null>(null);
+  // The chunks to pick out in the call drawer when it is opened from a quote.
+  const [traceHighlight, setTraceHighlight] = useState<string[]>([]);
+  // The run's lineage (rollout/lineage.py), fetched when the Investigation tab
+  // is opened, and the finding to open there when a tab sends the reader.
+  const [lineage, setLineage] = useState<Lineage | null>(null);
+  const [lineageError, setLineageError] = useState("");
+  const [traceFocus, setTraceFocus] = useState<string | null>(null);
   // The investigation as the Evidence Agent's console shows it: the context
   // each pass was handed, the reasoning between calls, rejected submissions,
   // the gates -- with the tool calls in their place among them.
@@ -1098,6 +1106,27 @@ export default function RolloutPage({ active, showTechDetails = true }: Props) {
     [sources],
   );
 
+  // Lineage is computed from the stored run, so it is asked for only once the
+  // run has finished, and again when a decision is added to it.
+  useEffect(() => {
+    setLineage(null); setLineageError("");
+  }, [runId]);
+  useEffect(() => {
+    if (tab !== "log" || !runId || running || !analysis) return;
+    let live = true;
+    rollout.lineage(runId)
+      .then((l) => { if (live) { setLineage(l); setLineageError(""); } })
+      .catch((e) => { if (live) setLineageError(`Could not trace this run: ${(e as Error).message}`); });
+    return () => { live = false; };
+  }, [tab, runId, running, analysis, decisions.length]);
+  const openCall = (i: number, chunks?: string[]) => {
+    const c = calls[i];
+    if (!c) return;
+    setTraceHighlight(chunks ?? []);
+    setTraceCall(c);
+  };
+  const traceGap = (gapId: string) => { setTraceFocus(gapId); setTab("log"); };
+
   // Deleting takes two presses. The first arms the button for five seconds and
   // then disarms itself, so a mis-click in a menu costs nothing; the second
   // removes the analysis and, by ON DELETE CASCADE, the decisions recorded
@@ -1287,7 +1316,7 @@ export default function RolloutPage({ active, showTechDetails = true }: Props) {
     { key: "asis", label: `${subject.label} model (${asis?.steps.length ?? 0})` },
     { key: "sources", label: `Sources${sources ? ` (${sources.documents.length})` : ""}` },
     { key: "gates", label: "Quality gates" },
-    { key: "log", label: `Investigation${calls.length ? ` (${calls.length})` : ""}` },
+    { key: "log", label: `Traceability${calls.length ? ` (${calls.length})` : ""}` },
   ] : [];
   const openGap = (gapId: string) => { setTab("deviations"); setHighlightGap(gapId); };
   // Whether this run rated its dimensions against SAP Best Practice too.
@@ -1378,7 +1407,11 @@ export default function RolloutPage({ active, showTechDetails = true }: Props) {
                                     decisions={decisionsByGap} reviewer={reviewer} deciding={deciding}
                                     onDecide={runId ? (g, v, x) => void decide(g, v, x) : undefined} onOpenGap={openGap} />
             )}
-            {tab === "log" && (
+            {tab === "log" && runId && analysis && !running && (
+              <InvestigationView exportUrl={(f) => rollout.lineageExportUrl(runId, f)} lineage={lineage} error={lineageError} focus={traceFocus}
+                                 onOpenCall={openCall} onOpenLogs={() => setLogOpen(true)} logCount={log.length} />
+            )}
+            {tab === "log" && !(runId && analysis && !running) && (
               <Stack spacing={2}>
         {/* --------------------------------------------------- the investigation */}
         {/* Its own panel, not a corner of Progress. Progress renders only while
@@ -1512,6 +1545,7 @@ export default function RolloutPage({ active, showTechDetails = true }: Props) {
                                      reviewer={reviewer} deciding={deciding}
                                      onDecide={runId ? (g, v, x) => void decide(g, v, x) : undefined}
                                      focusGap={highlightGap} fileStem={runId ?? "fit-gap"}
+                                     onTrace={runId && !running ? traceGap : undefined}
                                      renderEvidence={(e) => <EvidenceRow ev={e} chunk={sources?.chunks?.[e.chunk_id]} session={session} />} />
             )}
             <FacilitatorView open={facilitating !== null} start={facilitating ?? 0}
@@ -2248,12 +2282,13 @@ export default function RolloutPage({ active, showTechDetails = true }: Props) {
         emptyText="Nothing analysed yet. Run one and it will appear here."
       />
       <AgentLogDrawer open={logOpen} onClose={() => setLogOpen(false)} log={log} running={running}
-                      onOpenCall={(i) => { const c = calls[i]; if (c) setTraceCall(c); }} />
+                      onOpenCall={(i) => openCall(i)} />
       <AgentTraceDrawer
         open={Boolean(traceCall)}
-        onClose={() => setTraceCall(null)}
+        onClose={() => { setTraceCall(null); setTraceHighlight([]); }}
         call={traceCall}
         cited={citedChunks}
+        focus={traceHighlight}
         citedNodes={[]}
         citedEdges={[]}
       />

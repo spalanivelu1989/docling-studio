@@ -83,30 +83,30 @@ def test_a_longer_prefix_is_not_truncated_into_a_new_code():
 def test_a_customer_name_does_not_link_a_document_to_ecc():
     # This spreadsheet's only "ECC" runs are ADECCO, DECCAN, ELETTROMECCANIC, TECCEM.
     doc = "doc:20260109_SPARK_L2C_Corporate Group CRM  and SAP 20251125_xlsx.md"
-    assert not has_edge(doc, "system:ECC", "interacts_with")
+    assert not has_edge(doc, "system:ECC", "mentions_system")
 
 
 def test_an_export_control_acronym_does_not_link_a_document_to_ecc():
     # "ECCN" (Export Control Classification Number) is not SAP ECC.
-    assert not has_edge("doc:SPARK L2C L1-L4 Processes _xlsx.md", "system:ECC", "interacts_with")
+    assert not has_edge("doc:SPARK L2C L1-L4 Processes _xlsx.md", "system:ECC", "mentions_system")
 
 
 def test_a_salesforce_record_id_does_not_link_a_document_to_s4hana():
     # The only "S4" in this file is inside the id 001d100000DpgS4.
     doc = "doc:20260109_SPARK_L2C_Corporate Group CRM  and SAP 20251125_xlsx.md"
-    assert not has_edge(doc, "system:S4HANA", "runs_on")
+    assert not has_edge(doc, "system:S4HANA", "mentions_system")
 
 
 def test_a_product_name_does_not_link_a_document_to_s4hana():
     # "SOPROPHOR S40 FLAKES" is a product, and the file never mentions HANA.
     doc = "doc:Solvay@eCommerce - Customer User Guide_pptx.md"
-    assert not has_edge(doc, "system:S4HANA", "runs_on")
+    assert not has_edge(doc, "system:S4HANA", "mentions_system")
 
 
 def test_system_matching_is_case_insensitive():
     # Written "Sovos", which the old two-variant substring test missed.
     doc = "doc:L2C Trainings - Topics to add in details_pptx.md"
-    assert has_edge(doc, "system:SOVOS", "interfaces_with")
+    assert has_edge(doc, "system:SOVOS", "mentions_system")
 
 
 def test_ecommerce_is_matched_however_it_is_spelled():
@@ -115,7 +115,7 @@ def test_ecommerce_is_matched_however_it_is_spelled():
         ("doc:Interim L2C W1_xlsx.md", "E Commerce"),
         ("doc:20260203_SPARK_L2C_Ecommerce_xlsx.md", "Ecommerce"),
     ):
-        assert has_edge(doc, "system:eCommerce", "connects_to"), f"missed {in_text}"
+        assert has_edge(doc, "system:eCommerce", "mentions_system"), f"missed {in_text}"
 
 
 # --- filenames are searched too -----------------------------------------------
@@ -207,8 +207,8 @@ def test_every_system_the_brief_names_has_a_node():
     assert BRIEF_SYSTEMS <= have, sorted(BRIEF_SYSTEMS - have)
 
 
-def test_every_system_pattern_has_a_label_and_an_edge_rule():
-    assert set(kg.SYSTEMS) == set(kg.SYSTEM_RE) == set(kg.SYSTEM_EDGE)
+def test_every_system_pattern_has_a_label_and_a_kind():
+    assert set(kg.SYSTEMS) == set(kg.SYSTEM_RE) == set(kg.SYSTEM_KIND)
 
 
 def test_a_cubic_metre_is_not_the_m3_erp():
@@ -226,6 +226,75 @@ def test_the_short_system_acronyms_stay_word_bounded():
 def test_a_legacy_instance_mention_links_the_document():
     assert any(e["target"] == "system:PF1" for e in EDGES)
     assert any(e["target"] == "system:ESKER" for e in EDGES)
+
+
+# --- the model: one meaning per relationship type, evidence on relationships,
+# --- a passage layer, and no presentation in the stored data ------------------
+
+RAW = __import__("json").loads(kg.CACHE_FILE.read_text())
+
+
+def test_a_document_mentioning_a_system_has_one_relationship_type():
+    """The verb used to be picked by which system it was -- every S/4HANA link
+    `runs_on`, every SOVOS link `interfaces_with` -- whatever the text said."""
+    rels = {e["relation"] for e in EDGES if e["target"].startswith("system:")}
+    assert rels == {"mentions_system"}, rels
+    assert {n["id"]: n.get("kind") for n in G["nodes"] if n["type"] == "system"}["system:CPI"] == "middleware"
+
+
+def test_every_document_relationship_says_where_it_came_from():
+    for e in EDGES:
+        if not e["source"].startswith("doc:"):
+            continue
+        assert e.get("method") and e.get("mentions", 0) >= 1, e["id"]
+        assert len(e["chunks"]) == min(e["chunk_count"], kg.EDGE_CHUNKS), e["id"]
+
+
+def test_the_chunks_on_a_relationship_really_mention_its_target():
+    """A chunk key on an edge must point at a passage that names the entity --
+    checked against the text retrieval serves, not against the graph's own
+    bookkeeping."""
+    import rag
+
+    sample = [e for e in EDGES if e["relation"] == "mentions_system" and e["chunks"]][:25]
+    assert sample
+    for e in sample:
+        code = e["target"].split(":", 1)[1]
+        text = rag.chunk(e["chunks"][0])["content"].replace("_", " ")
+        assert kg.SYSTEM_RE[code].search(text), (e["id"], e["chunks"][0])
+
+
+def test_the_passage_layer_asserts_nothing_the_entity_layer_does_not():
+    linked = {(e["source"], e["target"]) for e in EDGES if e["source"].startswith("doc:")}
+    chunks = G["passages"]["nodes"]
+    assert len(chunks) > 1000
+    for c in chunks:
+        for entity in c["mentions"]:
+            assert (c["document"], entity) in linked, (c["id"], entity)
+
+
+def test_the_property_graph_expands_chunks_into_relationships():
+    nodes, rels = kg.property_graph(G)
+    ids = {n["id"] for n in nodes}
+    assert all(r["source"] in ids and r["target"] in ids for r in rels)
+    kinds = {r["relation"] for r in rels}
+    assert {"has_chunk", "mentions", "mentions_system"} <= kinds
+
+
+def test_presentation_is_not_stored_and_a_document_keeps_its_size():
+    """Degree, radius and colour are computed on load. The radius used to be
+    written to `size` on top of the document's file size."""
+    stored = {k for n in RAW["nodes"] for k in n}
+    assert not {"degree", "size", "color"} & stored, stored & {"degree", "size", "color"}
+    doc = next(n for n in RAW["nodes"] if n["type"] == "document")
+    assert doc["bytes"] == (kg.BASE_DIR / doc["source"]).stat().st_size
+    assert all("degree" in n and "size" in n and "color" in n for n in G["nodes"])
+
+
+def test_a_category_filter_keeps_only_its_documents_chunks():
+    sub = kg.filter_by_categories(G, ["DR"])
+    docs = {n["id"] for n in sub["nodes"] if n["type"] == "document"}
+    assert sub["passages"]["nodes"] and all(c["document"] in docs for c in sub["passages"]["nodes"])
 
 
 if __name__ == "__main__":

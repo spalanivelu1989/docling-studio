@@ -183,21 +183,26 @@ Seeded hub nodes:
 Per Markdown file:
 - A `document` node (filename, source path, detected format, size, char count).
 - `belongs_to` a stream when the stream code appears in the filename or first 600 chars.
-- System edges by keyword presence: `runs_on` (S/4), `interacts_with` (ECC),
-  `integrates_with` (Salesforce), `interfaces_with` (SOVOS), `uses_ui` (Fiori),
-  `connects_to` (eCommerce).
+- `mentions_system` to each of the 18 systems whose word-bounded pattern appears
+  (one relationship type; the system's `kind` -- sap, legacy_erp, middleware, ... --
+  is a property of the System node). Every document relationship carries its
+  evidence: `method`, `mentions`, `chunk_count` and up to five `chunks` (retrieval
+  chunk keys).
 - **BPML process codes** via `CODE_RE = \b([A-Za-z][A-Za-z0-9]{0,3})-(\d{2,3}(?:-\d{2,3})+)\b`
   → `process` nodes, `specifies_process` edges, plus a synthesised parent code and a
   `subprocess_of` edge (hierarchy is derived from the code itself).
 - **SPARK tickets** via `TICKET_RE = \bSPARK[-_ ]?(\d{4,6})\b` → `spec` nodes;
   `implements_ticket` when the ticket appears in the filename (primary spec), otherwise
   `references_ticket`.
-- Node `degree` is computed and mapped to a display `size` per type.
+- A passage layer: every indexed chunk as a `chunk` node, `has_chunk` from its
+  document and `mentions` to the entities it names (stored under `passages`,
+  expanded by `property_graph()`).
+- `degree`, display `size` and `color` are computed on load (`decorate`), not stored.
 
-Current graph: **720 nodes** (548 spec, 83 document, 79 process, 6 system, 4 stream) and
-**842 edges** (references_ticket 548, specifies_process 71, subprocess_of 61, belongs_to 46,
-runs_on 43, interacts_with 28, uses_ui 28, connects_to 6, implements_ticket 6,
-integrates_with 4, interfaces_with 1). Cached to `knowledge_graph.json`; `force=True`
+Current graph: **2,390 entity nodes** (1,985 process, 218 document, 165 spec, 18 system,
+4 stream) and **4,789 relationships** (specifies_process 1,947, subprocess_of 1,846,
+mentions_system 556, belongs_to 237, references_ticket 190, implements_ticket 13), plus
+8,867 chunks with 8,867 has_chunk and 7,237 mentions relationships. Cached to `knowledge_graph.json`; `force=True`
 re-extracts.
 
 ### 6.2 Query engine (`query_graph`)

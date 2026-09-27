@@ -470,10 +470,24 @@ def graph_neighbors(session: Session, node_id: str, hops: int = 1) -> dict:
     return {
         "node": _node(session, nodes[node_id]),
         "neighbors": out[:40],
-        "edges": [{"edge_id": e["id"], "source": e["source"], "target": e["target"],
-                   "relation": e["relation"], "label": e["label"]} for e in edges_used[:60]],
+        "edges": [_edge(session, nodes, e) for e in edges_used[:60]],
         "truncated": len(out) > 40,
     }
+
+
+def _edge(session: Session, nodes: dict, e: dict) -> dict:
+    """A relationship as the agent sees it. A link from a document says how
+    often the document names the target and in which chunks -- ids get_chunk
+    opens, so a graph fact can be checked against the passage it came from."""
+    out = {"edge_id": e["id"], "source": e["source"], "target": e["target"],
+           "relation": e["relation"], "label": e["label"]}
+    doc = nodes.get(e["source"]) or {}
+    if doc.get("type") == "document" and not session.excluded(doc.get("label", ""), doc.get("source", "")):
+        if e.get("mentions"):
+            out["mentions"] = e["mentions"]
+        if e.get("chunks"):
+            out["chunks"] = list(e["chunks"])
+    return out
 
 
 def graph_path(session: Session, a: str, b: str) -> dict:
@@ -491,9 +505,12 @@ def graph_path(session: Session, a: str, b: str) -> dict:
     for eid in path["edges"]:
         e = edges.get(eid)
         if e:
-            steps.append({"from": session.present(nodes[e["source"]]["label"]),
-                          "relation": e["relation"],
-                          "to": session.present(nodes[e["target"]]["label"])})
+            step = {"from": session.present(nodes[e["source"]]["label"]),
+                    "relation": e["relation"],
+                    "to": session.present(nodes[e["target"]]["label"])}
+            if "chunks" in (ev := _edge(session, nodes, e)):
+                step["chunks"] = ev["chunks"]
+            steps.append(step)
     return {"hops": path["hops"], "node_ids": path["nodes"], "edge_ids": path["edges"], "steps": steps}
 
 
@@ -586,7 +603,9 @@ def definitions(mode: str = "A", has_uploads: bool = False) -> list[dict]:
         },
         {
             "name": "graph_neighbors",
-            "description": "Nodes adjacent to a graph node, out to 1 or 2 hops: tickets, systems, streams, documents.",
+            "description": ("Nodes adjacent to a graph node, out to 1 or 2 hops: tickets, systems, streams, "
+                            "documents. A relationship from a document lists the chunks it was extracted "
+                            "from; open one with get_chunk to quote it."),
             "input_schema": {
                 "type": "object",
                 "properties": {"node_id": {"type": "string"}, "hops": {"type": "integer", "description": "1 or 2"}},
@@ -675,6 +694,9 @@ OBSERVATION_TYPE = {
     "search_corpus": "retriever",
     "search_uploads": "retriever",
     "read_sources": "retriever",
+    # The Fit-Gap Copilot's search over the SAP Best Practice category: hybrid
+    # retrieval like search_corpus, so it counts as retrieval in a trace.
+    "search_sap_best_practice": "retriever",
     "get_chunk": "retriever",
     "graph_entity": "retriever",
     "graph_neighbors": "retriever",

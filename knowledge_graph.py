@@ -20,7 +20,7 @@ import json
 import logging
 import os
 import re
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -108,6 +108,133 @@ def _display_size(type_: str, degree: int) -> float:
     return 9 + min(degree * 0.5, 10)  # spec
 
 
+def decorate(graph: dict[str, Any]) -> dict[str, Any]:
+    """Add what the canvas and the traversal tools read but the data model
+    does not hold: degree (over this graph's entity relationships), and the
+    colour and radius a node is drawn with. New node dicts are returned; the
+    input, which may be the cached copy, is left as it is."""
+    degrees: dict[str, int] = defaultdict(int)
+    for edge in graph["edges"]:
+        degrees[edge["source"]] += 1
+        degrees[edge["target"]] += 1
+    nodes = []
+    for node in graph["nodes"]:
+        n = dict(node)
+        n["degree"] = degrees[n["id"]]
+        n["size"] = _display_size(n["type"], n["degree"])
+        n["color"] = ("#fb923c" if n["type"] == "spec" and not n.get("is_primary")
+                      else TYPE_COLOR.get(n["type"], "#94a3b8"))
+        nodes.append(n)
+    return {**graph, "nodes": nodes}
+
+
+def passage_relationships(chunk: dict[str, Any]) -> list[dict[str, Any]]:
+    """A stored chunk's relationships: (:Document)-[:HAS_CHUNK]->(:Chunk) and
+    (:Chunk)-[:MENTIONS {count}]->(entity)."""
+    cid = chunk["id"]
+    rels = [{"id": f"{chunk['document']}->{cid}:has_chunk", "source": chunk["document"], "target": cid,
+             "relation": "has_chunk", "label": "Has chunk"}]
+    rels += [{"id": f"{cid}->{e}:mentions", "source": cid, "target": e, "relation": "mentions",
+              "label": "Mentions", "count": n} for e, n in (chunk.get("mentions") or {}).items()]
+    return rels
+
+
+def property_graph(graph: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Every node and relationship, entity and passage layers together -- the
+    graph as it would sit in Neo4j. The exporters read this."""
+    chunks = (graph.get("passages") or {}).get("nodes") or []
+    nodes = list(graph["nodes"]) + [
+        # `mentions` and `document` become relationships; kept as properties
+        # they would be foreign keys, which is what relationships are for.
+        {**{k: v for k, v in c.items() if k not in ("mentions", "document")}, "label": _chunk_label(c)}
+        for c in chunks]
+    edges = list(graph["edges"]) + [r for c in chunks for r in passage_relationships(c)]
+    return nodes, edges
+
+
+def chunks_mentioning(graph: dict[str, Any], entity: str, document: str = "") -> list[str]:
+    """Chunk keys that mention an entity, optionally within one document, in
+    document order -- the passages a relationship to that entity rests on."""
+    return [c["chunk_key"] for c in (graph.get("passages") or {}).get("nodes") or []
+            if entity in (c.get("mentions") or {}) and (not document or c["document"] == document)]
+
+
+# How many chunk keys a document relationship carries inline. The full list is
+# the passage layer's `mentions` relationships; the edge keeps enough to open.
+EDGE_CHUNKS = 5
+
+
+def _index_signature() -> str:
+    """What the retrieval index holds per document: first chunk id and count.
+    It changes when a document is re-indexed, which is when chunk ids change."""
+    import hashlib
+
+    try:
+        import rag
+
+        rows = rag.connection().execute(
+            "SELECT d.source, min(c.id), count(*) FROM rag_chunks c"
+            " JOIN rag_documents d ON d.id = c.document_id GROUP BY d.source ORDER BY d.source"
+        ).fetchall()
+    except Exception:
+        return ""
+    return hashlib.sha256("\n".join(f"{s}:{a}:{n}" for s, a, n in rows).encode()).hexdigest()
+
+
+def _index_chunks() -> tuple[dict[str, list[dict[str, Any]]], str]:
+    """Every indexed chunk, keyed by the absolute path of its Markdown file."""
+    try:
+        import rag
+
+        rows = rag.connection().execute(
+            "SELECT d.source, c.id, c.chunk_index, c.heading_path, c.content, c.tokens, c.category"
+            " FROM rag_chunks c JOIN rag_documents d ON d.id = c.document_id"
+            " ORDER BY d.source, c.chunk_index"
+        ).fetchall()
+    except Exception as exc:  # the graph must still build without the index
+        logger.warning("Passage layer skipped: the retrieval index is unavailable (%s)", exc)
+        return {}, f"the retrieval index was unavailable: {type(exc).__name__}"
+    out: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for source, cid, index, heading, content, tokens, category in rows:
+        out[str(Path(source).resolve())].append({
+            "key": f"{category}:{cid}", "index": index, "heading_path": heading or "",
+            "content": content or "", "tokens": tokens, "category": category,
+        })
+    return dict(out), ""
+
+
+def _chunk_mentions(chunks: list[dict[str, Any]], register_keys: set[str]
+                    ) -> tuple[dict[str, list[str]], dict[str, dict[str, list[int]]]]:
+    """Which chunks name which entity, by the patterns the document-level
+    extraction uses. Returns entity -> chunk keys in document order, and
+    chunk key -> entity -> match positions (whose length is the count)."""
+    by_entity: dict[str, list[str]] = defaultdict(list)
+    by_chunk: dict[str, dict[str, list[int]]] = {}
+    for ch in chunks:
+        text = ch["content"]
+        opened = text.replace("_", " ")
+        found: dict[str, list[int]] = defaultdict(list)
+        for sid, pattern in STREAM_RE.items():
+            found[f"stream:{sid}"] += [m.start() for m in pattern.finditer(opened)]
+        for key, pattern in SYSTEM_RE.items():
+            found[f"system:{key}"] += [m.start() for m in pattern.finditer(opened)]
+        for m in CODE_RE.finditer(text):
+            found[f"proc:{m.group(1)}-{m.group(2)}"].append(m.start())
+        for m in TICKET_RE.finditer(opened):
+            if f"SPARK-{m.group(1)}" not in register_keys:
+                found[f"spec:SPARK-{m.group(1)}"].append(m.start())
+        found = {k: v for k, v in found.items() if v}
+        by_chunk[ch["key"]] = found
+        for entity in found:
+            by_entity[entity].append(ch["key"])
+    return by_entity, by_chunk
+
+
+def _chunk_label(ch: dict[str, Any]) -> str:
+    tail = (ch.get("heading_path") or "").split(" / ")[-1].strip()
+    return f"{ch.get('chunk_key') or ch.get('key')} {tail}".strip()[:80]
+
+
 def _declared_category(path: Path) -> str | None:
     """The category a file declares in its own front matter, if it does.
 
@@ -156,30 +283,36 @@ def collect_files() -> list[tuple[Path, str, str]]:
 # Each stream and system used to carry its own hue, which made the legend ("one
 # swatch per type") disagree with the canvas, and put the L2C green on the same
 # value as the BPML process green.
+#
+# Presentation, not data: colour, radius and degree are added when the graph is
+# loaded (see `decorate`) and never written to knowledge_graph.json. Degree is
+# derived from the relationships and goes stale the moment one is added; the
+# radius used to be stored under `size`, where it overwrote the document's own
+# file size.
 STREAM_COLOR = "#8b5cf6"
 SYSTEM_COLOR = "#0284c7"
+TYPE_COLOR = {
+    "stream": STREAM_COLOR, "system": SYSTEM_COLOR, "document": "#64748b",
+    "process": "#10b981", "spec": "#f97316", "chunk": "#94a3b8",
+}
 
 # Core Enterprise Streams
 STREAMS = {
     "L2C": {
         "label": "Lead to Cash (L2C)",
         "desc": "End-to-end sales order management, pricing, billing, logistics, and customer collections.",
-        "color": STREAM_COLOR,
     },
     "I2D": {
         "label": "Idea to Delivery (I2D)",
         "desc": "Transit times, shipping logistics, warehouse operations, and physical goods delivery.",
-        "color": STREAM_COLOR,
     },
     "R2R": {
         "label": "Record to Report (R2R)",
         "desc": "Financial accounting, commissions settlement, general ledger, and financial reporting.",
-        "color": STREAM_COLOR,
     },
     "P2P": {
         "label": "Procure to Pay (P2P)",
         "desc": "Procurement, vendor purchase orders, goods receipt, and invoice verification.",
-        "color": STREAM_COLOR,
     },
 }
 
@@ -188,32 +321,26 @@ SYSTEMS = {
     "S4HANA": {
         "label": "SAP S/4HANA",
         "desc": "Target ERP platform for global sales, billing, master data, and central finance.",
-        "color": SYSTEM_COLOR,
     },
     "ECC": {
         "label": "SAP ECC",
         "desc": "Legacy ERP environment being migrated to SAP S/4HANA under Solvay SPARK.",
-        "color": SYSTEM_COLOR,
     },
     "Salesforce": {
         "label": "Salesforce (CRM)",
         "desc": "Customer relationship management platform handling customer complaints, accounts, and order intake.",
-        "color": SYSTEM_COLOR,
     },
     "SOVOS": {
         "label": "SOVOS (Tax Engine)",
         "desc": "Global tax determination and automated electronic compliance engine integrated with billing.",
-        "color": SYSTEM_COLOR,
     },
     "Fiori": {
         "label": "SAP Fiori",
         "desc": "Modern UX role-based applications for custom enhancements and business user dashboards.",
-        "color": SYSTEM_COLOR,
     },
     "eCommerce": {
         "label": "Solvay@eCommerce",
         "desc": "Digital portal for customer direct ordering, product catalog, and invoice visibility.",
-        "color": SYSTEM_COLOR,
     },
     # The twelve below complete the system list the SPARK design brief names.
     # All were already mentioned throughout the corpus -- PF1 alone in 12
@@ -222,62 +349,50 @@ SYSTEMS = {
     "WP1": {
         "label": "WP1 (Legacy ERP)",
         "desc": "Legacy SAP instance being consolidated into S/4HANA under SPARK.",
-        "color": SYSTEM_COLOR,
     },
     "PF1": {
         "label": "PF1 (Legacy ERP)",
         "desc": "Legacy SAP instance carrying order and delivery flows ahead of migration.",
-        "color": SYSTEM_COLOR,
     },
     "M3": {
         "label": "M3 (Legacy ERP)",
         "desc": "Infor M3 ERP used by parts of the business, with order management being retired.",
-        "color": SYSTEM_COLOR,
     },
     "ESKER": {
         "label": "Esker",
         "desc": "Document delivery and order-intake automation partner.",
-        "color": SYSTEM_COLOR,
     },
     "Elemica": {
         "label": "Elemica",
         "desc": "Chemical industry supply-chain network used for customer EDI exchange.",
-        "color": SYSTEM_COLOR,
     },
     "Coface": {
         "label": "Coface",
         "desc": "Credit insurance provider feeding customer credit limits into the credit process.",
-        "color": SYSTEM_COLOR,
     },
     "CPI": {
         "label": "SAP CPI",
         "desc": "Cloud integration middleware brokering interfaces between SAP and third parties.",
-        "color": SYSTEM_COLOR,
     },
     "OMP": {
         "label": "OMP",
         "desc": "Supply chain planning system consulted for forecast and availability checks.",
-        "color": SYSTEM_COLOR,
     },
     "SAPTM": {
         "label": "SAP TM",
         "desc": "SAP Transportation Management for shipment planning and freight.",
-        "color": SYSTEM_COLOR,
     },
     "EWM": {
         "label": "SAP EWM",
         "desc": "Extended Warehouse Management for warehouse and outbound delivery execution.",
-        "color": SYSTEM_COLOR,
     },
     "GTS": {
         "label": "SAP GTS",
         "desc": "Global Trade Services for compliance screening and trade preference.",
-        "color": SYSTEM_COLOR,
     },
     "MDG": {
         "label": "SAP MDG",
         "desc": "Master Data Governance for customer and material master maintenance.",
-        "color": SYSTEM_COLOR,
     },
 }
 
@@ -312,28 +427,18 @@ SYSTEM_RE = {
     "Coface": re.compile(r"\bcoface\b", re.I),
     "SAPTM": re.compile(r"\bSAP\s*TM\b", re.I),
 }
-SYSTEM_EDGE = {
-    "S4HANA": ("runs_on", "Executes on S/4"),
-    "ECC": ("interacts_with", "Interacts with ECC"),
-    "Salesforce": ("integrates_with", "Integrates with CRM"),
-    "SOVOS": ("interfaces_with", "Tax Engine Interface"),
-    "Fiori": ("uses_ui", "Fiori Custom App"),
-    "eCommerce": ("connects_to", "eCommerce Portal"),
-    # The verb is not read out of the text -- the brief forbids inferring one --
-    # so it follows the system's kind: SAP components interact, third parties
-    # interface, middleware integrates.
-    "WP1": ("interacts_with", "Legacy ERP Instance"),
-    "PF1": ("interacts_with", "Legacy ERP Instance"),
-    "M3": ("interacts_with", "Legacy ERP Instance"),
-    "EWM": ("interacts_with", "Warehouse Management"),
-    "GTS": ("interacts_with", "Global Trade Services"),
-    "MDG": ("interacts_with", "Master Data Governance"),
-    "SAPTM": ("interacts_with", "Transportation Management"),
-    "CPI": ("integrates_with", "Integration Middleware"),
-    "ESKER": ("interfaces_with", "Document Delivery Partner"),
-    "Elemica": ("interfaces_with", "Supply Chain Network"),
-    "Coface": ("interfaces_with", "Credit Insurance Partner"),
-    "OMP": ("interfaces_with", "Planning System"),
+# What kind of system each one is. This used to be spelt out as six different
+# relationship types -- every link to S/4HANA was `runs_on`, every link to SOVOS
+# `interfaces_with` -- chosen by which system was named, never by what the
+# document said. A relationship type should carry meaning, and all the
+# extractor knows is that the document mentions the system; so there is one
+# type, `mentions_system`, and the kind lives on the System node.
+SYSTEM_KIND = {
+    "S4HANA": "sap", "ECC": "legacy_erp", "Salesforce": "crm", "SOVOS": "third_party",
+    "Fiori": "sap_ui", "eCommerce": "portal", "WP1": "legacy_erp", "PF1": "legacy_erp",
+    "M3": "legacy_erp", "EWM": "sap", "GTS": "sap", "MDG": "sap", "SAPTM": "sap",
+    "CPI": "middleware", "ESKER": "third_party", "Elemica": "third_party",
+    "Coface": "third_party", "OMP": "third_party",
 }
 STREAM_RE = {sid: re.compile(r"\b" + sid + r"\b", re.I) for sid in STREAMS}
 
@@ -503,13 +608,19 @@ def extract_graph(
     and the two can be compared node for node."""
     files_to_process = collect_files() if files is None else list(files)
     fingerprint = _sources_fingerprint(files_to_process)
+    if files is None:
+        # Chunk ids are the index's row ids, which a re-index renumbers; a graph
+        # whose passage layer points at the old ids has to be rebuilt.
+        import hashlib
+
+        fingerprint = hashlib.sha256(f"{fingerprint}\nindex:{_index_signature()}".encode()).hexdigest()
     if not force and cache and CACHE_FILE.is_file():
         try:
             with open(CACHE_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 if data.get("nodes") and data.get("edges"):
                     if data.get("stats", {}).get("sources") == fingerprint:
-                        return data
+                        return decorate(data)
                     logger.info("Cached graph was built from a different set of files; rebuilding")
         except Exception as e:
             logger.warning("Failed to load cached graph: %s", e)
@@ -522,7 +633,7 @@ def extract_graph(
         if id_ not in nodes:
             nodes[id_] = {"id": id_, "label": label, "type": type_, **props}
 
-    def add_edge(src: str, tgt: str, relation: str, label: str = ""):
+    def add_edge(src: str, tgt: str, relation: str, label: str = "", **props):
         key = (src, tgt, relation)
         if key not in seen_edges and src in nodes and tgt in nodes:
             seen_edges.add(key)
@@ -533,6 +644,7 @@ def extract_graph(
                     "target": tgt,
                     "relation": relation,
                     "label": label or relation.replace("_", " "),
+                    **props,
                 }
             )
 
@@ -544,7 +656,6 @@ def extract_graph(
             "stream",
             code=sid,
             description=sinfo["desc"],
-            color=sinfo["color"],
         )
 
     # 2. Add System Nodes
@@ -555,7 +666,7 @@ def extract_graph(
             "system",
             code=sys_id,
             description=sys_info["desc"],
-            color=sys_info["color"],
+            kind=SYSTEM_KIND[sys_id],
         )
 
     # 3. Markdown files, gathered per category by collect_files above.
@@ -587,9 +698,9 @@ def extract_graph(
                 code=parent_code,
                 description=bpml_name.get(parent_code, f"BPML Process {parent_code}"),
                 in_bpml=True,
-                color="#059669",
             )
-            add_edge(f"proc:{child_code}", parent_id, "subprocess_of", "Subprocess of")
+            add_edge(f"proc:{child_code}", parent_id, "subprocess_of", "Subprocess of",
+                     method="bpml_workbook")
             child_code = parent_code
 
     # 3b. Lead-to-Cash L4 steps, from the process register.
@@ -610,9 +721,16 @@ def extract_graph(
             description=bpml_name.get(step_code) or step["name"],
             in_bpml=step_code in bpml_name,
             jira_key=step["jira_key"],
-            color="#10b981",
         )
         link_ancestors(step_code)
+
+    # 4. The passage layer. Chunks are read from the retrieval index rather
+    # than re-chunked here, so a chunk node's key is exactly the id retrieval
+    # hands the agents ("PKG:412") and a graph fact can be traced to the
+    # passage it rests on. Corpus builds only: an uploaded document's chunks
+    # live in its session, not in the index.
+    indexed, index_note = _index_chunks() if files is None else ({}, "not built for uploaded documents")
+    passage_docs: list[tuple[str, list[dict[str, Any]]]] = []
 
     for path, rel_source, category in files_to_process:
         doc_id = f"doc:{path.name}"
@@ -640,9 +758,8 @@ def extract_graph(
             source=rel_source,
             category=category,
             format=fmt,
-            size=path.stat().st_size,
+            bytes=path.stat().st_size,
             chars=len(content),
-            color="#64748b",
         )
 
         # The filename carries entities the body sometimes never repeats, so it is
@@ -652,19 +769,39 @@ def extract_graph(
         # the stream from a word-bounded search. Opening them out keeps SAP field and
         # column names readable without loosening the boundaries themselves.
         haystack = f"{filename_text}\n" + content.replace("_", " ")
+        # The document's chunks as retrieval indexed them, and which of them
+        # mention what -- so a relationship can say where it came from.
+        doc_chunks = indexed.get(str(path.resolve()), [])
+        chunk_hits, chunk_counts = _chunk_mentions(doc_chunks, register_keys)
+        if doc_chunks:
+            passage_docs.append((doc_id, [{**ch, "mentions": {e: len(v) for e, v in
+                                                               chunk_counts.get(ch["key"], {}).items()}}
+                                          for ch in doc_chunks]))
+
+        def evidence(entity: str, mentions: int, method: str) -> dict[str, Any]:
+            """Relationship properties: how often the entity is named, in which
+            chunks, and by what rule the link was made."""
+            keys = chunk_hits.get(entity, [])
+            ev: dict[str, Any] = {"method": method, "mentions": mentions,
+                                  "chunk_count": len(keys), "chunks": keys[:EDGE_CHUNKS]}
+            if not keys and doc_chunks:
+                # Named only in the filename, or in text the chunker dropped.
+                ev["in_filename_only"] = True
+            return ev
 
         # Connect Document to Stream. The whole document is searched: the old
         # 600-character window missed files such as billing_form_translations,
         # which names L2C 54 times but not in its opening table header.
         for sid, pattern in STREAM_RE.items():
             if pattern.search(haystack):
-                add_edge(doc_id, f"stream:{sid}", "belongs_to", "Belongs to Stream")
+                add_edge(doc_id, f"stream:{sid}", "belongs_to", "Belongs to Stream",
+                         **evidence(f"stream:{sid}", len(pattern.findall(haystack)), "name_match"))
 
         # Connect Document to Systems
         for sys_key, pattern in SYSTEM_RE.items():
             if pattern.search(haystack):
-                relation, edge_label = SYSTEM_EDGE[sys_key]
-                add_edge(doc_id, f"system:{sys_key}", relation, edge_label)
+                add_edge(doc_id, f"system:{sys_key}", "mentions_system", "Mentions system",
+                         **evidence(f"system:{sys_key}", len(pattern.findall(haystack)), "name_match"))
 
         # Extract BPML Process Codes.
         #
@@ -675,6 +812,7 @@ def extract_graph(
         # diff in a tracked file that said nothing. Rebuilding has to be a pure
         # function of the corpus, or you cannot diff two builds to see what a
         # change to an extraction rule actually did.
+        code_counts = Counter(f"{a}-{b}" for a, b in CODE_RE.findall(content))
         found_codes = sorted(set(CODE_RE.findall(content)))
         for prefix, code_num in found_codes:
             full_code = f"{prefix}-{code_num}"
@@ -706,9 +844,9 @@ def extract_graph(
                 or match_line
                 or f"BPML Process Step {full_code}",
                 in_bpml=full_code in bpml_name,
-                color="#10b981",
             )
-            add_edge(doc_id, proc_id, "specifies_process", "Specifies Process")
+            add_edge(doc_id, proc_id, "specifies_process", "Specifies Process",
+                     **evidence(proc_id, code_counts[full_code], "code_match"))
 
             # Hierarchy: walk the real parent chain from the BPML workbook. Splitting
             # the code string used to invent parents ("O-030-010" -> "O-030") that do
@@ -742,24 +880,36 @@ def extract_graph(
                 "spec",
                 ticket=ticket_id,
                 is_primary=is_primary,
-                color="#f97316" if is_primary else "#fb923c",
             )
             add_edge(
                 doc_id,
                 t_node,
                 "implements_ticket" if is_primary else "references_ticket",
                 "Primary Specification" if is_primary else "References Ticket",
+                **evidence(t_node, len(re.findall(rf"\bSPARK[-_ ]?{t_num}\b", haystack, re.I)),
+                           "ticket_in_filename" if is_primary else "ticket_match"),
             )
 
-    # Compute node degrees (number of connections) for sizing
-    degrees: dict[str, int] = defaultdict(int)
-    for edge in edges:
-        degrees[edge["source"]] += 1
-        degrees[edge["target"]] += 1
-
-    for nid, node in nodes.items():
-        node["degree"] = degrees[nid]
-        node["size"] = _display_size(node["type"], node["degree"])
+    # Chunk -> entity mentions, kept only where the document itself is linked
+    # to the entity, so the passage layer never asserts a link the entity layer
+    # does not have (the document rules drop some raw matches, e.g. register
+    # keys that are not tickets).
+    #
+    # Stored compactly -- each chunk carries its document and its mentions --
+    # and expanded into HAS_CHUNK and MENTIONS relationships by
+    # `passage_relationships()`. Written out as relationship records, the
+    # layer is 7 MB of repeated ids in a tracked file; the relationships are
+    # the same either way.
+    linked = {(e["source"], e["target"]) for e in edges if e["source"].startswith("doc:")}
+    passage_nodes: list[dict[str, Any]] = []
+    for doc_id, doc_chunks in passage_docs:
+        for ch in doc_chunks:
+            passage_nodes.append({
+                "id": f"chunk:{ch['key']}", "type": "chunk", "chunk_key": ch["key"],
+                "document": doc_id, "chunk_index": ch["index"], "heading_path": ch["heading_path"],
+                "category": ch["category"], "tokens": ch["tokens"],
+                "mentions": {e: n for e, n in sorted(ch["mentions"].items()) if (doc_id, e) in linked},
+            })
 
     # Type counts
     by_type: dict[str, int] = defaultdict(int)
@@ -773,6 +923,10 @@ def extract_graph(
     result = {
         "nodes": list(nodes.values()),
         "edges": edges,
+        # Its own key rather than more nodes: 8,000-odd chunks among 2,400
+        # entities would turn every neighbourhood, path and canvas into a list
+        # of passages. Same property graph; `property_graph()` joins the two.
+        "passages": {"nodes": passage_nodes, "note": index_note},
         "stats": {
             "total_nodes": len(nodes),
             "total_edges": len(edges),
@@ -782,6 +936,8 @@ def extract_graph(
             # Documents per category, and the file set this was built from.
             "categories": dict(sorted(by_category.items())),
             "sources": fingerprint,
+            "passages": {"chunks": len(passage_nodes),
+                         "mentions": sum(len(n["mentions"]) for n in passage_nodes)},
         },
     }
 
@@ -789,11 +945,11 @@ def extract_graph(
     if cache:
         try:
             with open(CACHE_FILE, "w", encoding="utf-8") as f:
-                json.dump(result, f, indent=2)
+                json.dump(result, f, indent=1)
         except Exception as e:
             logger.warning("Failed to cache graph: %s", e)
 
-    return result
+    return decorate(result)
 
 
 def filter_by_categories(graph: dict[str, Any], categories: list[str] | None) -> dict[str, Any]:
@@ -829,19 +985,9 @@ def filter_by_categories(graph: dict[str, Any], categories: list[str] | None) ->
 
     edges = [e for e in graph["edges"] if e["source"] in keep and e["target"] in keep]
 
-    # Degree and display size describe this subgraph, not the whole one: a
-    # document is not drawn as a hub because of edges that were filtered out.
-    degrees: dict[str, int] = defaultdict(int)
-    for edge in edges:
-        degrees[edge["source"]] += 1
-        degrees[edge["target"]] += 1
-    kept_nodes = []
-    for node_id in keep:
-        node = dict(nodes[node_id])
-        node["degree"] = degrees[node_id]
-        node["size"] = _display_size(node["type"], node["degree"])
-        kept_nodes.append(node)
-    kept_nodes.sort(key=lambda n: (n["type"], n["id"]))
+    kept_nodes = sorted((dict(nodes[i]) for i in keep), key=lambda n: (n["type"], n["id"]))
+    passages = graph.get("passages") or {}
+    kept_chunks = [n for n in passages.get("nodes") or [] if n["document"] in keep]
 
     by_type: dict[str, int] = defaultdict(int)
     for node in kept_nodes:
@@ -851,9 +997,12 @@ def filter_by_categories(graph: dict[str, Any], categories: list[str] | None) ->
         if node["type"] == "document":
             by_category[node.get("category", "")] += 1
 
-    return {
+    # Degree and display size describe this subgraph, not the whole one: a
+    # document is not drawn as a hub because of edges that were filtered out.
+    return decorate({
         "nodes": kept_nodes,
         "edges": edges,
+        "passages": {**passages, "nodes": kept_chunks},
         "stats": {
             **graph.get("stats", {}),
             "total_nodes": len(kept_nodes),
@@ -862,7 +1011,7 @@ def filter_by_categories(graph: dict[str, Any], categories: list[str] | None) ->
             "categories": dict(sorted(by_category.items())),
             "filtered_to": sorted(codes),
         },
-    }
+    })
 
 
 def find_shortest_path(

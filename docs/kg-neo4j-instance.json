@@ -13,7 +13,9 @@
       "properties": {
         "filename": "SPARK_FS_L2C__SPARK-22877_Interface_Salesforce Complaints_docx.md",
         "source": "solvay-spark/pkg/markdown/SPARK_FS_L2C__SPARK-22877_Interface_Salesforce Complaints_docx.md",
+        "category": "PKG",
         "format": "DOCX",
+        "bytes": "53465",
         "chars": "52800"
       },
       "style": {
@@ -68,13 +70,14 @@
         "x": 620,
         "y": -800
       },
-      "caption": "Salesforce (CRM)",
+      "caption": "SAP S/4HANA",
       "labels": [
         "System"
       ],
       "properties": {
-        "code": "Salesforce",
-        "description": "Customer relationship management platform handling customer complaints, accounts, and order intake."
+        "code": "S4HANA",
+        "description": "Target ERP platform for global sales, billing, master data, and central finance.",
+        "kind": "sap"
       },
       "style": {
         "node-color": "#E0F2FE",
@@ -88,13 +91,14 @@
         "x": 620,
         "y": -480
       },
-      "caption": "SAP CPI",
+      "caption": "SAP ECC",
       "labels": [
         "System"
       ],
       "properties": {
-        "code": "CPI",
-        "description": "Cloud integration middleware brokering interfaces between SAP and third parties."
+        "code": "ECC",
+        "description": "Legacy ERP environment being migrated to SAP S/4HANA under Solvay SPARK.",
+        "kind": "legacy_erp"
       },
       "style": {
         "node-color": "#E0F2FE",
@@ -108,13 +112,14 @@
         "x": 620,
         "y": -160
       },
-      "caption": "SAP ECC",
+      "caption": "Salesforce (CRM)",
       "labels": [
         "System"
       ],
       "properties": {
-        "code": "ECC",
-        "description": "Legacy ERP environment being migrated to SAP S/4HANA under Solvay SPARK."
+        "code": "Salesforce",
+        "description": "Customer relationship management platform handling customer complaints, accounts, and order intake.",
+        "kind": "crm"
       },
       "style": {
         "node-color": "#E0F2FE",
@@ -128,13 +133,14 @@
         "x": 620,
         "y": 160
       },
-      "caption": "M3 (Legacy ERP)",
+      "caption": "SAP Fiori",
       "labels": [
         "System"
       ],
       "properties": {
-        "code": "M3",
-        "description": "Infor M3 ERP used by parts of the business, with order management being retired."
+        "code": "Fiori",
+        "description": "Modern UX role-based applications for custom enhancements and business user dashboards.",
+        "kind": "sap_ui"
       },
       "style": {
         "node-color": "#E0F2FE",
@@ -144,6 +150,48 @@
     },
     {
       "id": "n7",
+      "position": {
+        "x": 620,
+        "y": 480
+      },
+      "caption": "M3 (Legacy ERP)",
+      "labels": [
+        "System"
+      ],
+      "properties": {
+        "code": "M3",
+        "description": "Infor M3 ERP used by parts of the business, with order management being retired.",
+        "kind": "legacy_erp"
+      },
+      "style": {
+        "node-color": "#E0F2FE",
+        "border-color": "#0284C7",
+        "radius": 100
+      }
+    },
+    {
+      "id": "n8",
+      "position": {
+        "x": 620,
+        "y": 800
+      },
+      "caption": "SAP CPI",
+      "labels": [
+        "System"
+      ],
+      "properties": {
+        "code": "CPI",
+        "description": "Cloud integration middleware brokering interfaces between SAP and third parties.",
+        "kind": "middleware"
+      },
+      "style": {
+        "node-color": "#E0F2FE",
+        "border-color": "#0284C7",
+        "radius": 100
+      }
+    },
+    {
+      "id": "n9",
       "position": {
         "x": -620,
         "y": 160
@@ -159,46 +207,6 @@
       "style": {
         "node-color": "#FFEDD5",
         "border-color": "#F97316",
-        "radius": 100
-      }
-    },
-    {
-      "id": "n8",
-      "position": {
-        "x": 620,
-        "y": 480
-      },
-      "caption": "SAP S/4HANA",
-      "labels": [
-        "System"
-      ],
-      "properties": {
-        "code": "S4HANA",
-        "description": "Target ERP platform for global sales, billing, master data, and central finance."
-      },
-      "style": {
-        "node-color": "#E0F2FE",
-        "border-color": "#0284C7",
-        "radius": 100
-      }
-    },
-    {
-      "id": "n9",
-      "position": {
-        "x": 620,
-        "y": 800
-      },
-      "caption": "SAP Fiori",
-      "labels": [
-        "System"
-      ],
-      "properties": {
-        "code": "Fiori",
-        "description": "Modern UX role-based applications for custom enhancements and business user dashboards."
-      },
-      "style": {
-        "node-color": "#E0F2FE",
-        "border-color": "#0284C7",
         "radius": 100
       }
     }
@@ -222,7 +230,7 @@
     },
     {
       "id": "r2",
-      "type": "INTEGRATES_WITH",
+      "type": "MENTIONS_SYSTEM",
       "fromId": "n0",
       "toId": "n3",
       "properties": {},
@@ -230,7 +238,7 @@
     },
     {
       "id": "r3",
-      "type": "INTEGRATES_WITH",
+      "type": "MENTIONS_SYSTEM",
       "fromId": "n0",
       "toId": "n4",
       "properties": {},
@@ -238,7 +246,7 @@
     },
     {
       "id": "r4",
-      "type": "INTERACTS_WITH",
+      "type": "MENTIONS_SYSTEM",
       "fromId": "n0",
       "toId": "n5",
       "properties": {},
@@ -246,7 +254,7 @@
     },
     {
       "id": "r5",
-      "type": "INTERACTS_WITH",
+      "type": "MENTIONS_SYSTEM",
       "fromId": "n0",
       "toId": "n6",
       "properties": {},
@@ -254,7 +262,7 @@
     },
     {
       "id": "r6",
-      "type": "REFERENCES_TICKET",
+      "type": "MENTIONS_SYSTEM",
       "fromId": "n0",
       "toId": "n7",
       "properties": {},
@@ -262,7 +270,7 @@
     },
     {
       "id": "r7",
-      "type": "RUNS_ON",
+      "type": "MENTIONS_SYSTEM",
       "fromId": "n0",
       "toId": "n8",
       "properties": {},
@@ -270,7 +278,7 @@
     },
     {
       "id": "r8",
-      "type": "USES_UI",
+      "type": "REFERENCES_TICKET",
       "fromId": "n0",
       "toId": "n9",
       "properties": {},

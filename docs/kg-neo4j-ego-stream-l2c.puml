@@ -21,73 +21,76 @@ skinparam note {
 }
 
 usecase "**:Stream**\n**Lead to Cash (L2C)**" as EGO #EDE9FE;line:8B5CF6
-usecase ":Document\n×48" as HUB #F1F5F9;line:64748B
+usecase ":Document\n×161" as HUB #F1F5F9;line:64748B
 
-HUB -up-> EGO : ":BELONGS_TO ×48"
+HUB -up-> EGO : ":BELONGS_TO ×161"
 
 usecase ":System\nSAP S/4HANA" as N0 #E0F2FE;line:0284C7
-HUB -down-> N0 : ":RUNS_ON ×25"
-usecase ":System\nSAP Fiori" as N1 #E0F2FE;line:0284C7
-HUB -down-> N1 : ":USES_UI ×19"
-usecase ":System\nSAP ECC" as N2 #E0F2FE;line:0284C7
-HUB -down-> N2 : ":INTERACTS_WITH ×15"
-usecase ":Stream\nRecord to Report (R2R)" as N3 #EDE9FE;line:8B5CF6
-HUB -right-> N3 : ":BELONGS_TO ×10"
-usecase ":System\nWP1 (Legacy ERP)" as N4 #E0F2FE;line:0284C7
-HUB -down-> N4 : ":INTERACTS_WITH ×9"
-usecase ":System\nPF1 (Legacy ERP)" as N5 #E0F2FE;line:0284C7
-HUB -down-> N5 : ":INTERACTS_WITH ×9"
-usecase ":Stream\nIdea to Delivery (I2D)" as N6 #EDE9FE;line:8B5CF6
-HUB -right-> N6 : ":BELONGS_TO ×8"
-usecase ":System\nSolvay@eCommerce" as N7 #E0F2FE;line:0284C7
-HUB -down-> N7 : ":CONNECTS_TO ×7"
-usecase ":System\nSAP CPI" as N8 #E0F2FE;line:0284C7
-HUB -down-> N8 : ":INTEGRATES_WITH ×7"
-usecase ":System\nSAP GTS" as N9 #E0F2FE;line:0284C7
-HUB -down-> N9 : ":INTERACTS_WITH ×7"
-usecase ":System\nEsker" as N10 #E0F2FE;line:0284C7
-HUB -down-> N10 : ":INTERFACES_WITH ×7"
-usecase ":System\nM3 (Legacy ERP)" as N11 #E0F2FE;line:0284C7
-HUB -down-> N11 : ":INTERACTS_WITH ×5"
-usecase ":System\nElemica" as N12 #E0F2FE;line:0284C7
-HUB -down-> N12 : ":INTERFACES_WITH ×5"
-usecase ":System\nSalesforce (CRM)" as N13 #E0F2FE;line:0284C7
-HUB -down-> N13 : ":INTEGRATES_WITH ×4"
-usecase ":System\nCoface" as N14 #E0F2FE;line:0284C7
-HUB -down-> N14 : ":INTERFACES_WITH ×2"
-usecase ":Stream\nProcure to Pay (P2P)" as N15 #EDE9FE;line:8B5CF6
-HUB -right-> N15 : ":BELONGS_TO ×2"
-usecase ":System\nOMP" as N16 #E0F2FE;line:0284C7
-HUB -down-> N16 : ":INTERFACES_WITH ×2"
-usecase ":System\nSOVOS (Tax Engine)" as N17 #E0F2FE;line:0284C7
-HUB -down-> N17 : ":INTERFACES_WITH ×2"
-usecase ":System\nSAP EWM" as N18 #E0F2FE;line:0284C7
-HUB -down-> N18 : ":INTERACTS_WITH ×2"
-usecase ":System\nSAP MDG" as N19 #E0F2FE;line:0284C7
-HUB -down-> N19 : ":INTERACTS_WITH ×1"
-usecase ":Process\n53 distinct" as B0 #DCFCE7;line:10B981
-HUB -left-> B0 : ":SPECIFIES_PROCESS ×61"
-usecase ":Spec\n41 distinct" as B1 #FFEDD5;line:F97316
-HUB -left-> B1 : ":REFERENCES_TICKET ×33"
+HUB -down-> N0 : ":MENTIONS_SYSTEM ×115"
+usecase ":System\nSAP ECC" as N1 #E0F2FE;line:0284C7
+HUB -down-> N1 : ":MENTIONS_SYSTEM ×60"
+usecase ":System\nSAP Fiori" as N2 #E0F2FE;line:0284C7
+HUB -down-> N2 : ":MENTIONS_SYSTEM ×60"
+usecase ":System\nPF1 (Legacy ERP)" as N3 #E0F2FE;line:0284C7
+HUB -down-> N3 : ":MENTIONS_SYSTEM ×36"
+usecase ":Stream\nIdea to Delivery (I2D)" as N4 #EDE9FE;line:8B5CF6
+HUB -right-> N4 : ":BELONGS_TO ×32"
+usecase ":System\nSalesforce (CRM)" as N5 #E0F2FE;line:0284C7
+HUB -down-> N5 : ":MENTIONS_SYSTEM ×30"
+usecase ":Stream\nRecord to Report (R2R)" as N6 #EDE9FE;line:8B5CF6
+HUB -right-> N6 : ":BELONGS_TO ×27"
+usecase ":System\nWP1 (Legacy ERP)" as N7 #E0F2FE;line:0284C7
+HUB -down-> N7 : ":MENTIONS_SYSTEM ×26"
+usecase ":System\nSAP GTS" as N8 #E0F2FE;line:0284C7
+HUB -down-> N8 : ":MENTIONS_SYSTEM ×25"
+usecase ":System\nSolvay@eCommerce" as N9 #E0F2FE;line:0284C7
+HUB -down-> N9 : ":MENTIONS_SYSTEM ×16"
+usecase ":System\nElemica" as N10 #E0F2FE;line:0284C7
+HUB -down-> N10 : ":MENTIONS_SYSTEM ×13"
+usecase ":System\nOMP" as N11 #E0F2FE;line:0284C7
+HUB -down-> N11 : ":MENTIONS_SYSTEM ×11"
+usecase ":System\nEsker" as N12 #E0F2FE;line:0284C7
+HUB -down-> N12 : ":MENTIONS_SYSTEM ×11"
+usecase ":Stream\nProcure to Pay (P2P)" as N13 #EDE9FE;line:8B5CF6
+HUB -right-> N13 : ":BELONGS_TO ×10"
+usecase ":System\nM3 (Legacy ERP)" as N14 #E0F2FE;line:0284C7
+HUB -down-> N14 : ":MENTIONS_SYSTEM ×10"
+usecase ":System\nSAP EWM" as N15 #E0F2FE;line:0284C7
+HUB -down-> N15 : ":MENTIONS_SYSTEM ×9"
+usecase ":System\nSAP CPI" as N16 #E0F2FE;line:0284C7
+HUB -down-> N16 : ":MENTIONS_SYSTEM ×9"
+usecase ":System\nSAP MDG" as N17 #E0F2FE;line:0284C7
+HUB -down-> N17 : ":MENTIONS_SYSTEM ×6"
+usecase ":System\nCoface" as N18 #E0F2FE;line:0284C7
+HUB -down-> N18 : ":MENTIONS_SYSTEM ×5"
+usecase ":System\nSAP TM" as N19 #E0F2FE;line:0284C7
+HUB -down-> N19 : ":MENTIONS_SYSTEM ×3"
+usecase ":System\nSOVOS (Tax Engine)" as N20 #E0F2FE;line:0284C7
+HUB -down-> N20 : ":MENTIONS_SYSTEM ×2"
+usecase ":Process\n218 distinct" as B0 #DCFCE7;line:10B981
+HUB -left-> B0 : ":SPECIFIES_PROCESS ×334"
+usecase ":Spec\n148 distinct" as B1 #FFEDD5;line:F97316
+HUB -left-> B1 : ":REFERENCES_TICKET ×171"
 HUB -left-> B1 : ":IMPLEMENTS_TICKET ×12"
 
 N0 -[hidden]right- N1
 N1 -[hidden]right- N2
-N2 -[hidden]right- N4
-N4 -[hidden]right- N5
+N2 -[hidden]right- N3
+N3 -[hidden]right- N5
 N5 -[hidden]right- N7
 N7 -[hidden]right- N8
 N8 -[hidden]right- N9
 N9 -[hidden]right- N10
 N10 -[hidden]right- N11
 N11 -[hidden]right- N12
-N12 -[hidden]right- N13
-N13 -[hidden]right- N14
-N14 -[hidden]right- N16
+N12 -[hidden]right- N14
+N14 -[hidden]right- N15
+N15 -[hidden]right- N16
 N16 -[hidden]right- N17
 N17 -[hidden]right- N18
 N18 -[hidden]right- N19
-N3 -[hidden]down- N6
-N6 -[hidden]down- N15
+N19 -[hidden]right- N20
+N4 -[hidden]down- N6
+N6 -[hidden]down- N13
 B0 -[hidden]down- B1
 @enduml

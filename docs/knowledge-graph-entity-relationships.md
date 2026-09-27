@@ -1,7 +1,8 @@
 # Entity–Relationship Map — Solvay SPARK Knowledge Graph
 
 Built from `knowledge_graph.py` (the extraction rules) and `knowledge_graph.json`
-(the built graph): **354 nodes, 560 edges**.
+(the built graph): **2,390 entity nodes and 4,789 relationships**, plus a passage layer
+of 8,867 chunks — 11,257 nodes and 20,893 relationships as a Neo4j property graph.
 
 Regenerate the graph with `POST /api/graph/rebuild`, or in Python:
 
@@ -59,31 +60,59 @@ documents name it.
 
 ## 3. Relationships
 
-All eleven. The **match target** is the document body plus its filename, with
-underscores opened into spaces; all keyword patterns are case-insensitive.
+Two layers, stored in one file. The **entity layer** (`nodes`, `edges`) holds 2,390
+nodes and 4,789 relationships of 6 types. The **passage layer** (`passages`) holds
+8,867 chunks and the relationships that tie them to documents and entities. The
+match target is the document body plus its filename, with underscores opened into
+spaces.
 
-| Relation | Source | Target | UI label | Edges | Rule that creates it |
-|---|---|---|---|---|---|
-| `belongs_to` | document | stream | Belongs to Stream | 70 | `\bL2C\b` / `\bI2D\b` / `\bR2R\b` / `\bP2P\b` matches |
-| `runs_on` | document | system | Executes on S/4 | 40 | `\bS[/ ]?4[\s/-]?HANA\b\|\bS/4\b\|\bS4\b` matches |
-| `uses_ui` | document | system | Fiori Custom App | 28 | `\bfiori\b` matches |
-| `interacts_with` | document | system | Interacts with ECC | 25 | `\bECC\b` matches |
-| `connects_to` | document | system | eCommerce Portal | 10 | `\be[-\s]?commerce\b` matches |
-| `integrates_with` | document | system | Integrates with CRM | 4 | `\bsalesforce\b` matches |
-| `interfaces_with` | document | system | Tax Engine Interface | 2 | `\bsovos\b` matches |
-| `specifies_process` | document | process | Specifies Process | 70 | `(?<![A-Za-z0-9-])([A-Za-z][A-Za-z0-9]{0,3})-(\d{2,3}(?:-\d{2,3})+)\b` in the **body only** |
-| `subprocess_of` | process | process | Subprocess of | 77 | **Not matched — looked up.** See below. |
-| `implements_ticket` | document | spec | Primary Specification | 13 | `\bSPARK[-_ ]?(\d{4,6})\b` matches **and** the bare number appears in the filename |
-| `references_ticket` | document | spec | References Ticket | 543 | Same match, but the number is **not** in the filename |
+| Relation | Source | Target | Count | Rule that creates it |
+|---|---|---|---|---|
+| `belongs_to` | document | stream | 237 | `\bL2C\b` / `\bI2D\b` / `\bR2R\b` / `\bP2P\b` matches |
+| `mentions_system` | document | system | 556 | the system's pattern matches (`SYSTEM_RE`) |
+| `specifies_process` | document | process | 1,947 | `CODE_RE` in the **body only** |
+| `subprocess_of` | process | process | 1,846 | **Not matched — looked up** in the BPML workbook. See below. |
+| `implements_ticket` | document | spec | 13 | `\bSPARK[-_ ]?(\d{4,6})\b` matches **and** the number is in the filename |
+| `references_ticket` | document | spec | 190 | Same match, but the number is **not** in the filename |
+| `has_chunk` | document | chunk | 8,867 | every chunk the retrieval index holds for the document |
+| `mentions` | chunk | stream / system / process / spec | 7,237 | the same patterns, run per chunk, kept only where the document is linked to the entity |
 
-The seven system relations are one-per-platform: the relation name tells you which
-system it points at. The UI labels are hard-coded per system, which is why `runs_on`
-always reads "Executes on S/4".
+**One relationship type per meaning.** Document → system links used to come in six
+types (`runs_on`, `interacts_with`, `integrates_with`, `interfaces_with`, `uses_ui`,
+`connects_to`), chosen by *which system* was named rather than by anything the
+document said. The extractor only knows that a document names a system, so there is
+now one type, `mentions_system`, and what kind of system it is lives on the node:
+`kind` is `sap`, `legacy_erp`, `crm`, `middleware`, `sap_ui`, `portal` or
+`third_party`.
+
+**Relationships carry their evidence.** Every relationship out of a document has:
+
+| Property | Meaning |
+|---|---|
+| `method` | the rule that made it: `name_match`, `code_match`, `ticket_match`, `ticket_in_filename` (`subprocess_of` carries `bpml_workbook`) |
+| `mentions` | how many times the document names the target |
+| `chunk_count` | how many of its chunks name the target |
+| `chunks` | the first five of those chunk keys (`PKG:10003882`), the ids retrieval uses — open one with `get_chunk` or `rag.chunk()` |
+| `in_filename_only` | present when only the filename names the target |
+
+**The passage layer** follows the usual graph-RAG pattern
+`(:Document)-[:HAS_CHUNK]->(:Chunk)-[:MENTIONS {count}]->(entity)`. Chunk nodes are
+read from the retrieval index, not re-chunked, so a chunk's `chunk_key` is exactly
+the id the agents cite. It is stored compactly (each chunk lists its document and
+its mentions) and expanded into relationships by `knowledge_graph.property_graph()`,
+which the Neo4j exporters use. It sits beside the entity layer rather than in it, so
+neighbourhoods, paths and the canvas stay about entities rather than passages. The
+graph is rebuilt when the index is re-indexed, because chunk ids change then.
+
+**Presentation is not stored.** `degree`, `size` and `color` are added when the graph
+is loaded (`knowledge_graph.decorate`). Degree is derived from the relationships, and
+the display radius used to overwrite the document's file size, which is now stored
+as `bytes`.
 
 ### Read vs. derived
 
-Nine relations are **read** — a pattern matched text, so you can go and see it in the
-source document.
+Every relationship out of a document is **read**: a pattern matched text, and its
+`chunks` property says where, so you can go and see it in the source.
 
 `subprocess_of` is **derived**. It appears in no document; it comes from
 `solvay-spark/pkg/BPML_ProcessesHierarchyExtended.xlsx`, whose own Markdown conversion
@@ -124,30 +153,31 @@ The same schema as Mermaid, for viewers that render it inline:
 
 ```mermaid
 flowchart TD
-    DOC["document<br/>83 — one per Markdown file"]
+    DOC["document<br/>218 — one per Markdown file"]
     STR(["stream<br/>4 — fixed"])
-    SYS(["system<br/>18 — fixed"])
-    PROC["process<br/>202 — BPML step"]
-    SPEC["spec<br/>47 — JIRA ticket"]
+    SYS(["system<br/>18 — fixed, with kind"])
+    PROC["process<br/>1,985 — BPML step"]
+    SPEC["spec<br/>165 — JIRA ticket"]
+    CH["chunk<br/>8,867 — from the retrieval index"]
 
-    DOC -->|"belongs_to · 70"| STR
-    DOC -->|"runs_on · 40"| SYS
-    DOC -->|"uses_ui · 28"| SYS
-    DOC -->|"interacts_with · 70"| SYS
-    DOC -->|"connects_to · 10"| SYS
-    DOC -->|"integrates_with · 12"| SYS
-    DOC -->|"interfaces_with · 21"| SYS
-    DOC -->|"specifies_process · 70"| PROC
+    DOC -->|"belongs_to · 237"| STR
+    DOC -->|"mentions_system · 556"| SYS
+    DOC -->|"specifies_process · 1947"| PROC
     DOC -->|"implements_ticket · 13"| SPEC
-    DOC -->|"references_ticket · 41"| SPEC
-    PROC -->|"subprocess_of · 185"| PROC
+    DOC -->|"references_ticket · 190"| SPEC
+    PROC -->|"subprocess_of · 1846"| PROC
+    DOC -->|"has_chunk · 8867"| CH
+    CH -.->|"mentions · 7237"| SYS
+    CH -.->|mentions| PROC
+    CH -.->|mentions| STR
+    CH -.->|mentions| SPEC
 
     classDef fixed fill:#333,stroke:#999,color:#fff;
     class STR,SYS fixed;
 ```
 
-**Reading the diagram:** dark boxes are the hard-coded vocabulary. `subprocess_of` is
-the only self-loop.
+**Reading the diagram:** dark boxes are the hard-coded vocabulary; dashed arrows are the
+passage layer. `subprocess_of` is the only self-loop.
 
 ---
 

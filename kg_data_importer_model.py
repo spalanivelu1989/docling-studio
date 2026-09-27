@@ -41,6 +41,7 @@ LABEL = {
     "document": "Document",
     "process": "Process",
     "spec": "Spec",
+    "chunk": "Chunk",
 }
 
 # The property that identifies each label, which becomes its key constraint.
@@ -50,6 +51,7 @@ KEY_PROPERTY = {
     "Document": "filename",
     "Process": "code",
     "Spec": "ticket",
+    "Chunk": "chunk_key",
 }
 
 # Presentation fields the canvas needs. They are not part of the data model and
@@ -65,10 +67,13 @@ POSITION = {
     "System": (520, 60),
     "Spec": (-520, 60),
     "Process": (0, 430),
+    "Chunk": (-520, 430),
 }
 
 # Neo4j property types, from the schema's PropertyTypesEnum.
 def _type_of(value: Any) -> str:
+    if isinstance(value, list):
+        return "list"
     if isinstance(value, bool):
         return "boolean"
     if isinstance(value, int):
@@ -78,7 +83,17 @@ def _type_of(value: Any) -> str:
     return "string"
 
 
+def _prop_type(kind: str) -> dict[str, Any]:
+    """A schema property type; a list is an array of strings (chunk keys)."""
+    return {"type": "array", "items": {"type": "string"}} if kind == "list" else {"type": kind}
+
+
 def build(graph: dict[str, Any]) -> dict[str, Any]:
+    import knowledge_graph as kg
+
+    # The whole property graph, passage layer included.
+    all_nodes, all_edges = kg.property_graph(graph)
+    graph = {**graph, "nodes": all_nodes, "edges": all_edges}
     by_id = {n["id"]: n for n in graph["nodes"]}
 
     # --- properties, read off the data -------------------------------------
@@ -110,28 +125,40 @@ def build(graph: dict[str, Any]) -> dict[str, Any]:
             entries.append({
                 "$id": f"p:{pid}",
                 "token": name,
-                "type": {"type": seen[token][name]},
+                "type": _prop_type(seen[token][name]),
                 "nullable": present[token][name] < counts[token],
             })
         node_labels.append({"$id": f"nl:{i}", "token": token, "properties": entries})
     label_id = {n["token"]: n["$id"] for n in node_labels}
 
-    # One relationship type per distinct relation, with the edge's UI label
-    # carried as a property -- it is real data on every edge.
-    relations = sorted({e["relation"] for e in graph["edges"]})
+    # One relationship type per distinct relation, with its properties read
+    # off the relationships that carry them: the evidence a document link
+    # holds (method, mentions, chunk_count, chunks), a mention's count, and
+    # the UI label, which is real data on every edge.
+    rel_props: dict[str, dict[str, str]] = {}
+    rel_present: dict[str, dict[str, int]] = {}
+    rel_counts: dict[str, int] = {}
+    for e in graph["edges"]:
+        rel_counts[e["relation"]] = rel_counts.get(e["relation"], 0) + 1
+        props = rel_props.setdefault(e["relation"], {})
+        here = rel_present.setdefault(e["relation"], {})
+        for key, value in e.items():
+            if key in ("id", "source", "target", "relation") or value is None or value == "":
+                continue
+            props.setdefault(key, _type_of(value))
+            here[key] = here.get(key, 0) + 1
     rel_types = []
-    for i, relation in enumerate(relations, start=1):
-        pid += 1
-        rel_types.append({
-            "$id": f"rt:{i}",
-            "token": relation.upper(),
-            "properties": [{
+    for i, relation in enumerate(sorted(rel_props), start=1):
+        entries = []
+        for name in sorted(rel_props[relation]):
+            pid += 1
+            entries.append({
                 "$id": f"p:{pid}",
-                "token": "label",
-                "type": {"type": "string"},
-                "nullable": False,
-            }],
-        })
+                "token": name,
+                "type": _prop_type(rel_props[relation][name]),
+                "nullable": rel_present[relation][name] < rel_counts[relation],
+            })
+        rel_types.append({"$id": f"rt:{i}", "token": relation.upper(), "properties": entries})
     rel_type_id = {r["token"]: r["$id"] for r in rel_types}
 
     # --- object types -------------------------------------------------------

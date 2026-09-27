@@ -4,7 +4,7 @@
  *  sides, impact, the decision with its options, the evidence, what is still
  *  open. */
 import {
-  Box, Button, ButtonBase, FormControlLabel, InputAdornment, Radio, Stack, TextField, ToggleButton,
+  Box, Button, ButtonBase, FormControlLabel, InputAdornment, Link, Radio, Stack, TextField, ToggleButton,
   ToggleButtonGroup, Tooltip, Typography, useTheme,
 } from "@mui/material";
 import { Download, Search } from "lucide-react";
@@ -52,7 +52,7 @@ function Chips<T extends string>({ label, value, options, onChange }: {
 const csvCell = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
 
 export default function DeviationRegisterView({
-  deviations, subject, types, dispositions, states, decisions, reviewer, deciding, onDecide, focusGap, renderEvidence, fileStem,
+  deviations, subject, types, dispositions, states, decisions, reviewer, deciding, onDecide, focusGap, renderEvidence, fileStem, onTrace,
 }: {
   deviations: Deviation[];
   subject: RolloutSubject;
@@ -67,6 +67,8 @@ export default function DeviationRegisterView({
   focusGap?: string;
   renderEvidence: (ev: RolloutEvidence) => ReactNode;
   fileStem: string;
+  /** Open this gap's lineage on the Investigation tab. */
+  onTrace?: (gapId: string) => void;
 }) {
   const theme = useTheme();
   const p = usePremium();
@@ -367,6 +369,12 @@ export default function DeviationRegisterView({
               {gap.evidence.length > 0 && (
                 <Block title={`EVIDENCE · ${gap.evidence.length}`}>
                   <Box>{gap.evidence.map((e, i) => <Box key={i}>{renderEvidence(e)}</Box>)}</Box>
+                  {onTrace && (
+                    <Link component="button" onClick={() => onTrace(gap.gap_id)}
+                          sx={{ fontSize: 12.5, mt: 1, color: p.accent, textDecorationColor: "inherit" }}>
+                      Trace how this was found — the calls, queries and reasoning behind each quote →
+                    </Link>
+                  )}
                 </Block>
               )}
 

@@ -267,6 +267,10 @@ def _graph(tool: str, args: dict, result: dict, session: ftools.Session | None) 
                 "id": eid, "source": e["source"], "target": e["target"],
                 "relation": e.get("relation") or "", "label": e.get("label") or "",
                 "on_path": eid in path_edges,
+                # The passages a document link was extracted from, so a reader
+                # can open the text behind a relationship, not only its name.
+                "chunks": list(e.get("chunks") or [])[:5],
+                "mentions": e.get("mentions"),
             })
         if len(edges) >= MAX_EDGES:
             break

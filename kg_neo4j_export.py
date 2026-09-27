@@ -43,6 +43,7 @@ LABEL = {
     "document": "Document",
     "process": "Process",
     "spec": "Spec",
+    "chunk": "Chunk",
 }
 
 # Presentation fields the canvas needs; they are not part of the data model.
@@ -56,11 +57,12 @@ PALETTE = {
     "Document": ("#F1F5F9", "#64748B"),
     "Process": ("#DCFCE7", "#10B981"),
     "Spec": ("#FFEDD5", "#F97316"),
+    "Chunk": ("#F8FAFC", "#94A3B8"),
 }
 
-# The instance sample. This one document carries 7 of the 11 relationship
-# types across only 7 edges, so it exercises most of the vocabulary without
-# turning into a hairball. Chosen by counting distinct relations per document.
+# The instance sample. This one document carries most of the entity layer's
+# relationship types across only a handful of edges, so it exercises the
+# vocabulary without turning into a hairball.
 SAMPLE_DOC = "doc:SPARK_FS_L2C__SPARK-22877_Interface_Salesforce Complaints_docx.md"
 
 # The ego network drawn by default. Any node id works: `--ego system:S4HANA`,
@@ -74,6 +76,10 @@ def rel_type(relation: str) -> str:
 
 
 def py_type(value) -> str:
+    if isinstance(value, list):
+        return "list"
+    if isinstance(value, dict):
+        return "map"
     if isinstance(value, bool):
         return "boolean"
     if isinstance(value, int):
@@ -88,10 +94,18 @@ def load() -> dict:
 
 
 def model(graph: dict) -> dict:
-    """Derive the property model: per label, its count and its property types."""
+    """Derive the property model: per label, its count and its property types.
+
+    Read over the whole property graph, passage layer included, so the schema
+    shows (:Document)-[:HAS_CHUNK]->(:Chunk)-[:MENTIONS]->(entity). The instance
+    and ego drawings stay on the entity layer, where a node is a thing rather
+    than a passage."""
+    import knowledge_graph as kg
+
+    all_nodes, all_edges = kg.property_graph(graph)
     counts: Counter[str] = Counter()
     props: dict[str, dict[str, str]] = defaultdict(dict)
-    for node in graph["nodes"]:
+    for node in all_nodes:
         lab = LABEL[node["type"]]
         counts[lab] += 1
         for key, value in node.items():
@@ -100,8 +114,8 @@ def model(graph: dict) -> dict:
             props[lab].setdefault(key, py_type(value))
 
     edges: Counter[tuple[str, str, str]] = Counter()
-    by_id = {n["id"]: n for n in graph["nodes"]}
-    for edge in graph["edges"]:
+    by_id = {n["id"]: n for n in all_nodes}
+    for edge in all_edges:
         src = LABEL[by_id[edge["source"]]["type"]]
         dst = LABEL[by_id[edge["target"]]["type"]]
         edges[(src, rel_type(edge["relation"]), dst)] += 1
@@ -202,6 +216,7 @@ SCHEMA_POS = {
     "System": (520, 0),
     "Spec": (-520, 0),
     "Process": (0, 420),
+    "Chunk": (-520, 420),
 }
 
 
@@ -341,8 +356,10 @@ def schema_puml(m: dict) -> str:
                             title="Solvay SPARK knowledge graph — Neo4j schema (meta-graph)")]
     alias = {lab: lab.upper() for lab in m["counts"]}
     notes = {"Stream": "top", "Spec": "left", "System": "right",
-             "Process": "bottom", "Document": "top"}
-    for lab in ("Stream", "Spec", "Document", "System", "Process"):
+             "Process": "bottom", "Document": "top", "Chunk": "left"}
+    for lab in ("Stream", "Spec", "Document", "System", "Process", "Chunk"):
+        if lab not in m["counts"]:
+            continue
         out.append(puml_node(alias[lab], f":{lab}\\ncount: {m['counts'][lab]}", lab))
         # A note body takes real newlines; "\n" is only honoured inside a label.
         props = "\n".join(f"{k}: {v}" for k, v in sorted(m["props"][lab].items()))
@@ -353,12 +370,15 @@ def schema_puml(m: dict) -> str:
     # emitted arm by arm, busiest first inside each arm: interleaving the
     # directions lets PlantUML park the :SPECIFIES_PROCESS label up among the
     # :System bundle, where it reads as one more System edge.
-    direction = {"Stream": "up", "Spec": "left", "System": "right", "Process": "down"}
-    arm = {"Stream": 0, "Spec": 1, "System": 2, "Process": 3}
-    order = sorted(m["edges"].items(), key=lambda kv: (arm[kv[0][2]], -kv[1]))
+    direction = {"Stream": "up", "Spec": "left", "System": "right", "Process": "down", "Chunk": "down"}
+    arm = {"Stream": 0, "Spec": 1, "System": 2, "Process": 3, "Chunk": 4}
+    # The passage layer's MENTIONS arrows come last and are left to PlantUML's
+    # router: they leave :Chunk, not the centre of the star.
+    order = sorted(m["edges"].items(), key=lambda kv: (kv[0][0] == "Chunk", arm[kv[0][2]], -kv[1]))
     for (src, rel, dst), n in order:
-        if src == dst:                       # the :Process self-loop
-            out.append(f'{alias[src]} --> {alias[dst]} : ":{rel} · {n}"')
+        if src == dst or src == "Chunk":     # the :Process self-loop, and MENTIONS
+            out.append(f'{alias[src]} ..> {alias[dst]} : ":{rel} · {n}"' if src == "Chunk"
+                       else f'{alias[src]} --> {alias[dst]} : ":{rel} · {n}"')
             continue
         out.append(f'{alias[src]} -{direction[dst]}-> {alias[dst]} : ":{rel} · {n}"')
     out.append("@enduml")

@@ -1172,6 +1172,9 @@ export interface EvidenceGraphEdge {
   relation: string;
   label: string;
   on_path: boolean;
+  /** A document link's source passages and how often it names the target. */
+  chunks?: string[];
+  mentions?: number | null;
 }
 
 export interface EvidenceGraphTrace {
@@ -1534,6 +1537,12 @@ export const evidence = {
     fetch(`/api/evidence/runs?limit=${limit}`).then((r) => json<EvidenceRunSummary[]>(r)),
   run: (id: string) =>
     fetch(`/api/evidence/runs/${encodeURIComponent(id)}`).then((r) => json<EvidenceRunDetail>(r)),
+  /** Every claim traced to its passages, graph facts, the calls that returned
+   *  them and the reasoning behind them; `lineageExportUrl` downloads it. */
+  lineage: (id: string) =>
+    fetch(`/api/evidence/runs/${encodeURIComponent(id)}/lineage`).then((r) => json<Lineage>(r)),
+  lineageExportUrl: (id: string, format: "md" | "json") =>
+    `/api/evidence/runs/${encodeURIComponent(id)}/lineage?format=${format}`,
   deleteRun: (id: string) =>
     fetch(`/api/evidence/runs/${encodeURIComponent(id)}`, { method: "DELETE" })
       .then((r) => json<{ status: string; id: string }>(r)),
@@ -1892,6 +1901,10 @@ export const rollout = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     }).then((r) => json<RolloutDecision>(r)),
+  /** Every claim of the run traced to its quotes, the calls that retrieved
+   *  them and the reasoning behind them; `format` downloads it as an audit file. */
+  lineage: (runId: string) => fetch(`/api/rollout/runs/${runId}/lineage`).then((r) => json<Lineage>(r)),
+  lineageExportUrl: (runId: string, format: "md" | "json") => `/api/rollout/runs/${runId}/lineage?format=${format}`,
   /** The workshop outcome as md, pdf, docx or xlsx; one sitting when `session` is given. */
   workshopExportUrl: (runId: string, format: string, session?: string) =>
     `/api/rollout/runs/${runId}/workshop/export?format=${format}${session ? `&session=${encodeURIComponent(session)}` : ""}`,
@@ -2165,3 +2178,93 @@ export interface ExperimentItem {
 export const experimentItem = (experimentId: string, itemId: string) =>
   fetch(`/api/quality/experiments/${encodeURIComponent(experimentId)}/items/${encodeURIComponent(itemId)}`)
     .then((r) => json<ExperimentItem>(r));
+
+// --- traceability: rollout/lineage.py ------------------------------------------
+
+export type QuoteStatus = "verbatim" | "partial" | "not_found" | "not_retrieved" | "unrecorded" | "empty";
+
+export interface LineageRetrieval {
+  call: number; tool: string; stage: string; query: string;
+  rank: number | null; score: number | null; vector_rank: number | null; keyword_rank: number | null;
+}
+
+export interface LineageEvidence {
+  chunk_id: string; doc: string; heading_path: string; side: string; evidence_class: string; quote: string;
+  verification: { status: QuoteStatus; match: number; call: number | null; short?: boolean; elided?: boolean; via?: string };
+  /** Evidence Agent passages: what the passage does for the claim. */
+  stance?: "supports" | "opposes" | "context";
+  provenance_note?: string;
+  server_verified?: boolean | null;
+  retrievals: LineageRetrieval[];
+  first_call: number | null;
+}
+
+export interface LineageEntity {
+  id: string; label: string; type: string; description: string; in_corpus: boolean | null; calls: number[];
+}
+
+export interface LineageClaim {
+  kind: "asis_step" | "deviation" | "fit_area" | "localization" | "dimension" | "backlog" | "claim";
+  ref: string; title: string; stage: string; statement?: string;
+  status: "traced" | "partial" | "untraced";
+  checks: { check: string; ok: boolean; detail: string }[];
+  sides: string[];
+  evidence: LineageEvidence[];
+  evidence_inherited?: boolean;
+  calls: number[];
+  intents: { seq: number; text: string; calls: number[] }[];
+  reasoning: { seq: number; text: string }[];
+  sendbacks: { seq: number; title: string; text: string }[];
+  graph: LineageEntity[];
+  supported_by?: string[];
+  derivation?: { what: string; value: string | number | null; how: string }[];
+  gates?: { gate: string; severity: string; detail: string; gap_id: string }[];
+  decisions?: { verdict: string; option_text: string | null; rationale: string; decided_by: string;
+                decided_at: string; is_current: boolean }[];
+  as_is_statement?: string; gt_statement?: string; sap_bp_reference?: string | null;
+  as_is_step_id?: string; dimension?: string; disposition?: string; localization_state?: string;
+  standard_options_considered?: string[];
+  /** Evidence Agent claims. */
+  graph_facts?: LineageGraphFact[];
+  score?: number;
+  governs?: boolean;
+}
+
+export interface LineageGraphFact {
+  statement: string; meaningful: boolean; note: string; calls: number[]; confirmed: number; total: number;
+  nodes: { id: string; label: string; type: string; calls: number[]; seen: boolean }[];
+  edges: { id: string; relation: string; source: string; target: string; calls: number[]; seen: boolean;
+           chunks?: string[] }[];
+}
+
+export interface LineageTrailEntry {
+  seq: number | null; at?: string; kind: string; stage?: string; note?: string; title: string; text: string;
+  call?: number; tool?: string; engine?: string; summary?: string; error?: string | null; ms?: number;
+  query?: string; returned?: number; cited_chunks?: number; supports?: string[]; source?: string; by?: string;
+}
+
+export interface Lineage {
+  run_id: string;
+  claims: LineageClaim[];
+  trail: LineageTrailEntry[];
+  summary: {
+    claims: number; by_status: Record<string, number>;
+    quotes: number; verbatim: number; partial: number; not_found: number; not_retrieved: number; unrecorded: number;
+    record: "full" | "partial" | "none"; calls_without_results: number;
+    calls: number; engines: Record<string, number>; contributing_calls: number;
+    chunks_retrieved: number; chunks_cited: number; documents_cited: number;
+    graph_entities: number; graph_entities_mentioned: number; sendbacks: number; gate_issues: number;
+    graph_facts?: number; graph_facts_confirmed?: number;
+  };
+  /** Evidence Agent runs: the answer the claims add up to. */
+  answer?: {
+    question: string; state: string; state_blurb: string; text: string;
+    confidence: number | null; governing: string; open_questions: string[]; limits: string[];
+    memory: { enabled?: boolean; used?: boolean; suppressed?: boolean;
+              recalled: { text: string; type: string }[]; retained: string };
+  };
+  context: {
+    model: string; prompt_hash: string; corpus_fingerprint: string; categories: string[]; scope: string;
+    template_process: string; started_at: string; finished_at: string; not_checked: string[];
+  };
+}

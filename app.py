@@ -393,17 +393,22 @@ def get_graph_data(categories: list[str] | None = Query(default=None)) -> dict:
     """The knowledge graph, optionally narrowed to some categories.
 
     No categories means the whole graph, which is also what naming every
-    category gives."""
-    return knowledge_graph.filter_by_categories(
+    category gives. The passage layer is left out: the canvas draws entities,
+    and 8,000-odd chunks are several megabytes it would never show."""
+    return _entity_layer(knowledge_graph.filter_by_categories(
         knowledge_graph.extract_graph(force=False), categories
-    )
+    ))
+
+
+def _entity_layer(graph: dict) -> dict:
+    return {k: v for k, v in graph.items() if k != "passages"}
 
 
 @app.post("/api/graph/rebuild")
 def rebuild_graph(categories: list[str] | None = Query(default=None)) -> dict:
-    return knowledge_graph.filter_by_categories(
+    return _entity_layer(knowledge_graph.filter_by_categories(
         knowledge_graph.extract_graph(force=True), categories
-    )
+    ))
 
 
 @app.get("/api/graph/model")
@@ -2421,6 +2426,35 @@ def rollout_workshop_export(run_id: str, format: str = "pdf", session: str = "")
         "Content-Disposition": f'attachment; filename="{wx.filename(run, format, session)}"'})
 
 
+@app.get("/api/rollout/runs/{run_id}/lineage", response_model=None)
+def rollout_lineage(run_id: str, format: str = "") -> dict | Response:
+    """Every claim of a run traced to its quotes, the calls that retrieved
+    them and the reasoning behind those calls, with each quote checked
+    against the text the call returned. `format=md|json` downloads it as an
+    audit file."""
+    from rollout import lineage
+    from rollout import store as ro_store
+
+    if format not in ("", "md", "json"):
+        raise HTTPException(400, "format must be md or json")
+    conn = ro_store.connect()
+    ro_store.create_schema(conn)
+    run = ro_store.get_run(conn, run_id)
+    if not run:
+        raise HTTPException(404, "Run not found")
+    if not format:
+        return lineage.build(run)
+    # Downloads bypass the middleware's redaction, so redact the source.
+    from guardrails import contact
+    run = contact.redact_obj(run)
+    lin = lineage.build(run)
+    name = f"audit-trail-{run_id}.{format}"
+    body = (lineage.to_markdown(run, lin) if format == "md"
+            else json.dumps(lin, indent=1, default=str))
+    return Response(content=body, media_type="text/markdown" if format == "md" else "application/json",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
 @app.get("/api/rollout/decisions")
 def rollout_decisions_all(country: str = "", scope: str = "", type: str = "", verdict: str = "",
                           history: bool = False, limit: int = 200) -> dict:
@@ -2738,6 +2772,34 @@ def evidence_run(run_id: str) -> dict:
     if not run:
         raise HTTPException(404, f"No investigation {run_id}")
     return run
+
+
+@app.get("/api/evidence/runs/{run_id}/lineage", response_model=None)
+def evidence_lineage(run_id: str, format: str = "") -> dict | Response:
+    """Every claim of an investigation traced to its passages, graph facts,
+    the calls that returned them and the reasoning behind those calls, each
+    quote and graph element checked against what the call returned.
+    `format=md|json` downloads it as an audit file."""
+    from evidence import lineage
+    from evidence import store as ev_store
+
+    if format not in ("", "md", "json"):
+        raise HTTPException(400, "format must be md or json")
+    conn = ev_store.connect()
+    ev_store.create_schema(conn)
+    run = ev_store.get_run(conn, run_id)
+    if not run:
+        raise HTTPException(404, f"No investigation {run_id}")
+    if not format:
+        return lineage.build(run)
+    # Downloads bypass the middleware's redaction, so redact the source.
+    from guardrails import contact
+    run = contact.redact_obj(run)
+    lin = lineage.build(run)
+    body = (lineage.to_markdown(run, lin) if format == "md"
+            else json.dumps(lin, indent=1, default=str))
+    return Response(content=body, media_type="text/markdown" if format == "md" else "application/json",
+                    headers={"Content-Disposition": f'attachment; filename="audit-trail-{run_id}.{format}"'})
 
 
 @app.delete("/api/evidence/runs/{run_id}")

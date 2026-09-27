@@ -1165,6 +1165,94 @@ def test_what_was_written_to_memory_is_in_the_log():
     assert note["text"] == written[0]["content"], "the log shows something other than what was sent"
 
 
+# --- traceability (evidence/lineage.py) ----------------------------------------
+
+def _traced_investigation(quote="CPI calls SOVOS over SOAP.", edge="doc:FS->system:SOVOS:interfaces_with"):
+    """A stored investigation in miniature: a retrieval, a graph walk, the
+    reasoning before each, and an answer of two claims."""
+    calls = [
+        {"tool": "search_corpus", "engine": "rag", "summary": "2 chunks",
+         "trace": {"kind": "rag", "query": "SOVOS interface", "hits": [
+             {"rank": 1, "chunk_id": "PKG:1", "score": 0.03, "text": "In step 4, **CPI calls SOVOS** over SOAP."},
+             {"rank": 2, "chunk_id": "PKG:2", "score": 0.02, "text": "CPI stores the signed PDF in DMS."}]}},
+        {"tool": "graph_neighbors", "engine": "graph", "summary": "1 neighbour",
+         "trace": {"kind": "graph",
+                   "nodes": [{"id": "doc:FS", "label": "FS"}, {"id": "system:SOVOS", "label": "SOVOS"}],
+                   "edges": [{"id": "doc:FS->system:SOVOS:interfaces_with", "source": "doc:FS",
+                              "target": "system:SOVOS", "relation": "interfaces_with"}]}},
+    ]
+    log = [
+        {"seq": 0, "kind": "question", "text": "How does SOVOS connect?"},
+        {"seq": 1, "kind": "thinking", "text": "Searching for the SOVOS specification."},
+        {"seq": 2, "kind": "tool_call", "call": 0, "tool": "search_corpus", "engine": "rag"},
+        {"seq": 3, "kind": "thinking", "text": "Checking what the graph links to SOVOS."},
+        {"seq": 4, "kind": "tool_call", "call": 1, "tool": "graph_neighbors", "engine": "graph"},
+    ]
+    answer = {"state": "supported", "answer": "CPI calls SOVOS.", "claims": [
+        {"text": "CPI calls SOVOS over SOAP.", "score": 0.6, "independent_sources": 1,
+         "score_terms": [{"rule": "base", "delta": 0.5, "detail": "one supporting passage"},
+                         {"rule": "graph_corroborates", "delta": 0.1, "detail": "graph agrees"}],
+         "sources": [{"chunk_id": "PKG:1", "doc": "FS", "quote": quote, "stance": "supports", "verified": True}],
+         "graph_facts": [{"statement": "The FS interfaces with SOVOS.", "node_ids": ["doc:FS", "system:SOVOS"],
+                          "edge_ids": [edge]}]},
+        {"text": "The signed PDF is stored in DMS.", "score": 0.5, "independent_sources": 1,
+         "sources": [{"chunk_id": "PKG:2", "doc": "FS", "quote": "CPI stores the signed PDF in DMS.",
+                      "stance": "supports"}]},
+    ]}
+    return {"id": "ev_trace", "question": "How does SOVOS connect?", "calls": calls, "log": log,
+            "answer": answer, "memory": {"used": True, "memories": [{"text": "SOVOS signs invoices.",
+                                                                     "type": "world"}]}}
+
+
+def test_every_passage_and_graph_fact_is_traced_to_its_call():
+    from evidence import lineage
+
+    lin = lineage.build(_traced_investigation())
+    c1 = lin["claims"][0]
+    assert c1["status"] == "traced", c1["checks"]
+    assert c1["evidence"][0]["verification"]["status"] == "verbatim"
+    assert c1["evidence"][0]["retrievals"][0]["query"] == "SOVOS interface"
+    assert c1["graph_facts"][0]["confirmed"] == c1["graph_facts"][0]["total"] == 3
+    assert c1["calls"] == [0, 1]
+    assert [i["text"] for i in c1["intents"]] == ["Searching for the SOVOS specification.",
+                                                  "Checking what the graph links to SOVOS."]
+    # The weakest supported claim sets the confidence, and says so.
+    assert lin["answer"]["governing"] == "C2" and lin["claims"][1]["governs"]
+    assert lin["answer"]["confidence"] == 0.5
+    # Memory steered the run; it is reported, and never counted as evidence.
+    assert lin["answer"]["memory"]["recalled"][0]["text"] == "SOVOS signs invoices."
+
+
+def test_a_graph_fact_nobody_looked_up_is_caught():
+    from evidence import lineage
+
+    lin = lineage.build(_traced_investigation(edge="doc:FS->system:ARKHINEO:archives_in"))
+    c1 = lin["claims"][0]
+    assert c1["status"] == "partial"
+    assert c1["graph_facts"][0]["confirmed"] == 2 and c1["graph_facts"][0]["total"] == 3
+    assert lin["summary"]["graph_facts_confirmed"] == 0
+
+
+def test_a_quote_the_call_never_returned_is_caught():
+    from evidence import lineage
+
+    lin = lineage.build(_traced_investigation(quote="CPI calls SOVOS over REST every hour."))
+    assert lin["claims"][0]["evidence"][0]["verification"]["status"] in ("partial", "not_found")
+    assert lin["claims"][0]["status"] == "partial"
+
+
+def test_the_trail_credits_graph_calls_and_the_audit_file_says_so():
+    from evidence import lineage
+
+    run = _traced_investigation()
+    lin = lineage.build(run)
+    calls = {t["call"]: t for t in lin["trail"] if t["kind"] == "tool_call"}
+    assert calls[0]["supports"] == ["C1", "C2"] and calls[1]["supports"] == ["C1"]
+    md = lineage.to_markdown(run, lin)
+    assert "Recalled from earlier investigations (not evidence)" in md
+    assert "call 1 `search_corpus`" in md and "3/3 seen in calls" in md
+
+
 if __name__ == "__main__":
     import traceback
 

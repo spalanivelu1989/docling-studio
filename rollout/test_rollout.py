@@ -1787,6 +1787,144 @@ def test_the_pdf_and_the_markdown_are_the_same_document():
     assert "to_markdown(run)" in src, "the PDF builds its own content and will drift"
 
 
+# --- traceability (rollout/lineage.py) -----------------------------------------
+
+def _traced_run(quote_as_is="Returns above INR 500,000 need the Finance Manager.",
+                quote_gt="A billing block is applied automatically.", gt_chunk="DR:7"):
+    """A stored run in miniature: two retrieval calls, the reasoning before
+    them, one As-Is step and one deviation quoting both sides."""
+    ev_a = {"chunk_id": "UPLOAD:3", "doc": "India SOP", "heading_path": "5.3", "side": "as_is",
+            "quote": quote_as_is, "evidence_class": "E1"}
+    ev_t = {"chunk_id": gt_chunk, "doc": "L2C-WS020", "heading_path": "Returns", "side": "template",
+            "quote": quote_gt, "evidence_class": "E1"}
+    calls = [
+        {"stage": "asis", "tool": "read_sources", "engine": "session", "summary": "3 chunks",
+         "trace": {"kind": "rag", "query": "approval matrix", "hits": [
+             {"rank": 1, "chunk_id": "UPLOAD:3", "score": 0.03, "vector_rank": 1, "keyword_rank": 2,
+              "text": "| Above **INR 500,000** | ... |\nReturns above INR 500,000 need the\nFinance Manager."}]}},
+        {"stage": "compare", "tool": "search_corpus", "engine": "rag", "summary": "2 chunks",
+         "trace": {"kind": "rag", "query": "billing block returns", "hits": [
+             {"rank": 2, "chunk_id": "DR:7", "score": 0.02, "text": "A **billing block** is applied automatically."},
+             {"rank": 1, "chunk_id": "DR:8", "score": 0.04, "text": "Unrelated passage."}]}},
+        {"stage": "compare", "tool": "compare_entities", "engine": "graph", "summary": "1 shared",
+         "trace": {"kind": "graph", "nodes": [{"id": "system:S4HANA", "label": "SAP S/4HANA", "type": "system",
+                                               "in_corpus": True}]}},
+    ]
+    log = [
+        {"seq": 0, "kind": "thinking", "text": "Reading the approval matrix."},
+        {"seq": 1, "kind": "tool_call", "call": 0, "tool": "read_sources", "engine": "session"},
+        {"seq": 2, "kind": "thinking", "text": "Checking how the template blocks a return."},
+        {"seq": 3, "kind": "tool_call", "call": 1, "tool": "search_corpus", "engine": "rag"},
+        {"seq": 4, "kind": "tool_call", "call": 2, "tool": "compare_entities", "engine": "graph"},
+        {"seq": 5, "kind": "note", "note": "rejected", "text": "GAP-01 quotes only one side."},
+    ]
+    d = dev(evidence=[Evidence(**ev_a), Evidence(**ev_t)],
+            exact_difference="Four-tier approval in SAP S/4HANA vs a billing block").model_dump()
+    return {
+        "id": "ro_trace", "calls": calls, "log": log,
+        "asis": {"steps": [{"step_id": "5.3", "name": "Approve", "action": "approve", "evidence": [ev_a]}]},
+        "analysis": {"deviations": [d], "fit_areas": [], "localization": [],
+                     "dimension_ratings": [{"dimension": "rules", "gt_rating": 2, "note": ""}], "backlog": []},
+        "gates": {"items": [{"gate": "QG1", "severity": "soft", "detail": "x", "gap_id": "GAP-01"}]},
+        "decisions": [{"gap_id": "GAP-01", "verdict": "accept", "decided_by": "Tarento"}],
+        "scores": {"gt_alignment": 50},
+    }
+
+
+def test_every_quote_is_traced_to_the_call_that_returned_it():
+    from rollout import lineage
+
+    lin = lineage.build(_traced_run())
+    gap = next(c for c in lin["claims"] if c["ref"] == "GAP-01")
+    assert gap["status"] == "traced", gap["checks"]
+    by_chunk = {e["chunk_id"]: e for e in gap["evidence"]}
+    # Typeset differently from the chunk (bold, a line break) and still verbatim.
+    assert by_chunk["UPLOAD:3"]["verification"]["status"] == "verbatim"
+    assert by_chunk["DR:7"]["retrievals"][0] == {
+        "call": 1, "tool": "search_corpus", "stage": "compare", "query": "billing block returns",
+        "rank": 2, "score": 0.02, "vector_rank": None, "keyword_rank": None}
+    # The reasoning each call was made under travels with the claim.
+    assert [i["text"] for i in gap["intents"]] == ["Reading the approval matrix.",
+                                                   "Checking how the template blocks a return."]
+    assert gap["sendbacks"] and gap["gates"] and gap["decisions"]
+    assert [g["id"] for g in gap["graph"]] == ["system:S4HANA"]
+
+
+def test_a_quote_that_is_not_in_the_retrieved_text_is_caught():
+    """The check the verifier cannot be trusted to have made: a chunk that was
+    returned, and a quote that is not in it."""
+    from rollout import lineage
+
+    lin = lineage.build(_traced_run(quote_gt="Every return is approved by the CFO."))
+    gap = next(c for c in lin["claims"] if c["ref"] == "GAP-01")
+    ev = next(e for e in gap["evidence"] if e["chunk_id"] == "DR:7")
+    assert ev["verification"]["status"] == "not_found"
+    assert gap["status"] == "partial"
+    assert lin["summary"]["not_found"] == 1
+
+
+def test_a_chunk_no_call_returned_is_caught():
+    from rollout import lineage
+
+    lin = lineage.build(_traced_run(gt_chunk="DR:999"))
+    gap = next(c for c in lin["claims"] if c["ref"] == "GAP-01")
+    ev = next(e for e in gap["evidence"] if e["chunk_id"] == "DR:999")
+    assert ev["verification"]["status"] == "not_retrieved" and ev["retrievals"] == []
+    assert gap["status"] == "partial"
+
+
+def test_a_deviation_quoting_one_side_is_not_fully_traced():
+    from rollout import lineage
+
+    run = _traced_run()
+    run["analysis"]["deviations"][0]["evidence"] = run["analysis"]["deviations"][0]["evidence"][:1]
+    gap = next(c for c in lineage.build(run)["claims"] if c["ref"] == "GAP-01")
+    assert gap["status"] == "partial"
+    assert not next(c for c in gap["checks"] if c["check"].startswith("Both sides"))["ok"]
+
+
+def test_the_trail_says_what_each_call_supplied():
+    from rollout import lineage
+
+    trail = lineage.build(_traced_run())["trail"]
+    calls = {t["call"]: t for t in trail if t["kind"] == "tool_call"}
+    assert calls[0]["supports"] == ["5.3", "GAP-01"]
+    assert calls[1]["cited_chunks"] == 1 and calls[1]["returned"] == 2
+    assert calls[2]["supports"] == []
+    assert [t["kind"] for t in trail][-2:] == ["scoring", "decision"]
+
+
+def test_the_audit_file_names_every_claim_and_call():
+    from rollout import lineage
+
+    run = _traced_run(quote_gt="Every return is approved by the CFO.")
+    md = lineage.to_markdown(run, lineage.build(run))
+    assert "### Deviation GAP-01 — partial" in md
+    assert "✗ not found" in md and "✓ verbatim" in md
+    assert "call 2 `search_corpus`" in md
+
+
+def test_quote_matching_is_not_fooled_by_a_fragment():
+    from rollout import lineage
+
+    assert lineage.verify_quote("billing block", "no such text")["status"] == "not_found"
+    assert lineage.verify_quote("A is set ... then B follows", "A is set when X. Later then B follows.")["status"] == "verbatim"
+    assert lineage.verify_quote("", "anything")["status"] == "empty"
+
+
+def test_a_run_that_kept_no_calls_is_not_called_unretrieved():
+    """Runs from before the log kept calls cannot say what was retrieved.
+    Absence of a record is not evidence the agent read nothing."""
+    from rollout import lineage
+
+    run = _traced_run()
+    run["calls"], run["log"] = [], []
+    lin = lineage.build(run)
+    gap = next(c for c in lin["claims"] if c["ref"] == "GAP-01")
+    assert {e["verification"]["status"] for e in gap["evidence"]} == {"unrecorded"}
+    assert lin["summary"]["record"] == "none" and lin["summary"]["not_retrieved"] == 0
+
+
 if __name__ == "__main__":
     fns = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]
     failed = 0
