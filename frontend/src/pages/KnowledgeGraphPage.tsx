@@ -15,7 +15,7 @@ import {
   Tooltip,
   Typography,
 } from "@mui/material";
-import { alpha, useTheme, type Theme } from "@mui/material/styles";
+import { alpha, useTheme } from "@mui/material/styles";
 import ModelView from "../components/ModelView";
 import CypherView from "../components/CypherView";
 import { clearAdornment, clearOnEscape } from "../components/ClearAdornment";
@@ -1210,19 +1210,15 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
           bgcolor: (t) => alpha(t.palette.background.paper, 0.85),
           backdropFilter: "blur(16px)",
           zIndex: 10,
-          display: "flex",
+          display: "grid",
+          gridTemplateColumns: "1fr auto 1fr",
+          columnGap: 2,
           alignItems: "center",
-          justifyContent: "space-between",
           minHeight: 52,
           boxShadow: (t) =>
             t.palette.mode === "dark"
               ? "0 4px 20px -2px rgba(0, 0, 0, 0.4)"
               : "0 2px 10px -2px rgba(0, 0, 0, 0.05)",
-          "@keyframes pulseDot": {
-            "0%": { transform: "scale(0.95)", boxShadow: (t: Theme) => `0 0 0 0 ${alpha(t.palette.success.main, 0.7)}` },
-            "70%": { transform: "scale(1)", boxShadow: (t: Theme) => `0 0 0 6px ${alpha(t.palette.success.main, 0)}` },
-            "100%": { transform: "scale(0.95)", boxShadow: (t: Theme) => `0 0 0 0 ${alpha(t.palette.success.main, 0)}` },
-          },
         }}
       >
         {/* Left: Sidebar Toggle, Title, Live Status, Stats */}
@@ -1267,129 +1263,66 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
               <Typography variant="subtitle1" sx={{ fontWeight: 800, letterSpacing: "-0.015em", fontSize: 15, display: { xs: "none", sm: "block" } }}>
                 Solvay SPARK Knowledge Graph
               </Typography>
-
-              {/* Active Engine Live Badge */}
-              <Box
-                sx={{
-                  display: { xs: "none", md: "inline-flex" },
-                  alignItems: "center",
-                  gap: 0.75,
-                  px: 1,
-                  py: 0.35,
-                  borderRadius: 999,
-                  bgcolor: (t) => alpha(t.palette.success.main, t.palette.mode === "dark" ? 0.12 : 0.08),
-                  border: 1,
-                  borderColor: (t) => alpha(t.palette.success.main, 0.3),
-                }}
-              >
-                <Box
-                  sx={{
-                    width: 6,
-                    height: 6,
-                    borderRadius: "50%",
-                    bgcolor: "success.main",
-                    animation: "pulseDot 2s infinite",
-                  }}
-                />
-                <Typography sx={{ fontSize: 10.5, fontWeight: 700, color: "success.main", letterSpacing: "0.02em" }}>
-                  Graph RAG Active
-                </Typography>
-              </Box>
             </Stack>
           </Stack>
-
-          {graphData && (
-            <Stack direction="row" spacing={0.75} sx={{ alignItems: "center" }}>
-              <Chip
-                size="small"
-                icon={<Network size={12} />}
-                label={`${filteredNodes.length} Nodes`}
-                color="primary"
-                variant="outlined"
-                sx={{
-                  fontWeight: 700,
-                  fontSize: 11,
-                  height: 24,
-                  borderRadius: 1.5,
-                  bgcolor: (t) => alpha(t.palette.primary.main, 0.08),
-                  borderColor: (t) => alpha(t.palette.primary.main, 0.3),
-                }}
-              />
-              <Chip
-                size="small"
-                icon={<Route size={12} />}
-                label={`${filteredLinks.length} Relations`}
-                variant="outlined"
-                sx={{
-                  fontWeight: 650,
-                  fontSize: 11,
-                  color: "text.secondary",
-                  height: 24,
-                  borderRadius: 1.5,
-                  bgcolor: (t) => surface(t, 0.5),
-                  borderColor: "divider",
-                }}
-              />
-            </Stack>
-          )}
         </Stack>
 
-        {/* Right: Actions */}
-        <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
-          {/* Segmented View Switcher */}
-          <Box
-            sx={{
-              display: "flex",
-              p: 0.35,
-              borderRadius: 2,
-              bgcolor: (t) => (t.palette.mode === "dark" ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.04)"),
-              border: 1,
-              borderColor: "divider",
-            }}
-          >
-            {(["graph", "process", "model", "cypher"] as const).map((mode) => {
-              const active = viewMode === mode;
-              return (
-                <Button
-                  key={mode}
-                  size="small"
-                  disableElevation
-                  onClick={() => setViewMode(mode)}
-                  startIcon={
-                    mode === "graph" ? (
-                      <Network size={13} />
-                    ) : mode === "process" ? (
-                      <GitBranch size={13} />
-                    ) : mode === "cypher" ? (
-                      <Terminal size={13} />
-                    ) : (
-                      <Layers size={13} />
-                    )
-                  }
-                  sx={{
-                    textTransform: "none",
-                    fontWeight: active ? 750 : 600,
-                    fontSize: 12,
-                    borderRadius: 1.5,
-                    px: 1.35,
-                    minWidth: 0,
-                    height: 26,
-                    color: active ? "primary.contrastText" : "text.secondary",
-                    bgcolor: active ? "primary.main" : "transparent",
-                    boxShadow: active ? (t) => `0 2px 8px ${alpha(t.palette.primary.main, 0.35)}` : "none",
-                    "&:hover": {
-                      bgcolor: active ? "primary.dark" : "action.hover",
-                      color: active ? "primary.contrastText" : "text.primary",
-                    },
-                    transition: "all 0.15s ease",
-                  }}
-                >
-                  {mode === "graph" ? "Graph" : mode === "process" ? "Process" : mode === "cypher" ? "Cypher" : "Model"}
-                </Button>
-              );
-            })}
-          </Box>
+        {/* Centre: View Switcher */}
+        <Box
+          sx={{
+            display: "flex",
+            p: 0.35,
+            borderRadius: 2,
+            bgcolor: (t) => (t.palette.mode === "dark" ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.04)"),
+            border: 1,
+            borderColor: "divider",
+          }}
+        >
+          {(["graph", "process", "model", "cypher"] as const).map((mode) => {
+            const active = viewMode === mode;
+            return (
+              <Button
+                key={mode}
+                size="small"
+                disableElevation
+                onClick={() => setViewMode(mode)}
+                startIcon={
+                  mode === "graph" ? (
+                    <Network size={13} />
+                  ) : mode === "process" ? (
+                    <GitBranch size={13} />
+                  ) : mode === "cypher" ? (
+                    <Terminal size={13} />
+                  ) : (
+                    <Layers size={13} />
+                  )
+                }
+                sx={{
+                  textTransform: "none",
+                  fontWeight: active ? 750 : 600,
+                  fontSize: 12,
+                  borderRadius: 1.5,
+                  px: 1.35,
+                  minWidth: 0,
+                  height: 26,
+                  color: active ? "primary.contrastText" : "text.secondary",
+                  bgcolor: active ? "primary.main" : "transparent",
+                  boxShadow: active ? (t) => `0 2px 8px ${alpha(t.palette.primary.main, 0.35)}` : "none",
+                  "&:hover": {
+                    bgcolor: active ? "primary.dark" : "action.hover",
+                    color: active ? "primary.contrastText" : "text.primary",
+                  },
+                  transition: "all 0.15s ease",
+                }}
+              >
+                {mode === "graph" ? "Graph" : mode === "process" ? "Process" : mode === "cypher" ? "Cypher" : "Model"}
+              </Button>
+            );
+          })}
+        </Box>
 
+        {/* Right: Actions */}
+        <Stack direction="row" spacing={1} sx={{ alignItems: "center", justifyContent: "flex-end" }}>
           {activeQueryResult?.answer && (
             <Button
               variant="contained"

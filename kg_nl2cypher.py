@@ -334,12 +334,10 @@ def generate(question: str) -> dict[str, Any]:
         "error": "" if ok else (attempts[-1]["error"] if attempts else "no query was produced"),
         "attempts": len(attempts),
         "corrections": [a["error"] for a in attempts if a["error"]],
-        "model": served_by,
         "seconds": round(time.time() - started, 1),
         "usage": usage,
-        "trace_url": run.url(),
     }
-    run.end(output={k: out[k] for k in ("cypher", "valid", "attempts", "answerable")})
+    run.end(output={**{k: out[k] for k in ("cypher", "valid", "attempts", "answerable")}, "model": served_by})
     return out
 
 

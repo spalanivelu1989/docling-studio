@@ -367,9 +367,7 @@ export interface GeneratedCypher {
   attempts: number;
   /** The database's objections the model corrected along the way. */
   corrections: string[];
-  model: string;
   seconds: number;
-  trace_url: string;
 }
 
 export interface CypherResult {

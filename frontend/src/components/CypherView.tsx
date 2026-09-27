@@ -156,7 +156,6 @@ export default function CypherView({ onFocusNode }: { onFocusNode?: (id: string)
   const [generating, setGenerating] = useState(false);
   const [generated, setGenerated] = useState<GeneratedCypher | null>(null);
   const [genError, setGenError] = useState("");
-  const [autoRun, setAutoRun] = useState(true);
   const [expanded, setExpanded] = useState(false);
   // Results arrive below the question, the explanation and the editor, often
   // below the fold; bring them into view rather than leave the reader to find
@@ -197,7 +196,7 @@ export default function CypherView({ onFocusNode }: { onFocusNode?: (id: string)
       const g = await api.generateCypher(q);
       setGenerated(g);
       if (g.cypher) setQuery(g.cypher);
-      if (g.valid && g.answerable && g.cypher && autoRun) void run(g.cypher);
+      if (g.valid && g.answerable && g.cypher) void run(g.cypher);
       else setResult(null);
     } catch (e) {
       setGenError((e as Error).message);
@@ -282,14 +281,6 @@ export default function CypherView({ onFocusNode }: { onFocusNode?: (id: string)
               {generating ? "Writing…" : "Generate Cypher"}
             </Button>
           </Stack>
-          <Stack direction="row" spacing={1} sx={{ alignItems: "center", mt: 0.75 }}>
-            <Typography sx={{ fontSize: 11.5, color: "text.disabled", flex: 1 }}>
-              Claude Opus 5 writes the query from the graph's schema; Neo4j checks it before it runs. Enter to generate.
-            </Typography>
-            <Chip size="small" clickable variant={autoRun ? "filled" : "outlined"} color={autoRun ? "primary" : "default"}
-                  label={autoRun ? "Run it when ready" : "Just write it"} onClick={() => setAutoRun(!autoRun)}
-                  sx={{ height: 20, fontSize: 11 }} />
-          </Stack>
           {genError && <Alert severity="error" sx={{ mt: 1, fontSize: 12.5 }}>{genError}</Alert>}
           {generated && (
             <Box sx={{ mt: 1 }}>
@@ -313,9 +304,8 @@ export default function CypherView({ onFocusNode }: { onFocusNode?: (id: string)
                 </>
               )}
               <Typography sx={{ fontSize: 11, color: "text.disabled", mt: 0.5 }}>
-                {generated.model} · {generated.seconds} s
+                {generated.seconds} s
                 {generated.corrections.length > 0 ? ` · corrected ${generated.corrections.length}× after Neo4j rejected a draft` : ""}
-                {generated.trace_url ? <> · <a href={generated.trace_url} target="_blank" rel="noreferrer">trace</a></> : null}
               </Typography>
             </Box>
           )}
