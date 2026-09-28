@@ -15,7 +15,7 @@ import {
   type EvidenceRunDetail, type EvidenceRunSummary, type EvidenceStatus,
   type EvidenceToolCall, type ScoreTerm,
   type EvidenceRagHit,
-  type Source, type Stance, type Lineage,
+  type Source, type Stance, type Lineage, type AgentEvaluation,
 } from "../api";
 import { EVIDENCE_SAMPLES, type SampleQuestion } from "../data/evidenceSamples";
 import { surface } from "../theme";
@@ -23,6 +23,7 @@ import { clearAdornment } from "../components/ClearAdornment";
 import DocumentInspectorDrawer from "../components/DocumentInspectorDrawer";
 import AgentTraceDrawer from "../components/AgentTraceDrawer";
 import AgentLogDrawer from "../components/AgentLogDrawer";
+import AgentEvaluationView from "../components/AgentEvaluationView";
 import MemoryReflectDrawer from "../components/MemoryReflectDrawer";
 import ScrollRunway from "../components/ScrollRunway";
 import RunHistoryDrawer, { type HistoryCard } from "../components/RunHistoryDrawer";
@@ -605,6 +606,7 @@ export default function EvidencePage({ active, showTechDetails = true }: {
   const [running, setRunning] = useState(false);
   const [calls, setCalls] = useState<EvidenceToolCall[]>([]);
   const [answer, setAnswer] = useState<EvidenceAnswer | null>(null);
+  const [evaluation, setEvaluation] = useState<AgentEvaluation | Record<string, never> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const controller = useRef<AbortController | null>(null);
 
@@ -797,7 +799,7 @@ export default function EvidencePage({ active, showTechDetails = true }: {
   async function run(text?: string) {
     const q = (text ?? question).trim();
     if (!q || running) return;
-    setRunning(true); setCalls([]); setAnswer(null); setError(null); setTab("investigation");
+    setRunning(true); setCalls([]); setAnswer(null); setEvaluation(null); setError(null); setTab("investigation");
     setRunId(null); setViewing(null); setNotSaved(null); setMemory(null); setLog([]);
     const ctrl = new AbortController();
     controller.current = ctrl;
@@ -808,6 +810,7 @@ export default function EvidencePage({ active, showTechDetails = true }: {
         log: (e) => setLog((es) => [...es, e]),
         toolCall: (c) => setCalls((cs) => [...cs, c]),
         answer: (a) => { setAnswer(a); setTab("answer"); },
+        evaluation: setEvaluation,
         error: setError,
       }, ctrl.signal);
     } catch (e) {
@@ -878,6 +881,7 @@ export default function EvidencePage({ active, showTechDetails = true }: {
       setLog(run.log ?? []);
       setCalls(run.calls ?? []);
       setAnswer(run.answer);
+      setEvaluation(run.evaluation ?? {});
       setTab(run.answer ? "answer" : "investigation");
       setRunId(run.id);
       setViewing(run.id);
@@ -917,6 +921,7 @@ export default function EvidencePage({ active, showTechDetails = true }: {
     { key: "claims", label: `Claims (${claims.length})`, show: !!answer },
     { key: "investigation", label: `Traceability${calls.length ? ` (${calls.length})` : ""}`, show: calls.length > 0 || running || !!(runId && answer) },
     { key: "memory", label: `Memory${memory?.recalled ? ` (${memory.recalled})` : ""}`, show: showMemory },
+    { key: "evaluation", label: "Evaluation", show: !!answer },
   ].filter((t) => t.show);
   const current = TABS.some((t) => t.key === tab) ? tab : TABS[0]?.key ?? "";
   const openClaim = (index: number) => { setTab("claims"); setFocusClaim({ index, at: Date.now() }); };
@@ -1089,6 +1094,10 @@ export default function EvidencePage({ active, showTechDetails = true }: {
 
         {current === "answer" && answer && (
           <AnswerSummary answer={answer} onClaim={openClaim} engines={engineLine} showModel={showTechDetails} />
+        )}
+
+        {current === "evaluation" && answer && (
+          <AgentEvaluationView evaluation={evaluation} running={running} agent="evidence" />
         )}
 
         {current === "claims" && answer && (

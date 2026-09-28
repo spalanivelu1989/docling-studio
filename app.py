@@ -2410,6 +2410,8 @@ def rollout_get_run(run_id: str) -> dict:
     run = ro_store.get_run(conn, run_id)
     if not run:
         raise HTTPException(404, "Run not found")
+    import agent_eval
+    run["evaluation"] = agent_eval.refresh(run.get("evaluation"))
     return run
 
 
@@ -2788,6 +2790,13 @@ def evidence_ask(body: EvidenceQuestion) -> StreamingResponse:
             ):
                 if event == "tool_call":
                     calls.append(data)
+                if event == "evaluation":
+                    # Scores, not a step of the investigation: stored beside
+                    # the run and sent to the page, but no log line.
+                    if conn is not None:
+                        _try(ev_store.save_evaluation, conn, run_id, data)
+                    yield sse(event, data)
+                    continue
                 entry = record(event, data)
                 if conn is not None:
                     try:
@@ -2868,6 +2877,8 @@ def evidence_run(run_id: str) -> dict:
     run = ev_store.get_run(conn, run_id)
     if not run:
         raise HTTPException(404, f"No investigation {run_id}")
+    import agent_eval
+    run["evaluation"] = agent_eval.refresh(run.get("evaluation"))
     return run
 
 

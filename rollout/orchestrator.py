@@ -187,6 +187,8 @@ def run(req: RunRequest) -> Iterator[Event]:
                   (req.country or "no-country").lower(),
                   "scoped" if scope else "unscoped"],
         )
+        # Read now: end() lets go of the trace, and the scores are written after it.
+        trace_id, trace_url = run.trace_id, run.url()
 
         yield "scope", {
             "run_id": run_id,
@@ -262,8 +264,12 @@ def run(req: RunRequest) -> Iterator[Event]:
             store.fail_run(conn, run_id, "the agent did not submit an As-Is model")
             run.update(level="WARNING", status_message="no As-Is model was submitted")
             run.end(output={"error": "the agent did not submit an As-Is model"})
-            agent_eval.push(run.trace_id, agent_eval.rollout_incomplete, verdict=verdict.to_dict(),
-                            calls=list(calls_log), why="no As-Is model was submitted")
+            scored = agent_eval.evaluate(agent_eval.rollout_incomplete, verdict=verdict.to_dict(),
+                                         calls=list(calls_log), why="no As-Is model was submitted")
+            agent_eval.push(trace_id, scored)
+            evaluation = agent_eval.report(scored, trace_url)
+            _try(store.save_evaluation, conn, run_id, evaluation)
+            yield "evaluation", evaluation
             yield "error", {"message": ("The agent did not produce an As-Is model. The attached "
                                         "documentation may not describe a process.")}
             return
@@ -294,8 +300,12 @@ def run(req: RunRequest) -> Iterator[Event]:
             store.fail_run(conn, run_id, "the agent did not submit an analysis")
             run.update(level="WARNING", status_message="no analysis was submitted")
             run.end(output={"error": "the agent did not submit an analysis"})
-            agent_eval.push(run.trace_id, agent_eval.rollout_incomplete, verdict=verdict.to_dict(),
-                            calls=list(calls_log), why="no analysis was submitted")
+            scored = agent_eval.evaluate(agent_eval.rollout_incomplete, verdict=verdict.to_dict(),
+                                         calls=list(calls_log), why="no analysis was submitted")
+            agent_eval.push(trace_id, scored)
+            evaluation = agent_eval.report(scored, trace_url)
+            _try(store.save_evaluation, conn, run_id, evaluation)
+            yield "evaluation", evaluation
             yield "error", {"message": "The agent did not submit an analysis."}
             return
         yield "stage", {"stage": "compare", "status": "done",
@@ -344,12 +354,15 @@ def run(req: RunRequest) -> Iterator[Event]:
         run.end(output=_headline(analysis, scores, gate_summary, record["scope_label"]))
         # The run as the store now holds it, so the scores are computed from
         # exactly what the lineage page will later show.
-        agent_eval.push(
-            run.trace_id, agent_eval.rollout_run, verdict=verdict.to_dict(),
-            min_sap=agent.min_sap_searches(subject, asis, sess),
+        scored = agent_eval.evaluate(
+            agent_eval.rollout_run, verdict=verdict.to_dict(),
+            min_sap=lambda: agent.min_sap_searches(subject, asis, sess),
             run={**record, "calls": list(calls_log), "log": list(log),
                  "asis": asis.model_dump(), "analysis": analysis.model_dump(),
                  "gates": gate_summary, "sources": trace})
+        agent_eval.push(trace_id, scored)
+        evaluation = agent_eval.report(scored, trace_url)
+        _try(store.save_evaluation, conn, run_id, evaluation)
 
         counts = scores.get("counts") or {}
         yield "log", entry("answer", {
@@ -365,6 +378,7 @@ def run(req: RunRequest) -> Iterator[Event]:
         yield "analysis", analysis.model_dump()
         yield "scores", scores
         yield "sources", trace
+        yield "evaluation", evaluation
         yield "done", {
             "run_id": run_id,
             "seconds": round(time.time() - started, 1),
@@ -437,6 +451,14 @@ def _pass(work: Callable, out: dict, run: tracing.Run, name: str,
         if name == "__end__":
             return
         yield name, payload
+
+
+def _try(fn, *args) -> None:
+    """Bookkeeping that must never become the run's error."""
+    try:
+        fn(*args)
+    except Exception:
+        pass
 
 
 def _headline(analysis, scores: dict, gates_summary: dict, scope_label: str) -> dict:

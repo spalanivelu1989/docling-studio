@@ -1433,7 +1433,42 @@ export interface EvidenceRunDetail extends Omit<EvidenceRunSummary, "claims" | "
   calls: EvidenceToolCall[];
   /** Empty for a run recorded before the log existed. */
   log?: EvidenceLogEntry[];
+  evaluation?: AgentEvaluation | Record<string, never>;
   error: string;
+}
+
+/** One of a run's own quality scores (agent_eval.py): counted from what the
+ *  run already checked, with the target it is read against. */
+export interface AgentScore {
+  name: string;
+  label: string;
+  /** Groundedness, Tool call accuracy, Task success, Topic adherence or Guardrails. */
+  metric: string;
+  description: string;
+  value: number;
+  kind: "boolean" | "share" | "count";
+  comment: string;
+  /** Which way is good against `target`; empty for a count shown for context. */
+  good: "min" | "max" | "";
+  target: number;
+  /** A softer line on the same side as the target; missing the target but
+   *  staying within this reads "Watch", not "Below". */
+  watch?: number | null;
+  /** Null when the score has no target. */
+  passed: boolean | null;
+  /** Absent on runs scored before the Watch level existed; read `passed`. */
+  status?: "pass" | "watch" | "below" | null;
+}
+
+/** A run's Evaluation tab. Empty (`{}`) for runs recorded before it was kept. */
+export interface AgentEvaluation {
+  scores: AgentScore[];
+  passed: number;
+  /** Checks between their target and their watch line. */
+  watch?: number;
+  judged: number;
+  /** The run's Langfuse trace; empty when tracing is off. */
+  trace_url: string;
 }
 
 export interface EvidenceHandlers {
@@ -1448,6 +1483,8 @@ export interface EvidenceHandlers {
   log?: (e: EvidenceLogEntry) => void;
   toolCall: (c: EvidenceToolCall) => void;
   answer: (a: EvidenceAnswer) => void;
+  /** The run's quality scores, sent just after the answer. */
+  evaluation?: (e: AgentEvaluation) => void;
   error: (message: string) => void;
 }
 
@@ -1491,6 +1528,7 @@ export async function askEvidence(
       else if (event === "memory") on.memory?.(payload);
       else if (event === "tool_call") on.toolCall(payload);
       else if (event === "answer") on.answer(payload);
+      else if (event === "evaluation") on.evaluation?.(payload);
       else if (event === "error") on.error(payload.message);
     }
   }
@@ -1854,6 +1892,7 @@ export interface RolloutRunDetail extends RolloutRunSummary {
   sessions?: WorkshopSession[];
   /** The investigation log. Empty for runs recorded before it was kept. */
   log?: EvidenceLogEntry[];
+  evaluation?: AgentEvaluation | Record<string, never>;
 }
 
 /** One named person's verdict on one gap. The log is append-only: a later
@@ -1891,6 +1930,8 @@ export interface RolloutHandlers {
   analysis: (d: RolloutAnalysis) => void;
   scores: (d: RolloutScores) => void;
   sources: (d: RolloutSources) => void;
+  /** The run's quality scores, sent just before `done`. */
+  evaluation?: (d: AgentEvaluation) => void;
   done: (d: { run_id: string; seconds: number; input_tokens: number; output_tokens: number; tool_calls: number }) => void;
   error: (message: string) => void;
   /** One line of the investigation log: reasoning, notes and tool calls, in
@@ -1915,6 +1956,7 @@ export async function runRollout(body: RolloutRunBody, on: RolloutHandlers, sign
     analysis: (d) => on.analysis(d as RolloutAnalysis),
     scores: (d) => on.scores(d as RolloutScores),
     sources: (d) => on.sources(d as RolloutSources),
+    evaluation: (d) => on.evaluation?.(d as AgentEvaluation),
     done: (d) => on.done(d as Parameters<RolloutHandlers["done"]>[0]),
     error: (d) => on.error((d as { message: string }).message),
     log: (d) => on.log?.(d as EvidenceLogEntry),

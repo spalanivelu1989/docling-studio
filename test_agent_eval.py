@@ -75,8 +75,7 @@ def test_every_score_emitted_is_declared():
 
 def test_boolean_scores_are_marked_boolean_and_are_zero_or_one():
     for s in _evidence().values():
-        assert s.boolean == agent_eval.SCORES[s.name][0], s.name
-        if s.boolean:
+        if agent_eval.SCORES[s.name].boolean:
             assert s.value in (0.0, 1.0), s
 
 
@@ -275,9 +274,7 @@ def test_an_incomplete_rollout_is_scored_as_not_completed():
 # --- push -----------------------------------------------------------------------
 
 
-def test_push_writes_stable_ids_skips_unknown_names_and_survives_a_failing_scorer():
-    import threading
-
+def test_push_writes_stable_ids_and_skips_unknown_names():
     written = []
 
     class Client:
@@ -292,22 +289,83 @@ def test_push_writes_stable_ids_skips_unknown_names_and_survives_a_failing_score
     try:
         agent_eval._push("t1", [agent_eval.Score("tool_calls", 3.0),
                                 agent_eval.Score("not_a_score", 1.0),
-                                agent_eval.Score("task_completed", 1.0, boolean=True)])
+                                agent_eval.Score("task_completed", 1.0)])
         first = [w["score_id"] for w in written]
         agent_eval._push("t1", [agent_eval.Score("tool_calls", 4.0),
-                                agent_eval.Score("task_completed", 0.0, boolean=True)])
-
-        def boom(**_):
-            raise RuntimeError("scorer broke")
-        before = threading.active_count()
-        agent_eval.push("t1", boom)  # must not raise
-        agent_eval.push("", agent_eval.refused, verdict=VERDICT)  # no trace: nothing
+                                agent_eval.Score("task_completed", 0.0)])
+        agent_eval.push("", [agent_eval.Score("tool_calls", 1.0)])  # no trace: nothing
     finally:
         tracing.client = saved
     assert [w["name"] for w in written] == ["tool_calls", "task_completed"] * 2
     assert [w["score_id"] for w in written[2:]] == first, "a re-score must replace, not add"
     assert written[1]["data_type"] == "BOOLEAN" and written[0]["data_type"] == "NUMERIC"
-    assert threading.active_count() <= before + 1
+
+
+def test_a_scorer_that_raises_gives_no_scores_rather_than_an_error():
+    def boom(**_):
+        raise RuntimeError("scorer broke")
+    assert agent_eval.evaluate(boom) == []
+    assert agent_eval.evaluate(lambda: [agent_eval.Score("nope", 1.0)]) == []
+
+
+def test_targets_decide_pass_and_fail_and_counts_have_no_verdict():
+    S = agent_eval.Score
+    assert agent_eval.passed(S("citation_validity", 1.0)) is True
+    assert agent_eval.passed(S("citation_validity", 0.9)) is False
+    assert agent_eval.passed(S("claims_unsupported", 0)) is True
+    assert agent_eval.passed(S("claims_unsupported", 2)) is False
+    assert agent_eval.passed(S("budget_exhausted", 1.0)) is False
+    assert agent_eval.passed(S("tool_calls", 30)) is None
+    assert agent_eval.passed(S("scope_refused", 1.0)) is None
+
+
+def test_a_near_miss_is_watch_and_a_wide_one_is_below():
+    S = agent_eval.Score
+    assert agent_eval.status(S("citation_validity", 1.0)) == "pass"
+    assert agent_eval.status(S("citation_validity", 16 / 17)) == "watch"   # the SOVOS run
+    assert agent_eval.status(S("citation_validity", 0.9)) == "watch"
+    assert agent_eval.status(S("citation_validity", 0.89)) == "below"
+    assert agent_eval.status(S("claims_unsupported", 1)) == "below"      # no watch line
+    assert agent_eval.status(S("tool_calls", 9)) is None
+    r = agent_eval.report([S("citation_validity", 0.94), S("claims_unsupported", 0)])
+    assert (r["passed"], r["watch"], r["judged"]) == (1, 1, 2), r
+
+
+def test_a_stored_evaluation_is_re_read_against_todays_targets():
+    """Saved before the Watch level existed: only name, value and comment are
+    trusted; the verdict is recomputed."""
+    old = {"trace_url": "u", "passed": 0, "judged": 1, "scores": [
+        {"name": "citation_validity", "value": 0.9412, "comment": "16 of 17", "passed": False},
+        {"name": "retired_score", "value": 1.0, "comment": ""}]}
+    r = agent_eval.refresh(old)
+    assert [row["name"] for row in r["scores"]] == ["citation_validity"]
+    assert r["scores"][0]["status"] == "watch" and r["scores"][0]["comment"] == "16 of 17"
+    assert r["trace_url"] == "u" and r["watch"] == 1
+    assert agent_eval.refresh({}) == {} and agent_eval.refresh(None) == {}
+
+
+def test_the_report_orders_by_metric_and_counts_what_passed():
+    r = agent_eval.report(list(_evidence(budget_hit=True).values()), "https://lf/trace/1")
+    metrics = [row["metric"] for row in r["scores"]]
+    order = [m for m in agent_eval.METRICS if m in metrics]
+    assert metrics == sorted(metrics, key=order.index), metrics
+    assert r["trace_url"] == "https://lf/trace/1"
+    judged = [row for row in r["scores"] if row["passed"] is not None]
+    assert r["judged"] == len(judged) and r["passed"] == len(judged) - 1  # only the budget
+    row = next(row for row in r["scores"] if row["name"] == "citation_validity")
+    assert row["label"] and row["description"] and row["good"] == "min" and row["target"] == 1.0
+    assert row["kind"] == "share"
+    kinds = {row["name"]: row["kind"] for row in r["scores"]}
+    assert kinds["task_completed"] == "boolean" and kinds["tool_calls"] == "count"
+    import json
+    json.dumps(r)  # stored as jsonb and streamed as-is
+
+
+def test_every_score_has_a_known_metric_and_a_sane_target():
+    for name, spec in agent_eval.SCORES.items():
+        assert spec.metric in agent_eval.METRICS, name
+        assert spec.good in ("", "min", "max"), name
+        assert spec.label and spec.description, name
 
 
 def test_zz_the_suite_never_reached_langfuse():

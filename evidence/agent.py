@@ -482,12 +482,16 @@ def run(question: str, holdout: bool = False,
         refused = tracing.start_run("investigate-question", input={"question": question},
                                     metadata={"guardrail": verdict.to_dict()},
                                     tags=["evidence-agent", "guardrail-refused"])
+        # Read before end(), which lets go of the trace.
+        trace_id, trace_url = refused.trace_id, refused.url()
         answer = Answer(question=question, state="not_in_corpus", answer=REFUSAL,
                         limits=[scope_guard.refusal_detail(verdict)],
                         seconds=round(time.time() - started, 2))
         refused.end(output={"state": "refused", "category": verdict.category})
-        agent_eval.push(refused.trace_id, agent_eval.refused, verdict=verdict.to_dict())
+        scores = agent_eval.evaluate(agent_eval.refused, verdict=verdict.to_dict())
+        agent_eval.push(trace_id, scores)
         yield "answer", answer.model_dump()
+        yield "evaluation", agent_eval.report(scores, trace_url)
         return
 
     scope = tuple(sorted({c.strip().upper() for c in (categories or []) if c.strip()}))
@@ -501,6 +505,8 @@ def run(question: str, holdout: bool = False,
         metadata={"model": MODEL, "prompt_hash": prompt_hash(), "holdout": holdout},
         tags=["evidence-agent"] + (["holdout"] if holdout else []),
     )
+    # Read now: end() lets go of the trace, and the scores are written after it.
+    trace_id, trace_url = run.trace_id, run.url()
     prompt = question
     if scope:
         prompt = (
@@ -698,11 +704,12 @@ def run(question: str, holdout: bool = False,
         # After verification, which checks each quote against the document as
         # written; before anything leaves -- the page, the history, memory.
         final = Answer.model_validate(contact.redact_obj(as_written))
-        agent_eval.push(
-            run.trace_id, agent_eval.evidence,
+        scores = agent_eval.evaluate(
+            agent_eval.evidence,
             question=question, verdict=verdict.to_dict(), submitted=raw,
             final=as_written, redacted=final.model_dump(), calls=call_log,
             rejections=rejections, budget_hit=budget_hit)
+        agent_eval.push(trace_id, scores)
         if use_memory:
             # After finalise, so only verified evidence can be written down, and
             # best-effort, so a memory server that has gone away cannot turn an
@@ -729,6 +736,7 @@ def run(question: str, holdout: bool = False,
                         "limits": len(final.limits),
                         "engines": engines, "tool_calls": calls})
         yield "answer", final.model_dump()
+        yield "evaluation", agent_eval.report(scores, trace_url)
     except Exception as exc:
         run.fail(exc)
         yield "error", {"message": f"{type(exc).__name__}: {exc}"}

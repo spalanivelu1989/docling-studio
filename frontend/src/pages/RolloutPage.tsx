@@ -21,11 +21,12 @@ import {
   type RolloutPreview,
   type RolloutRunDetail, type RolloutRunSummary, type RolloutScores, type RolloutStatus,
   type UploadRole,
-  type UploadSession,
+  type UploadSession, type AgentEvaluation,
 } from "../api";
 import { clearAdornment, clearOnEscape } from "../components/ClearAdornment";
 import AgentLogDrawer from "../components/AgentLogDrawer";
 import AgentTraceDrawer from "../components/AgentTraceDrawer";
+import AgentEvaluationView from "../components/AgentEvaluationView";
 import ScrollRunway from "../components/ScrollRunway";
 import BriefView from "../components/rollout/BriefView";
 import type { DecisionExtra } from "../components/rollout/decision";
@@ -914,6 +915,7 @@ export default function RolloutPage({ active, showTechDetails = true }: Props) {
   const [scores, setScores] = useState<RolloutScores | null>(null);
   const [gates, setGates] = useState<RolloutGates | null>(null);
   const [sources, setSources] = useState<RolloutSources | null>(null);
+  const [evaluation, setEvaluation] = useState<AgentEvaluation | Record<string, never> | null>(null);
   // Which gap the Deviations tab should scroll to and flash, when a reader
   // arrives from a source citation rather than from the list.
   const [highlightGap, setHighlightGap] = useState<string>("");
@@ -1057,7 +1059,7 @@ export default function RolloutPage({ active, showTechDetails = true }: Props) {
     setRunning(true);
     setError(null); setAsis(null); setAnalysis(null); setScores(null); setGates(null);
     setStages([]); setCalls([]); setLog([]); setRunId(null); setTab("summary"); setDecisions([]); setComposing(false);
-    setSources(null);
+    setSources(null); setEvaluation(null);
     const ctrl = new AbortController();
     controller.current = ctrl;
     try {
@@ -1082,6 +1084,7 @@ export default function RolloutPage({ active, showTechDetails = true }: Props) {
           analysis: setAnalysis,
           scores: setScores,
           sources: setSources,
+          evaluation: setEvaluation,
           done: () => undefined,
           error: setError,
         },
@@ -1188,6 +1191,7 @@ export default function RolloutPage({ active, showTechDetails = true }: Props) {
       setGates("issues" in run.gates ? (run.gates as RolloutGates) : null);
       setDecisions(run.decisions ?? []);
       setSources("chunks" in (run.sources ?? {}) ? (run.sources as RolloutSources) : null);
+      setEvaluation(run.evaluation ?? {});
       // The log is part of the record now, so a reopened run shows its working
       // rather than its conclusions alone.
       setCalls(run.calls ?? []);
@@ -1317,6 +1321,7 @@ export default function RolloutPage({ active, showTechDetails = true }: Props) {
     { key: "sources", label: `Sources${sources ? ` (${sources.documents.length})` : ""}` },
     { key: "gates", label: "Quality gates" },
     { key: "log", label: `Traceability${calls.length ? ` (${calls.length})` : ""}` },
+    { key: "evaluation", label: "Evaluation" },
   ] : [];
   const openGap = (gapId: string) => { setTab("deviations"); setHighlightGap(gapId); };
   // Whether this run rated its dimensions against SAP Best Practice too.
@@ -1800,6 +1805,10 @@ export default function RolloutPage({ active, showTechDetails = true }: Props) {
               )}
 
               {/* -------------------------------------------------- quality gates */}
+              {tab === "evaluation" && (
+                <AgentEvaluationView evaluation={evaluation} running={running} agent="rollout" />
+              )}
+
               {tab === "gates" && (
                 <Stack spacing={1.25}>
                   <Stack direction="row" spacing={1.5} sx={{ alignItems: "center", flexWrap: "wrap", gap: 0.75 }}>

@@ -1150,7 +1150,8 @@ def test_the_order_of_the_log_is_the_order_it_happened():
     kinds = [k for k, _ in events]
     assert kinds.index("memory") < kinds.index("note"), "context assembled before memory was read"
     assert kinds.index("note") < kinds.index("thinking"), "reasoning before the prompt existed"
-    assert kinds[-1] == "answer"
+    # The run's scores follow the answer they describe.
+    assert kinds[-2:] == ["answer", "evaluation"], kinds[-3:]
 
 
 def test_what_was_written_to_memory_is_in_the_log():

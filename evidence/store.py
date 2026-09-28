@@ -91,6 +91,10 @@ def create_schema(conn=None) -> None:
         # what the agent did and never why.
         conn.execute("ALTER TABLE evidence_runs ADD COLUMN IF NOT EXISTS"
                      " log jsonb NOT NULL DEFAULT '[]'::jsonb")
+        # The run's own quality scores (agent_eval.py), as the Evaluation tab
+        # shows them. Runs recorded before it have an empty object.
+        conn.execute("ALTER TABLE evidence_runs ADD COLUMN IF NOT EXISTS"
+                     " evaluation jsonb NOT NULL DEFAULT '{}'::jsonb")
 
 
 def start_run(conn, run: dict) -> None:
@@ -152,6 +156,12 @@ def finish_run(conn, run_id: str, answer: dict, calls: list[dict]) -> None:
     trim(conn)
 
 
+def save_evaluation(conn, run_id: str, evaluation: dict) -> None:
+    conn.execute("UPDATE evidence_runs SET evaluation = %s WHERE id = %s",
+                 (json.dumps(evaluation, default=str), run_id))
+    conn.commit()
+
+
 def fail_run(conn, run_id: str, message: str, calls: list[dict] | None = None) -> None:
     """A failed investigation is kept, not dropped. What the agent managed to
     read before it failed is often the whole point of looking again."""
@@ -181,7 +191,7 @@ def _status(status: str, started_at) -> str:
 
 _COLUMNS = ("id, question, holdout, categories, model, prompt_hash, corpus_fingerprint,"
             " started_at, finished_at, status, state, input_tokens, output_tokens,"
-            " seconds, answer, calls, error, memory, log")
+            " seconds, answer, calls, error, memory, log, evaluation")
 
 
 def _row(r) -> dict:
@@ -195,6 +205,7 @@ def _row(r) -> dict:
         "answer": r[14], "calls": r[15] or [], "error": r[16],
         "memory": r[17] or {},
         "log": r[18] or [],
+        "evaluation": r[19] or {},
     }
 
 

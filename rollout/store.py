@@ -99,6 +99,10 @@ def create_schema(conn=None) -> None:
         # Runs recorded before it have an empty list.
         conn.execute("ALTER TABLE rollout_runs ADD COLUMN IF NOT EXISTS"
                      " log jsonb NOT NULL DEFAULT '[]'::jsonb")
+        # The run's own quality scores (agent_eval.py), as the Evaluation tab
+        # shows them. Runs recorded before it have an empty object.
+        conn.execute("ALTER TABLE rollout_runs ADD COLUMN IF NOT EXISTS"
+                     " evaluation jsonb NOT NULL DEFAULT '{}'::jsonb")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS rollout_decisions (
@@ -294,7 +298,7 @@ _COLUMNS = ("id, subject, scope_bpml, scope_label, country, country_context,"
             " sap_release, gt_version,"
             " question, model, prompt_hash, categories, uploads, corpus_fingerprint,"
             " started_at, finished_at, status, input_tokens, output_tokens,"
-            " asis, analysis, scores, gates, sources, calls, log")
+            " asis, analysis, scores, gates, sources, calls, log, evaluation")
 
 
 # A run whose SSE stream was dropped -- the browser closed, the tab was
@@ -329,7 +333,14 @@ def _row(r) -> dict:
         "sources": r[23] or {},
         "calls": r[24] or [],
         "log": r[25] or [],
+        "evaluation": r[26] or {},
     }
+
+
+def save_evaluation(conn, run_id: str, evaluation: dict) -> None:
+    conn.execute("UPDATE rollout_runs SET evaluation = %s WHERE id = %s",
+                 (json.dumps(evaluation, default=str), run_id))
+    conn.commit()
 
 
 def get_run(conn, run_id: str, decisions_too: bool = True) -> dict | None:

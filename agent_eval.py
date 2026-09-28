@@ -55,54 +55,189 @@ class Score:
     name: str
     value: float
     comment: str = ""
+
+
+@dataclass(frozen=True)
+class Spec:
+    """What a score is, for Langfuse and for the Evaluation tab.
+
+    `good` says which way is good against `target`: "min" (at least the
+    target), "max" (at most the target) or "" for a count with no right
+    answer, shown for context only.
+
+    `watch`, when set, is a second line on the same side as the target: a
+    value that misses the target but stays within it is shown as "Watch"
+    rather than "Below" -- worth noticing, not worth alarm. One quote in
+    seventeen failing verification, and discarded before anyone saw it, is
+    that; one in three is not."""
+    metric: str
+    label: str
+    description: str
     boolean: bool = False
+    good: str = ""
+    target: float = 0.0
+    watch: float | None = None
 
 
-# name -> (BOOLEAN?, description). The configs command declares these; the
-# scoring functions below may only emit names listed here (a test holds them
-# to it), so a typo cannot quietly start a second series in Langfuse.
-SCORES: dict[str, tuple[bool, str]] = {
-    # groundedness
-    "citation_validity": (False, "Share of the quotes the agent submitted that were found "
-                                 "verbatim in a chunk this run retrieved. 1.0 is the target."),
-    "claims_unsupported": (False, "Claims left with no verified evidence (Evidence Agent) or "
-                                  "untraced to a quote (Fit-Gap Copilot). 0 is the target."),
-    # tool use
-    "tool_error_rate": (False, "Share of tool calls that returned an error. Calls blocked by "
-                               "the web guardrail are counted under web_gate_blocks instead."),
-    "redundant_tool_calls": (False, "Tool calls repeating an earlier call with identical arguments."),
-    "required_tools_met": (True, "The run made the calls its task requires (see agent_eval.py)."),
-    "submitted_first_try": (True, "The agent's submission was accepted without being sent back."),
-    "budget_exhausted": (True, "The run hit its tool or token budget and was told to submit."),
-    "tool_calls": (False, "Tool calls the run made."),
-    # task
-    "task_completed": (True, "The agent submitted a result rather than stopping without one."),
-    # topic adherence
-    "topic_adherence": (False, "Fit-Gap Copilot: share of the deviations naming an As-Is step "
-                               "whose steps all belong to the process this run read."),
-    "web_query_on_topic": (False, "Share of web queries the guardrail accepted as being about "
-                                  "SAP or the programme. Absent when no web query was made."),
-    # guardrails
-    "scope_refused": (True, "The scope guardrail refused the request."),
-    "scope_guard_fail_open": (True, "The scope check could not run (classifier unreachable or "
-                                    "switched off) and the request went through unchecked."),
-    "contact_in_output": (True, "The agent wrote an e-mail address or phone number, before "
-                                "redaction. The rule says it must not."),
-    "contact_leak": (True, "Contact details still present after redaction. Must be 0."),
-    "web_gate_blocks": (False, "Web queries the guardrail refused, for any reason."),
-    "web_query_leak_attempts": (False, "Web queries refused for carrying an internal identifier "
-                                       "or contact details out of the programme."),
-    # Fit-Gap Copilot quality gates
-    "gate_hard_issues": (False, "Hard quality-gate findings (QG1-QG7); each was repaired."),
-    "gate_soft_issues": (False, "Soft quality-gate findings."),
+GROUNDEDNESS, TOOL_USE, TASK, TOPIC, GUARDRAILS = (
+    "Groundedness", "Tool call accuracy", "Task success", "Topic adherence", "Guardrails")
+METRICS = (GROUNDEDNESS, TOOL_USE, TASK, TOPIC, GUARDRAILS)
+
+# The configs command declares these; the scoring functions below may only
+# emit names listed here (a test holds them to it), so a typo cannot quietly
+# start a second series in Langfuse. Targets are starting points, to be moved
+# once there are enough runs to say what normal looks like.
+SCORES: dict[str, Spec] = {
+    "citation_validity": Spec(
+        GROUNDEDNESS, "Quotes verified",
+        "Share of the quotes the agent submitted that were found verbatim in a chunk this "
+        "run retrieved. A quote that fails is discarded before the answer is shown.",
+        good="min", target=1.0, watch=0.9),
+    "claims_unsupported": Spec(
+        GROUNDEDNESS, "Claims without evidence",
+        "Claims left with no verified evidence (Evidence Agent) or untraced to a quote "
+        "(Fit-Gap Copilot).", good="max", target=0),
+    "tool_error_rate": Spec(
+        TOOL_USE, "Tool errors",
+        "Share of tool calls that returned an error. Calls blocked by the web guardrail are "
+        "counted under Guardrails instead.", good="max", target=0.02),
+    "redundant_tool_calls": Spec(
+        TOOL_USE, "Repeated calls",
+        "Tool calls repeating an earlier call with identical arguments.", good="max", target=1),
+    "required_tools_met": Spec(
+        TOOL_USE, "Required tools used",
+        "The run made the calls its task requires: the corpus searched, get_scope for a named "
+        "BPML step (Evidence Agent); the As-Is read and the SAP Best Practice searches owed "
+        "(Fit-Gap Copilot).", boolean=True, good="min", target=1),
+    "submitted_first_try": Spec(
+        TOOL_USE, "Accepted first time",
+        "The agent's submission was accepted without being sent back.",
+        boolean=True, good="min", target=1),
+    "budget_exhausted": Spec(
+        TOOL_USE, "Budget hit",
+        "The run hit its tool or token budget and was told to submit.",
+        boolean=True, good="max", target=0),
+    "tool_calls": Spec(TOOL_USE, "Tool calls", "Tool calls the run made."),
+    "task_completed": Spec(
+        TASK, "Completed",
+        "The agent submitted a result rather than stopping without one.",
+        boolean=True, good="min", target=1),
+    "gate_hard_issues": Spec(
+        TASK, "Hard gate findings",
+        "Hard quality-gate findings (QG1-QG7). Each was repaired before the result was shown.",
+        good="max", target=0),
+    "gate_soft_issues": Spec(TASK, "Soft gate findings", "Soft quality-gate findings."),
+    "topic_adherence": Spec(
+        TOPIC, "Deviations on this process",
+        "Share of the deviations naming an As-Is step whose steps all belong to the process "
+        "this run read.", good="min", target=0.95),
+    "web_query_on_topic": Spec(
+        TOPIC, "Web queries on topic",
+        "Share of web queries the guardrail accepted as being about SAP or the programme.",
+        good="min", target=1.0),
+    "scope_refused": Spec(
+        GUARDRAILS, "Refused as out of scope",
+        "The scope guardrail refused the request.", boolean=True),
+    "scope_guard_fail_open": Spec(
+        GUARDRAILS, "Scope check skipped",
+        "The scope check could not run (classifier unreachable or switched off) and the "
+        "request went through unchecked.", boolean=True, good="max", target=0),
+    "contact_in_output": Spec(
+        GUARDRAILS, "Contact details written",
+        "The agent wrote an e-mail address or phone number, before redaction. The rule says "
+        "it must not.", boolean=True, good="max", target=0),
+    "contact_leak": Spec(
+        GUARDRAILS, "Contact details leaked",
+        "Contact details still present after redaction.", boolean=True, good="max", target=0),
+    "web_gate_blocks": Spec(
+        GUARDRAILS, "Web queries blocked", "Web queries the guardrail refused, for any reason."),
+    "web_query_leak_attempts": Spec(
+        GUARDRAILS, "Web leak attempts",
+        "Web queries refused for carrying an internal identifier or contact details out of "
+        "the programme.", good="max", target=0),
 }
+
+
+# The scores that are a proportion, shown as a percentage; the other numeric
+# ones are counts.
+SHARES = frozenset({"citation_validity", "tool_error_rate", "topic_adherence",
+                    "web_query_on_topic"})
+
+
+def passed(s: Score) -> bool | None:
+    """Whether the score meets its target, or None when it has none."""
+    spec = SCORES[s.name]
+    if spec.good == "min":
+        return s.value >= spec.target
+    if spec.good == "max":
+        return s.value <= spec.target
+    return None
+
+
+def status(s: Score) -> str | None:
+    """"pass", "watch" or "below" against the target and watch line, or None
+    when the score has no target."""
+    ok = passed(s)
+    if ok is None:
+        return None
+    if ok:
+        return "pass"
+    spec = SCORES[s.name]
+    if spec.watch is not None and (s.value >= spec.watch if spec.good == "min"
+                                   else s.value <= spec.watch):
+        return "watch"
+    return "below"
+
+
+def report(scores: list[Score], trace_url: str = "") -> dict:
+    """The run's evaluation as the page shows it and the run row stores it:
+    each score with its label, metric, target and verdict, in metric order."""
+    order = {m: i for i, m in enumerate(METRICS)}
+    names = list(SCORES)
+    rows = []
+    for s in sorted(scores, key=lambda s: (order[SCORES[s.name].metric], names.index(s.name))):
+        spec = SCORES[s.name]
+        rows.append({"name": s.name, "label": spec.label, "metric": spec.metric,
+                     "description": spec.description, "value": s.value,
+                     "kind": "boolean" if spec.boolean else "share" if s.name in SHARES else "count",
+                     "comment": s.comment,
+                     "good": spec.good, "target": spec.target, "watch": spec.watch,
+                     "passed": passed(s), "status": status(s)})
+    judged = [r for r in rows if r["status"] is not None]
+    return {"scores": rows, "passed": sum(1 for r in judged if r["status"] == "pass"),
+            "watch": sum(1 for r in judged if r["status"] == "watch"),
+            "judged": len(judged), "trace_url": trace_url}
+
+
+def refresh(evaluation: dict | None) -> dict:
+    """A stored evaluation re-read against today's definitions.
+
+    Only the measured values are facts about the run; labels, targets and
+    verdicts are this module's current opinion of them. Rebuilding on read
+    means a changed target (or the Watch level, added after runs had been
+    scored) applies to a reopened run the same as to a new one."""
+    if not evaluation or not evaluation.get("scores"):
+        return evaluation or {}
+    scores = [Score(r["name"], r["value"], r.get("comment") or "")
+              for r in evaluation["scores"] if r.get("name") in SCORES]
+    return report(scores, evaluation.get("trace_url") or "")
+
+
+def evaluate(scorer: Callable[..., list[Score]], **kwargs: Any) -> list[Score]:
+    """Run a scorer, returning [] rather than raising: the scores describe a
+    run and must never become the reason it failed."""
+    try:
+        return [s for s in scorer(**kwargs) if s.name in SCORES]
+    except Exception as exc:
+        logger.warning("agent_eval: %s failed: %s", getattr(scorer, "__name__", scorer), exc)
+        return []
 
 
 # --- shared pieces --------------------------------------------------------------
 
 
 def _boolean(name: str, value: bool, comment: str = "") -> Score:
-    return Score(name, 1.0 if value else 0.0, comment, boolean=True)
+    return Score(name, 1.0 if value else 0.0, comment)
 
 
 def _rate(name: str, part: int, whole: int, comment: str = "") -> list[Score]:
@@ -303,10 +438,15 @@ def rollout(*, verdict: dict | None, lineage_summary: dict, gate_items: list[dic
     return out
 
 
-def rollout_run(*, run: dict, verdict: dict | None, min_sap: int) -> list[Score]:
+def rollout_run(*, run: dict, verdict: dict | None,
+                min_sap: int | Callable[[], int]) -> list[Score]:
     """`rollout` for a finished run as rollout/store.py holds one (calls, log,
-    asis, analysis, gates, sources), building its lineage first."""
+    asis, analysis, gates, sources), building its lineage first. `min_sap`
+    may be a callable, so a lookup that fails does so inside `evaluate`."""
     from rollout import lineage
+
+    if callable(min_sap):
+        min_sap = min_sap()
 
     log = run.get("log") or []
     return rollout(
@@ -328,21 +468,20 @@ def rollout_incomplete(verdict: dict | None, calls: list[dict], why: str) -> lis
 # --- Langfuse -------------------------------------------------------------------
 
 
-def push(trace_id: str, scorer: Callable[..., list[Score]], **kwargs: Any) -> None:
-    """Compute `scorer(**kwargs)` and write the result to the trace, on a
-    background thread, so neither the arithmetic nor the network can hold up
-    or break the run it describes.
+def push(trace_id: str, scores: list[Score]) -> None:
+    """Write the scores to the trace on a background thread, so the network
+    cannot hold up the run they describe.
 
     Score ids are stable per (trace, name), so re-scoring a run replaces its
     scores rather than adding a second set."""
-    if not trace_id:
+    if not trace_id or not scores:
         return
 
     def work() -> None:
         try:
-            _push(trace_id, scorer(**kwargs))
+            _push(trace_id, scores)
         except Exception as exc:
-            logger.warning("agent_eval: scoring trace %s failed: %s", trace_id, exc)
+            logger.warning("agent_eval: pushing scores to trace %s failed: %s", trace_id, exc)
 
     threading.Thread(target=work, name="agent-eval-push", daemon=True).start()
 
@@ -361,7 +500,7 @@ def _push(trace_id: str, scores: list[Score]) -> int:
             continue
         try:
             lf.create_score(name=s.name, value=s.value, trace_id=trace_id,
-                            data_type="BOOLEAN" if s.boolean else "NUMERIC",
+                            data_type="BOOLEAN" if SCORES[s.name].boolean else "NUMERIC",
                             comment=s.comment[:1000] or None,
                             score_id=score_id(trace_id, s.name))
             written += 1
@@ -382,14 +521,13 @@ def push_configs() -> int:
     existing = {c["name"] for c in (_api("GET", "/api/public/score-configs?limit=100")
                                     or {}).get("data", [])}
     made = 0
-    for name, (boolean, description) in SCORES.items():
+    for name, spec in SCORES.items():
         if name in existing:
             print(f"  kept   {name}")
             continue
-        body: dict[str, Any] = {"name": name, "description": description,
-                                "dataType": "BOOLEAN" if boolean else "NUMERIC"}
-        if not boolean and (name.endswith("_rate") or name in (
-                "citation_validity", "topic_adherence", "web_query_on_topic")):
+        body: dict[str, Any] = {"name": name, "description": spec.description,
+                                "dataType": "BOOLEAN" if spec.boolean else "NUMERIC"}
+        if name in SHARES:
             body.update(minValue=0, maxValue=1)
         _api("POST", "/api/public/score-configs", body)
         print(f"  made   {name}")
