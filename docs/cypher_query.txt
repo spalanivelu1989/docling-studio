@@ -1,0 +1,3 @@
+How many unique relationships are present in the knowledge graph and list each relationship name?
+
+MATCH ()-[r]->() RETURN type(r) AS relationship, count(*) AS relationships ORDER BY relationships DESC
