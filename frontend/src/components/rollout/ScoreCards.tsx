@@ -4,9 +4,10 @@
  *  model's opinion -- so every line can be checked against the tab the card
  *  opens. */
 import { alpha, Box, ButtonBase, Stack, Typography, useTheme, type Theme } from "@mui/material";
-import type { ReactNode } from "react";
+import type { ComponentProps, ReactNode } from "react";
 
 import type { RolloutAnalysis, RolloutScores, RolloutSubject } from "../../api";
+import FormulaTooltip from "./FormulaTooltip";
 import { outlookCounts, outlookPhrase, outlookSentence } from "./outlook";
 import { materialityColour, usePremium } from "./premium";
 
@@ -22,10 +23,12 @@ function scoreColour(theme: Theme, accent: string, v: number | null): string {
 const pts = (n: number) => `${Math.abs(n).toFixed(1)} pts`;
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
-function Card({ label, value, unit, colour, bar, band, lines, onOpen, open, title }: {
+function Card({ label, value, unit, colour, bar, band, lines, onOpen, open, title, formula }: {
   label: string;
   /** Hover text: how the figure is worked out. */
   title?: string;
+  /** The working behind the figure, opened by hovering the figure itself. */
+  formula?: Omit<ComponentProps<typeof FormulaTooltip>, "children">;
   value: string;
   unit?: string;
   colour: string;
@@ -49,12 +52,20 @@ function Card({ label, value, unit, colour, bar, band, lines, onOpen, open, titl
                         lineHeight: 1.45, minHeight: { xl: "2.9em" } }}>
         {label}
       </Typography>
-      <Stack direction="row" spacing={0.75} sx={{ alignItems: "baseline", mt: 1 }}>
-        <Typography sx={{ fontSize: 32, fontWeight: 700, lineHeight: 1.1, color: colour, fontVariantNumeric: "tabular-nums" }}>
-          {value}
-        </Typography>
-        {unit && <Typography sx={{ fontSize: 16, fontWeight: 600, color: colour }}>{unit}</Typography>}
-      </Stack>
+      {(() => {
+        const hoverable = !!formula && formula.value !== null;
+        const figure = (
+          <Stack direction="row" spacing={0.75}
+                 sx={{ alignItems: "baseline", mt: 1, alignSelf: "flex-start",
+                       ...(hoverable && { cursor: "help", borderBottom: `1px dashed ${alpha(colour, 0.5)}` }) }}>
+            <Typography sx={{ fontSize: 32, fontWeight: 700, lineHeight: 1.1, color: colour, fontVariantNumeric: "tabular-nums" }}>
+              {value}
+            </Typography>
+            {unit && <Typography sx={{ fontSize: 16, fontWeight: 600, color: colour }}>{unit}</Typography>}
+          </Stack>
+        );
+        return formula ? <FormulaTooltip {...formula}>{figure}</FormulaTooltip> : figure;
+      })()}
       <Box sx={{ mt: 1.5 }}>
         {typeof bar === "number" || bar === null ? (
           <Box sx={{ height: 6, borderRadius: 3, bgcolor: alpha(colour, 0.15), overflow: "hidden" }}>
@@ -184,7 +195,9 @@ export default function ScoreCards({ analysis, scores, subject, types, onTab }: 
     <Box sx={{ display: "grid", gap: 2, mb: 3,
                gridTemplateColumns: { xs: "1fr", sm: "repeat(2, minmax(0, 1fr))", md: "repeat(3, minmax(0, 1fr))", xl: "repeat(5, minmax(0, 1fr))" } }}>
       <Card label="Alignment to the Global Template" value={pct(gt)} unit={gt === null ? undefined : "%"} colour={gtColour} bar={gt}
-            band={scores.gt_band} lines={gtLines} onOpen={() => onTab("dimensions")} open="Open dimensions" />
+            band={scores.gt_band} lines={gtLines} onOpen={() => onTab("dimensions")} open="Open dimensions"
+            formula={{ title: `How ${pct(gt)}% alignment to the Global Template is worked out`,
+                       against: "the Global Template", rows: scores.dimensions, value: gt, band: scores.gt_band }} />
       <Card label="Harmonization potential" value={pct(scores.harmonization_potential)}
             unit={scores.harmonization_potential === null ? undefined : "%"}
             colour={scores.harmonization_potential === null ? theme.palette.text.disabled : theme.palette.info.main}
@@ -197,7 +210,9 @@ export default function ScoreCards({ analysis, scores, subject, types, onTab }: 
             lines={lLines} onOpen={() => onTab("localization")} open="Open localization" />
       <Card label="SAP Best Practice" value={pct(bp)} unit={bp === null ? undefined : "%"} colour={bpColour} bar={bp}
             band={bp === null ? "Not assessable" : scores.sap_bp_band} lines={bpLines}
-            onOpen={() => onTab("dimensions")} open="Open dimensions" />
+            onOpen={() => onTab("dimensions")} open="Open dimensions"
+            formula={{ title: `How ${pct(bp)}% alignment to SAP Best Practice is worked out`,
+                       against: "SAP Best Practice", rows: scores.sap_bp_dimensions, value: bp, band: scores.sap_bp_band }} />
       <Card label="Deviations" value={String(c.deviations ?? devs.length)}
             colour={high ? theme.palette.error.main : devs.length ? theme.palette.warning.main : theme.palette.success.main}
             bar={materialityBar} band={`${high} high or critical · ${must} must discuss`} lines={dLines}
