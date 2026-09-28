@@ -31,8 +31,8 @@ Two rules follow, and both are enforced in code rather than in the prompt:
 
 | Rule | Where | Why |
 | --- | --- | --- |
-| Only **verified** claims are written down | `evidence/agent.py`, `worth_remembering()` | `finalise()` strips every quote it could not find in the chunk it named. A claim left with no sources is one whose evidence did not hold up — and nothing re-checks a memory, so writing it down would mean believing it for ever. |
-| **Holdout** beats the toggle, both ways | `fitgap/memory.py`, `allowed()` | Holdout measures the agent against a corpus with the fit registers hidden. Memory holds answers reached over the corpus *with* them, so a holdout run that reads memory measures the memory. It does not write either: an answer reached without half the corpus is not a finding about it. |
+| Only **verified** claims are written down | `backend/agents/evidence/agent.py`, `worth_remembering()` | `finalise()` strips every quote it could not find in the chunk it named. A claim left with no sources is one whose evidence did not hold up — and nothing re-checks a memory, so writing it down would mean believing it for ever. |
+| **Holdout** beats the toggle, both ways | `backend/agents/fitgap/memory.py`, `allowed()` | Holdout measures the agent against a corpus with the fit registers hidden. Memory holds answers reached over the corpus *with* them, so a holdout run that reads memory measures the memory. It does not write either: an answer reached without half the corpus is not a finding about it. |
 
 The page says the same thing to the reader. Recalled notes appear in their own
 panel, above the investigation and outside it, labelled `not evidence`.
@@ -73,11 +73,10 @@ trade in any direction. Give it its own environment.
 
 ## Setting it up
 
-Somewhere permanent and outside this repo — the venv is about 1.8 GB, and a
-temporary directory is not the place for it:
+In the repository root, where `scripts/run.sh` and `scripts/hindsight.sh` look
+for it (git ignores it; it is about 1.8 GB, so not in a temporary directory):
 
 ```bash
-cd ~
 uv venv --python 3.13 hindsight-venv
 uv pip install --python hindsight-venv/bin/python hindsight-api
 ```
@@ -86,7 +85,8 @@ The venv is disposable; the memories are not. They live in embedded Postgres
 under `~/.pg0/instances/hindsight/`, which is nothing to do with where you put
 the venv, so rebuilding the environment does not lose the bank.
 
-Then start it with `./hindsight.sh` from the repository root. That script holds
+`./scripts/run.sh` starts it in the background. To run it on its own, use
+`./scripts/hindsight.sh` from the repository root. That script holds
 the configuration and reads `ANTHROPIC_API_KEY` from `.env`.
 
 ## Which model, and why it matters more than it looks
@@ -126,10 +126,10 @@ actually sends. Verified end to end: a probe extracted in 10 seconds.
 ### Staying local instead
 
 ```bash
-HINDSIGHT_MODEL=qwen3.5 ./hindsight.sh   # won't work — that is a litellm name
+HINDSIGHT_MODEL=qwen3.5 ./scripts/hindsight.sh   # won't work — that is a litellm name
 ```
 
-For Ollama, edit the three `HINDSIGHT_API_LLM_*` lines in `hindsight.sh`:
+For Ollama, edit the three `HINDSIGHT_API_LLM_*` lines in `scripts/hindsight.sh`:
 
 ```bash
 export HINDSIGHT_API_LLM_PROVIDER=ollama
@@ -175,7 +175,7 @@ shows no memory panel at all, rather than an empty one.
 
 ## Configuration
 
-Read by `fitgap/memory.py`, all optional:
+Read by `backend/agents/fitgap/memory.py`, all optional:
 
 | Variable | Default | Notes |
 | --- | --- | --- |
@@ -213,7 +213,7 @@ for the same control point — which no single run had reported as a conflict.
 run; a reflection is an LLM's reading of those. The structural guarantee still
 holds — nothing reflected is in `session.retrieved`, so none of it can become a
 citation — but prose the agent cannot check belongs in front of a person who
-can. `test_reflect_never_reaches_the_agent` fails if `evidence/agent.py` ever
+can. `test_reflect_never_reaches_the_agent` fails if `backend/agents/evidence/agent.py` ever
 mentions it.
 
 ### It needs its own model, and that is not about cost
@@ -336,7 +336,7 @@ silently dropped.
 
 ## What is not done yet
 
-* **Only the Evidence Agent uses it.** The transport is in `fitgap/memory.py`
+* **Only the Evidence Agent uses it.** The transport is in `backend/agents/fitgap/memory.py`
   precisely so the Fit-Gap Copilot can, but it does not yet.
 * **No way to read or prune the bank from the UI.** A wrong memory can only be
   removed with the Hindsight client or its own UI. Worth having before this is

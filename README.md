@@ -9,6 +9,28 @@ OCR pass that Docling's Office backends don't provide on their own — embedded
 screenshots (scanned tables, diagrams pasted as images) would otherwise come
 through empty.
 
+## Project layout
+
+```
+backend/            the Python backend, one package per domain
+  api/              FastAPI app (app.py), sign-in, Demo Mode
+  core/             repository paths, Langfuse tracing, per-session uploads
+  ingestion/        documents to Markdown: converter, OCR, vision models, tables, chunking
+  rag/              Ask RAG: retrieval store, answer scoring, quality analytics
+  graph/            knowledge graph extraction, Neo4j copy, Cypher
+  agents/           Evidence Agent, InsightLens (fitgap), Fit-Gap Copilot (rollout),
+                    guardrails, agent_eval.py
+  tests/            test scripts: .venv/bin/python backend/tests/test_<name>.py
+frontend/           React UI (Vite); builds into static/dist/
+static/             the built UI the backend serves
+data/               knowledge_graph.json and other generated data
+docs/               design notes, explainers, eval question sets
+scripts/            run.sh (start everything), hindsight.sh, ngrok.sh
+```
+
+Command-line tools run as modules from the repository root, e.g.
+`.venv/bin/python -m backend.rag.rag categories`.
+
 ## Prerequisites
 
 | Dependency | Why | Install |
@@ -34,14 +56,73 @@ anything under `frontend/src`, rebuild it:
 cd frontend
 npm install        # once
 npm run build      # typecheck + build into ../static/dist
-npm run dev        # or: live-reloading UI on http://localhost:5173, API calls go to ./run.sh on :8000
+npm run dev        # or: live-reloading UI on http://localhost:5173, API calls go to ./scripts/run.sh on :8000
 ```
 
 ## Run
 
 ```bash
 brew services start postgresql@18   # the Ask tab needs Postgres running; skip if it already is
-./run.sh              # http://localhost:8000  (PORT=9000 ./run.sh to change)
+./scripts/run.sh              # http://localhost:8000  (PORT=9000 ./scripts/run.sh to change)
+```
+
+### Starting the services
+
+The app is one process, but it leans on several services. `./scripts/run.sh`
+starts the ones marked **auto** before the backend, and skips any that are
+already running. The rest you start yourself, once per boot.
+
+| Service | Needed for | Started by | Check it is up |
+|---|---|---|---|
+| Backend (FastAPI) | everything; also serves the built UI | **auto** (`run.sh` itself) | <http://localhost:8000> |
+| Postgres + pgvector | Ask RAG, the agents, run history | you | `brew services list` shows it `started` |
+| Ollama (`bge-m3`) | embedding questions and documents | you | `curl -s localhost:11434/api/tags` |
+| Podman machine | the Neo4j container (Docker works too) | **auto**, if Podman is installed | `podman info` |
+| Neo4j | the Cypher view | **auto**, if `NEO4J_PASSWORD` is in `.env` | <http://localhost:7474> |
+| Hindsight | Evidence Agent memory (optional) | **auto**, if installed | `curl -s localhost:8888/health` |
+| Frontend dev server | only while changing the UI | you | <http://localhost:5173> |
+| Langfuse | tracing and scores (optional) | nothing to start: cloud | keys in `.env` |
+
+**Every boot:**
+
+```bash
+brew services start postgresql@18
+ollama serve &                 # or open the Ollama app; skip if it runs at login
+./scripts/run.sh
+```
+
+**One-time setup** for each service:
+
+- **Postgres:** `brew install postgresql@18` (it ships pgvector), then set
+  `DATABASE_URL` in `.env`. See [Ask questions about the Markdown](#ask-questions-about-the-markdown-rag).
+- **Ollama:** install from <https://ollama.com>, then `ollama pull bge-m3`.
+- **Neo4j:** install Podman (`brew install podman`, then `podman machine init`)
+  or Docker Desktop, and put `NEO4J_PASSWORD=<your choice>` in `.env`. The first
+  `run.sh` pulls the image and loads the graph. By hand:
+  `docker compose -f compose.neo4j.yml up -d`. See [docs/neo4j.md](docs/neo4j.md).
+- **Hindsight:** a separate Python environment in the repository root (git
+  ignores it), because its dependencies conflict with Docling's:
+
+  ```bash
+  uv venv --python 3.13 hindsight-venv
+  uv pip install --python hindsight-venv/bin/python hindsight-api
+  ```
+
+  It reads `ANTHROPIC_API_KEY` from `.env`. `run.sh` starts it in the background
+  and logs to `hindsight.log`. To run it in the foreground: `./scripts/hindsight.sh`.
+  To run without memory: `HINDSIGHT_URL= ./scripts/run.sh`, which neither starts
+  the server nor uses it. See [docs/agent-memory.md](docs/agent-memory.md).
+- **Frontend:** only to change the UI. See [Setup](#setup):
+  `cd frontend && npm install`, then `npm run dev` or `npm run build`.
+
+**Stopping.** `run.sh` stops only the backend (Ctrl+C). The rest keep running
+on purpose, so a backend restart does not take them down:
+
+```bash
+docker compose -f compose.neo4j.yml down   # Neo4j; data stays in its volume
+pkill -f hindsight-api                     # Hindsight; memories stay in ~/.pg0
+podman machine stop
+brew services stop postgresql@18
 ```
 
 Then: **Open document** (or drop a file on the page) → wait for the preview →
@@ -60,7 +141,7 @@ when the OS asks for reduced motion.
 Same conversion engine, no browser:
 
 ```bash
-.venv/bin/python pptx_to_md.py P2P.pptx -o out
+.venv/bin/python -m backend.ingestion.pptx_to_md P2P.pptx -o out
 ```
 
 Options: `--lang eng+deu`, `--scale 4` (upscale before OCR), `--no-ocr`,
@@ -70,9 +151,9 @@ To convert a whole folder of `.xlsx`, `.pptx`, `.docx`, `.png` and `.jpg`/`.jpeg
 files in one go:
 
 ```bash
-.venv/bin/python folder_to_md.py solvay-spark          # Tesseract OCR only
-.venv/bin/python folder_to_md.py solvay-spark --vlm    # + local vision model
-.venv/bin/python folder_to_md.py solvay-spark --vlm-provider claude   # or openai
+.venv/bin/python -m backend.ingestion.folder_to_md solvay-spark          # Tesseract OCR only
+.venv/bin/python -m backend.ingestion.folder_to_md solvay-spark --vlm    # + local vision model
+.venv/bin/python -m backend.ingestion.folder_to_md solvay-spark --vlm-provider claude   # or openai
 ```
 
 The `.md` files are written to `solvay-spark/markdown/`, named after the file
@@ -103,8 +184,8 @@ picks who reads the images:
 | `claude` | Anthropic's API, through Docling's VLM pipeline | `ANTHROPIC_API_KEY` | `claude-opus-5`, or set `CLAUDE_VLM_MODEL` |
 
 ```bash
-export ANTHROPIC_API_KEY=...          # set where the CLI or ./run.sh runs
-.venv/bin/python folder_to_md.py solvay-spark --vlm-provider claude
+export ANTHROPIC_API_KEY=...          # set where the CLI or ./scripts/run.sh runs
+.venv/bin/python -m backend.ingestion.folder_to_md solvay-spark --vlm-provider claude
 ```
 
 With `openai` or `claude`, **every dense image is uploaded to that company's
@@ -164,7 +245,7 @@ stores sit beside them in the same database.
 Each category had a database of its own for one release. It was merged back
 because `rag_documents.source` is declared `UNIQUE` and could only be unique
 *per* database, so the same file could be indexed twice and one delete removed
-both. `migration_plan.md` has the reasoning, the measurements and the migration;
+both. `docs/migration_plan.md` has the reasoning, the measurements and the migration;
 `consolidate.py` is the migration itself.
 
 A document's category is decided in this order:
@@ -188,11 +269,11 @@ the API and the CLI; it is a label on the data rather than a control.
 the row records it. `rag.py categories` lists what each one holds.
 
 ```bash
-.venv/bin/python rag.py index solvay-spark/dr/markdown   # files everything as DR
-.venv/bin/python rag.py categories                       # what each one holds
-.venv/bin/python rag.py ask "..." --category DR          # search one category
-.venv/bin/python rag.py ask "..."                        # search all of them
-.venv/bin/python rag.py retag path/to/file.md PKG        # re-file, no re-embedding
+.venv/bin/python -m backend.rag.rag index solvay-spark/dr/markdown   # files everything as DR
+.venv/bin/python -m backend.rag.rag categories                       # what each one holds
+.venv/bin/python -m backend.rag.rag ask "..." --category DR          # search one category
+.venv/bin/python -m backend.rag.rag ask "..."                        # search all of them
+.venv/bin/python -m backend.rag.rag retag path/to/file.md PKG        # re-file, no re-embedding
 ```
 
 Edit `CATEGORIES` in `rag.py` only to give a category a label and description
@@ -359,14 +440,14 @@ is still reading starts diffing paragraphs.
    workshop agenda and backlog candidates.
 
 **The scores are computed, not generated.** The agent rates seven dimensions
-0–4 and gives each deviation a harmonization potential; `rollout/scoring.py`
+0–4 and gives each deviation a harmonization potential; `backend/agents/rollout/scoring.py`
 does the arithmetic. A score a model writes can be argued into a better number;
 a score derived from a rated register cannot move without changing a finding a
 reviewer can see. The localization-adjusted score publishes its own formula,
 and only a *confirmed* statutory or SAP-delivered localization lifts it — a
 suspicion does not, because that is the assumption the guardrails forbid.
 
-**Quality gates** (`rollout/gates.py`) run before anything is shown, and they
+**Quality gates** (`backend/agents/rollout/gates.py`) run before anything is shown, and they
 repair rather than merely report:
 
 | Gate | What it enforces |
@@ -389,7 +470,7 @@ alignment score over a register saying the process matched — which is exactly
 what the first real run did before the check existed.
 
 ```bash
-.venv/bin/python rollout/test_rollout.py   # the scoring and the gates
+.venv/bin/python backend/tests/test_rollout.py   # the scoring and the gates
 ```
 
 Runs are kept beside the corpus in `DATABASE_URL`, and the workshop pack
@@ -398,9 +479,9 @@ exports as Markdown or JSON from the page.
 **Upgrading an index that still has a database per category:**
 
 ```bash
-.venv/bin/python consolidate.py baseline    # record what the split system does
-.venv/bin/python consolidate.py run         # merge into one database
-.venv/bin/python consolidate.py verify      # hold the result to the baseline
+.venv/bin/python -m backend.rag.consolidate baseline    # record what the split system does
+.venv/bin/python -m backend.rag.consolidate run         # merge into one database
+.venv/bin/python -m backend.rag.consolidate verify      # hold the result to the baseline
 ```
 
 Nothing is re-embedded — the vectors are carried across as they are, which takes
@@ -408,7 +489,7 @@ about three seconds where re-embedding would take eighteen minutes. `run` is
 additive: it reads the old databases and never writes to them, so they stay
 exactly where they are as the rollback.
 
-**In the browser:** `./run.sh`, then open <http://localhost:8000/ask> (or the
+**In the browser:** `./scripts/run.sh`, then open <http://localhost:8000/ask> (or the
 **Ask** tab in the header). Type a question and the page shows each step as it
 runs: embedding the question with Ollama, vector search, keyword search, merging the
 rankings (with timings and what each step found), then Claude's answer as it
@@ -426,12 +507,12 @@ similarity and keyword score; the buttons re-sort by any of them, highest first.
 
 ```bash
 createdb docling                                           # once
-.venv/bin/python rag.py index solvay-spark/pkg/markdown    # chunk + embed with bge-m3 + store
-.venv/bin/python rag.py search "Who owns 7.1.12.3 Production Declaration?"
-.venv/bin/python rag.py ask "Who owns 7.1.12.3 Production Declaration?"
-.venv/bin/python rag.py categories                         # what each category holds
-.venv/bin/python rag.py retag knowledge_base/x.md DR       # re-file, no re-embedding
-.venv/bin/python rag.py chunks "solvay-spark/pkg/markdown/deck_pptx.md"  # preview chunking, no API calls
+.venv/bin/python -m backend.rag.rag index solvay-spark/pkg/markdown    # chunk + embed with bge-m3 + store
+.venv/bin/python -m backend.rag.rag search "Who owns 7.1.12.3 Production Declaration?"
+.venv/bin/python -m backend.rag.rag ask "Who owns 7.1.12.3 Production Declaration?"
+.venv/bin/python -m backend.rag.rag categories                         # what each category holds
+.venv/bin/python -m backend.rag.rag retag knowledge_base/x.md DR       # re-file, no re-embedding
+.venv/bin/python -m backend.rag.rag chunks "solvay-spark/pkg/markdown/deck_pptx.md"  # preview chunking, no API calls
 ```
 
 ### The Evidence Agent
@@ -477,20 +558,20 @@ If you want to clear old records or switch embedding models:
 1. **Reset schema for BGE-M3 (1024d) — Recommended:**
    Drops existing tables and recreates clean tables matching `vector(1024)`:
    ```bash
-   .venv/bin/python rag.py reset               # drops and recreates the tables
+   .venv/bin/python -m backend.rag.rag reset               # drops and recreates the tables
    ```
 
 2. **Clear all documents and chunks (keep schema):**
    Truncates all stored documents and chunks:
    ```bash
-   .venv/bin/python rag.py clear               # every category
-   .venv/bin/python rag.py clear --category DR # just one
+   .venv/bin/python -m backend.rag.rag clear               # every category
+   .venv/bin/python -m backend.rag.rag clear --category DR # just one
    ```
 
 3. **Wipe and immediately re-index a folder:**
    Recreates the schema and re-embeds all files in one step:
    ```bash
-   .venv/bin/python rag.py index knowledge_base --rebuild
+   .venv/bin/python -m backend.rag.rag index knowledge_base --rebuild
    ```
 
 4. **Via direct SQL / `psql`:**
@@ -685,7 +766,7 @@ Docling Studio includes an interactive enterprise Knowledge Graph (2,390 entitie
 
 Users can explore the ontology visually via an interactive D3 force-directed canvas and ask natural language questions (e.g. *"What specs are linked to Salesforce?"*, *"How does eCommerce connect to S/4HANA?"*, *"What is BPML process O-020-090?"*).
 
-**Cypher.** The graph is also loaded into a local Neo4j (`compose.neo4j.yml`, started by `./run.sh`) and can be queried with Cypher — in the **Cypher** view on the Knowledge Graph page, in Neo4j Browser at <http://localhost:7474>, or through `POST /api/graph/cypher` (read-only, enforced by Neo4j). `knowledge_graph.json` stays the source of truth; the Neo4j copy is replaced whenever the graph is rebuilt. See [docs/neo4j.md](docs/neo4j.md).
+**Cypher.** The graph is also loaded into a local Neo4j (`compose.neo4j.yml`, started by `./scripts/run.sh`) and can be queried with Cypher — in the **Cypher** view on the Knowledge Graph page, in Neo4j Browser at <http://localhost:7474>, or through `POST /api/graph/cypher` (read-only, enforced by Neo4j). `knowledge_graph.json` stays the source of truth; the Neo4j copy is replaced whenever the graph is rebuilt. See [docs/neo4j.md](docs/neo4j.md).
 
 ### How Our Graph Algorithm Works Compared to Neo4j
 
@@ -788,7 +869,7 @@ AGENT_WEB_MODEL=claude-sonnet-5
 ```
 
 ```bash
-.venv/bin/python test_guardrails.py
+.venv/bin/python backend/tests/test_guardrails.py
 ```
 
 ## Tracing the agents (Langfuse)
@@ -812,7 +893,7 @@ LANGFUSE_TRACING_ENVIRONMENT=development       # default; tags every trace
 LANGFUSE_RELEASE=                              # a version string, if you keep one
 ```
 
-Keys come from the Langfuse project under Settings -> API Keys. `./run.sh`
+Keys come from the Langfuse project under Settings -> API Keys. `./scripts/run.sh`
 prints one line at start-up saying whether tracing is on, and says so plainly
 if the credentials are refused -- a wrong key is a line in the log rather than
 a run that quietly produces nothing.
@@ -864,8 +945,8 @@ reference answer and whether a quote really supports its claim need a dataset
 or a judge, and are not scored yet.
 
 ```bash
-python agent_eval.py configs           # declare the score names in Langfuse, once
-.venv/bin/python test_agent_eval.py
+python -m backend.agents.agent_eval configs           # declare the score names in Langfuse, once
+.venv/bin/python backend/tests/test_agent_eval.py
 ```
 
 ## Scoring the answers (Ragas)
@@ -882,10 +963,10 @@ thirty seconds later. Closing the tab in between costs nothing -- the result is
 written either way and is there when the question is reopened.
 
 ```bash
-python evaluation.py status      # what scoring is configured to do
-python evaluation.py selftest    # score one good and one bad answer, print the gap
-python evaluation.py configs     # declare the score names and ranges in Langfuse
-python evaluation.py dashboard   # upload the quality dashboard
+python -m backend.rag.evaluation status      # what scoring is configured to do
+python -m backend.rag.evaluation selftest    # score one good and one bad answer, print the gap
+python -m backend.rag.evaluation configs     # declare the score names and ranges in Langfuse
+python -m backend.rag.evaluation dashboard   # upload the quality dashboard
 ```
 
 Off with `RAG_EVAL=off`, and off by itself if Ragas is not installed or there is
@@ -899,9 +980,9 @@ live question has none. They are measured instead over the 27 ground-truthed
 questions in `docs/three-engine-eval-questions.md`:
 
 ```bash
-python evaluation.py dataset                            # push them to Langfuse
-python evaluation.py experiment --mode hybrid --k 8     # answer and score them
-python evaluation.py experiment --mode vector --k 8     # then compare the runs
+python -m backend.rag.evaluation dataset                            # push them to Langfuse
+python -m backend.rag.evaluation experiment --mode hybrid --k 8     # answer and score them
+python -m backend.rag.evaluation experiment --mode vector --k 8     # then compare the runs
 ```
 
 That is also the only honest way to compare two retrieval settings, since live
@@ -969,7 +1050,7 @@ land on the introduction, and the landing page shows no buttons to them. All
 of them remain in the application at `/`.
 
 ```bash
-./run.sh                      # then open http://localhost:8000/demo
+./scripts/run.sh                      # then open http://localhost:8000/demo
 # username solvay, password solvay
 ```
 
@@ -994,7 +1075,7 @@ DEMO_SESSION_HOURS=12
 ```
 
 ```bash
-.venv/bin/python test_demo_mode.py   # credentials, the signed session, the gate
+.venv/bin/python backend/tests/test_demo_mode.py   # credentials, the signed session, the gate
 ```
 
 ## Notes
