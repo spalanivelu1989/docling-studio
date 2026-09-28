@@ -1,0 +1,3375 @@
+<!doctype html>
+<!--
+  data-nav on <html> picks the navigation behaviour:
+    "tabbed" — one section visible at a time, sidebar + prev/next pager
+    "scroll" — every section visible, sidebar is a table of contents
+  Change the attribute value on this line only. Do not find-and-replace the
+  value across the file; the CSS keys off the .js-tabbed class instead of the
+  attribute precisely so that this line stays the single source of truth.
+-->
+<html lang="en" data-nav="tabbed">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Knowledge Graph Quality — a plain-language tutorial</title>
+    <!-- One sentence: shown under the link when the page is shared in chat or
+         email, and in search results. -->
+    <meta name="description" content="How the Solvay SPARK knowledge graph is checked for accuracy, completeness, consistency and freshness, how plain-English questions are scored, and why its answers come from real documents rather than random text or paths." />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,600;0,700;1,400;1,700&family=Noto+Sans+Elbasan&display=swap"
+      rel="stylesheet"
+    />
+    <script>
+      // Runs before first paint so a saved theme and the tabbed layout are
+      // applied without a flash of the wrong one.
+      (function () {
+        var r = document.documentElement;
+        try {
+          var t = localStorage.getItem("doc-theme");
+          if (t === "dark" || t === "light" || t === "paper")
+            r.setAttribute("data-theme", t);
+        } catch (e) {
+          /* private browsing — the toggle still works for this visit */
+        }
+        // The sidebar's links are generated from the sections at load, so the
+        // stylesheet needs to know whether that is going to happen at all.
+        r.classList.add("js");
+        // Sections stay visible by default, so the document still reads fine
+        // with JavaScript disabled; tabbing is opt-in via this class.
+        if (r.getAttribute("data-nav") !== "scroll")
+          r.classList.add("js-tabbed");
+      })();
+    </script>
+    <style>
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
+      :root {
+        /* Layout. --measure is the prose column — about 68 characters of
+           IBM Plex Mono at the body size, which is the line length long-form
+           reading wants. Widening it is a one-token change; everything else
+           below derives from it. It is deliberately NOT in ch: a custom
+           property in ch resolves against each element's own font size, so
+           the masthead would compute a different page width than the layout
+           and stop lining up with it. */
+        /* Retained as a reference value only — nothing is capped by it. */
+        --measure: 43.5rem;
+        --card-pad: 2.75rem;
+        /* The sidenote gutter is zero until the viewport can spare the room;
+           the min-width block further down turns it on. */
+        --sidenote-w: 0rem;
+        --sidenote-gap: 0rem;
+
+        /* Tells the browser which native widgets to draw — scrollbars, the
+           capture textarea, form controls. Set in every theme block. */
+        color-scheme: light;
+        --bg: #f6f8f8;
+        --card: #ffffff;
+        --ink: #1c2529;
+        --muted: #56676d;
+        --accent: #0e6e68;
+        --accent-soft: #e2efed;
+        /* Disclosure. Indigo, deliberately not the teal accent, so a
+           collapsible block is never mistaken for a callout. */
+        --disclose-bg: #eceafb;
+        --disclose-ink: #4f46b8;
+        --win-bg: #e8f3ea;
+        --win-border: #2e7d4f;
+        --warn-bg: #faf3e0;
+        --warn-border: #9a6a00;
+        --why-bg: #edf2f4;
+        --border: #d8e0e0;
+        --code-bg: #eef2f2;
+        --code-ink: #17332f;
+        /* Syntax tokens: Catppuccin Latte, darkened where the official hue
+           is too light to hold contrast on --code-bg. */
+        --tok-plain: #17332f;
+        --tok-com: #7c7f93; /* Overlay 2 */
+        --tok-str: #40a02b; /* Green */
+        --tok-kw: #8839ef; /* Mauve */
+        --tok-num: #d9640b; /* Peach */
+        --tok-fn: #1e66f5; /* Blue */
+        --tok-typ: #a8710d; /* Yellow */
+        --tok-op: #179299; /* Teal */
+        --tok-var: #d20f39; /* Red */
+      }
+      /* Dark mode: Catppuccin Frappé — https://catppuccin.com/palette/ */
+      @media (prefers-color-scheme: dark) {
+        :root {
+          color-scheme: dark;
+          --bg: #303446; /* Base */
+          --card: #414559; /* Surface 0 */
+          --ink: #c6d0f5; /* Text */
+          --muted: #a5adce; /* Subtext 0 */
+          --accent: #81c8be; /* Teal */
+          --accent-soft: #51576d; /* Surface 1 */
+          --disclose-bg: #454063;
+          --disclose-ink: #babbf1; /* Lavender */
+          --win-bg: #292c3c; /* Mantle */
+          --win-border: #a6d189; /* Green */
+          --warn-bg: #292c3c; /* Mantle */
+          --warn-border: #e5c890; /* Yellow */
+          --why-bg: #292c3c; /* Mantle */
+          --border: #51576d; /* Surface 1 */
+          --code-bg: #292c3c; /* Mantle */
+          --code-ink: #99d1db; /* Sky */
+          /* Syntax tokens: Catppuccin Frappé */
+          --tok-plain: #c6d0f5; /* Text */
+          --tok-com: #838ba7; /* Overlay 1 */
+          --tok-str: #a6d189; /* Green */
+          --tok-kw: #ca9ee6; /* Mauve */
+          --tok-num: #ef9f76; /* Peach */
+          --tok-fn: #8caaee; /* Blue */
+          --tok-typ: #e5c890; /* Yellow */
+          --tok-op: #81c8be; /* Teal */
+          --tok-var: #e78284; /* Red */
+        }
+      }
+      /* Manual toggle overrides — must win over the OS preference in both directions */
+      :root[data-theme="dark"] {
+        color-scheme: dark;
+        --bg: #303446; /* Base */
+        --card: #414559; /* Surface 0 */
+        --ink: #c6d0f5; /* Text */
+        --muted: #a5adce; /* Subtext 0 */
+        --accent: #81c8be; /* Teal */
+        --accent-soft: #51576d; /* Surface 1 */
+        --disclose-bg: #454063;
+        --disclose-ink: #babbf1; /* Lavender */
+        --win-bg: #292c3c; /* Mantle */
+        --win-border: #a6d189; /* Green */
+        --warn-bg: #292c3c; /* Mantle */
+        --warn-border: #e5c890; /* Yellow */
+        --why-bg: #292c3c; /* Mantle */
+        --border: #51576d; /* Surface 1 */
+        --code-bg: #292c3c; /* Mantle */
+        --code-ink: #99d1db; /* Sky */
+        /* Syntax tokens: Catppuccin Frappé */
+        --tok-plain: #c6d0f5; /* Text */
+        --tok-com: #838ba7; /* Overlay 1 */
+        --tok-str: #a6d189; /* Green */
+        --tok-kw: #ca9ee6; /* Mauve */
+        --tok-num: #ef9f76; /* Peach */
+        --tok-fn: #8caaee; /* Blue */
+        --tok-typ: #e5c890; /* Yellow */
+        --tok-op: #81c8be; /* Teal */
+        --tok-var: #e78284; /* Red */
+      }
+      :root[data-theme="light"] {
+        color-scheme: light;
+        --bg: #f6f8f8;
+        --card: #ffffff;
+        --ink: #1c2529;
+        --muted: #56676d;
+        --accent: #0e6e68;
+        --accent-soft: #e2efed;
+        --disclose-bg: #eceafb;
+        --disclose-ink: #4f46b8;
+        --win-bg: #e8f3ea;
+        --win-border: #2e7d4f;
+        --warn-bg: #faf3e0;
+        --warn-border: #9a6a00;
+        --why-bg: #edf2f4;
+        --border: #d8e0e0;
+        --code-bg: #eef2f2;
+        --code-ink: #17332f;
+        /* Syntax tokens: Catppuccin Latte */
+        --tok-plain: #17332f;
+        --tok-com: #7c7f93; /* Overlay 2 */
+        --tok-str: #40a02b; /* Green */
+        --tok-kw: #8839ef; /* Mauve */
+        --tok-num: #d9640b; /* Peach */
+        --tok-fn: #1e66f5; /* Blue */
+        --tok-typ: #a8710d; /* Yellow */
+        --tok-op: #179299; /* Teal */
+        --tok-var: #d20f39; /* Red */
+      }
+      /* Paper: a warm, low-glare third theme for long reading sessions. The OS
+         never selects it — only the toggle, which cycles light → paper → dark.
+         The greys are warmed rather than replaced, so every component that is
+         tuned for contrast in the other two stays tuned here. */
+      :root[data-theme="paper"] {
+        color-scheme: light;
+        --bg: #f4f0e8;
+        --card: #fdfbf7;
+        --ink: #34312b;
+        --muted: #6a6358;
+        --accent: #0c635d;
+        --accent-soft: #e3ece8;
+        --disclose-bg: #ece7f5;
+        --disclose-ink: #4a41ad;
+        --win-bg: #ebf1e5;
+        --win-border: #44712f;
+        --warn-bg: #f8f0de;
+        --warn-border: #8a5c00;
+        --why-bg: #f6f2ea;
+        --border: #e3dccf;
+        --code-bg: #f6f1e7;
+        --code-ink: #34312b;
+        /* Syntax tokens: Catppuccin Latte, which sits on warm paper unchanged. */
+        --tok-plain: #34312b;
+        --tok-com: #7c7f93; /* Overlay 2 */
+        --tok-str: #40a02b; /* Green */
+        --tok-kw: #8839ef; /* Mauve */
+        --tok-num: #d9640b; /* Peach */
+        --tok-fn: #1e66f5; /* Blue */
+        --tok-typ: #a8710d; /* Yellow */
+        --tok-op: #179299; /* Teal */
+        --tok-var: #d20f39; /* Red */
+      }
+
+      /* Print: paper is white whatever theme is on screen, so the ink has to
+         be the light palette too — otherwise a reader in dark mode prints
+         pale text on white. A sixth copy of the light tokens, and the same
+         "change one, change all" rule applies; check.py compares them. */
+      @media print {
+        :root,
+        :root[data-theme] {
+          color-scheme: light;
+          --bg: #f6f8f8;
+          --card: #ffffff;
+          --ink: #1c2529;
+          --muted: #56676d;
+          --accent: #0e6e68;
+          --accent-soft: #e2efed;
+          --disclose-bg: #eceafb;
+          --disclose-ink: #4f46b8;
+          --win-bg: #e8f3ea;
+          --win-border: #2e7d4f;
+          --warn-bg: #faf3e0;
+          --warn-border: #9a6a00;
+          --why-bg: #edf2f4;
+          --border: #d8e0e0;
+          --code-bg: #eef2f2;
+          --code-ink: #17332f;
+          /* Syntax tokens: Catppuccin Latte */
+          --tok-plain: #17332f;
+          --tok-com: #7c7f93; /* Overlay 2 */
+          --tok-str: #40a02b; /* Green */
+          --tok-kw: #8839ef; /* Mauve */
+          --tok-num: #d9640b; /* Peach */
+          --tok-fn: #1e66f5; /* Blue */
+          --tok-typ: #a8710d; /* Yellow */
+          --tok-op: #179299; /* Teal */
+          --tok-var: #d20f39; /* Red */
+        }
+      }
+
+      /* Sidenotes need a gutter wide enough that it does not come out of the
+         prose. Below this width --sidenote-w stays 0, the section's right
+         padding collapses back to --card-pad, and .sidenote renders inline. */
+      /* :has() keeps the gutter out of documents that never use a sidenote —
+         otherwise every section pays 14rem of right padding for a feature the
+         page does not use. Where :has() is unsupported the gutter simply never
+         opens and sidenotes render inline, which is the same graceful fallback
+         used below 1440px. */
+      @media (min-width: 1440px) {
+        :root:has(.sidenote) {
+          --sidenote-w: 14rem;
+          --sidenote-gap: 1.75rem;
+        }
+      }
+
+      /* Reading progress. In scroll mode the rail tracks scroll depth; in
+         tabbed mode only one section is on screen at a time, so it tracks
+         position through the section sequence instead. */
+      .progress-rail {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 3px;
+        z-index: 20;
+        background: transparent;
+        pointer-events: none;
+      }
+      .progress-fill {
+        height: 100%;
+        width: 0;
+        background: var(--accent);
+      }
+      @media (prefers-reduced-motion: no-preference) {
+        .progress-fill {
+          transition: width 0.12s linear;
+        }
+      }
+
+      .theme-toggle {
+        position: fixed;
+        top: 1rem;
+        right: 1rem;
+        z-index: 10;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.45rem;
+        background: var(--card);
+        color: var(--muted);
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        padding: 0.35rem 0.85rem;
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 0.78rem;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        cursor: pointer;
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+      }
+      .theme-toggle:hover {
+        color: var(--accent);
+        border-color: var(--accent);
+      }
+      .theme-toggle:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+      }
+      @media print {
+        .theme-toggle {
+          display: none;
+        }
+      }
+
+      figure.shot {
+        margin: 1.2rem 0;
+      }
+      figure.shot img {
+        display: block;
+        width: 100%;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+      }
+      figure.shot figcaption {
+        font-size: 0.85rem;
+        color: var(--muted);
+        margin-top: 0.45rem;
+      }
+
+      body {
+        background: var(--bg);
+        color: var(--ink);
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 17px;
+        line-height: 1.65;
+        margin: 0;
+      }
+      main {
+        margin: 0;
+        padding: 2.5rem clamp(1rem, 3vw, 3rem) 6rem;
+      }
+
+      h1,
+      h2,
+      h3,
+      h4,
+      .label,
+      nav,
+      .phase-tag {
+        font-family: "IBM Plex Mono", monospace;
+      }
+      h1 {
+        font-size: 2.1rem;
+        line-height: 1.15;
+        letter-spacing: -0.015em;
+        text-wrap: balance;
+        margin: 0.5rem 0 0.75rem;
+      }
+      h2 {
+        font-size: 1.45rem;
+        margin: 0 0 1rem;
+        letter-spacing: -0.01em;
+        text-wrap: balance;
+      }
+      h3 {
+        font-size: 1.08rem;
+        margin: 2rem 0 0.5rem;
+      }
+      h4 {
+        font-size: 0.98rem;
+        margin: 1.5rem 0 0.4rem;
+      }
+      p {
+        margin: 0 0 1rem;
+      }
+      a {
+        color: var(--accent);
+        text-decoration-thickness: 1px;
+        text-underline-offset: 2px;
+      }
+      a:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+        border-radius: 2px;
+      }
+      /* Deep-link anchors, generated by the script on every section h2 and
+         h3. Hidden until the heading is hovered or the link is focused, so
+         they never compete with the title. */
+      .heading-anchor {
+        margin-left: 0.45em;
+        color: var(--muted);
+        font-weight: 400;
+        text-decoration: none;
+        opacity: 0;
+      }
+      h2:hover > .heading-anchor,
+      h3:hover > .heading-anchor,
+      .heading-anchor:focus-visible {
+        opacity: 1;
+      }
+      .heading-anchor:hover {
+        color: var(--accent);
+      }
+      @media (hover: none) {
+        .heading-anchor {
+          opacity: 0.5;
+        }
+      }
+      @media print {
+        .heading-anchor {
+          display: none;
+        }
+      }
+      h3[id] {
+        scroll-margin-top: 1.25rem;
+      }
+
+      .eyebrow {
+        font-family: "IBM Plex Mono", monospace;
+        text-transform: uppercase;
+        letter-spacing: 0.14em;
+        font-size: 0.72rem;
+        color: var(--accent);
+        font-weight: 600;
+        margin: 0;
+      }
+      .lede {
+        font-size: 1.12rem;
+        color: var(--muted);
+        margin-bottom: 0;
+        text-wrap: balance;
+      }
+
+      .meta-strip {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem 1.75rem;
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 0.85rem;
+        color: var(--muted);
+        border-top: 1px solid var(--border);
+        border-bottom: 1px solid var(--border);
+        padding: 0.65rem 0;
+        margin: 1.75rem 0 2.5rem;
+      }
+      .meta-strip strong {
+        color: var(--ink);
+        font-weight: 600;
+      }
+
+      .layout {
+        display: flex;
+        gap: 1.75rem;
+        align-items: flex-start;
+      }
+      /* Nothing in this system is width-capped. The page fills the window and
+         every element — prose, tables, .cards, .flow, figures, code — runs the
+         full width of its section, so a paragraph and the table under it line
+         up. Do NOT reintroduce a max-width on .content, .layout, main or the
+         prose elements: capping the container crushes wide content (a table
+         cannot outgrow its box) and strands the sidebar collapse button, while
+         capping only the prose leaves paragraphs stranded beside full-width
+         tables. --measure survives below purely as a sizing reference. */
+      /* The sidebar's links are generated at load, so with scripting off there
+         is nothing in it and an empty card would just be furniture. */
+      html:not(.js) nav.sidebar {
+        display: none;
+      }
+      /* The sidebar is the one place that breaks from IBM Plex Mono: a
+         proportional face here separates navigation from document content at a
+         glance. Noto Sans Elbasan ships regular only, so the 600/700 weights
+         below are synthesised by the browser — intentional, do not "fix". */
+      nav.sidebar {
+        position: sticky;
+        top: 1.25rem;
+        flex: none;
+        width: 256px;
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 0.9rem;
+        font-family: "Noto Sans Elbasan", sans-serif;
+        font-size: 0.87rem;
+      }
+      /* .label matches the shared mono rule directly, so inheriting from
+         nav.sidebar is not enough — it needs the family restated here. */
+      nav.sidebar .label {
+        font-family: "Noto Sans Elbasan", sans-serif;
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+        font-size: 0.7rem;
+        font-weight: 600;
+        color: var(--muted);
+        display: block;
+        margin: 0.2rem 0 0.6rem 0.4rem;
+      }
+      nav.sidebar a.tab {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+        padding: 0.5rem 0.65rem;
+        border-radius: 8px;
+        text-decoration: none;
+        color: var(--ink);
+        line-height: 1.3;
+        margin-bottom: 2px;
+      }
+      nav.sidebar a.tab .num {
+        flex: none;
+        width: 1.5rem;
+        height: 1.5rem;
+        border-radius: 50%;
+        border: 1px solid var(--border);
+        background: var(--code-bg);
+        color: var(--muted);
+        font-size: 0.72rem;
+        font-weight: 700;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      nav.sidebar a.tab:hover {
+        background: var(--accent-soft);
+      }
+      nav.sidebar a.tab.active {
+        background: var(--accent);
+        color: #fff;
+      }
+      nav.sidebar a.tab.active .num {
+        background: rgba(255, 255, 255, 0.2);
+        border-color: transparent;
+        color: #fff;
+      }
+      .sidebar-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.5rem;
+      }
+      .sidebar-toggle {
+        flex: none;
+        width: 1.7rem;
+        height: 1.7rem;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: var(--code-bg);
+        color: var(--muted);
+        font-size: 0.85rem;
+        line-height: 1;
+        cursor: pointer;
+        margin: 0 0 0.5rem;
+      }
+      .sidebar-toggle:hover {
+        color: var(--accent);
+        border-color: var(--accent);
+      }
+      .sidebar-toggle:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+      }
+      nav.sidebar.collapsed {
+        width: auto;
+        padding: 0.6rem;
+      }
+      nav.sidebar.collapsed .sidebar-head {
+        justify-content: center;
+      }
+      nav.sidebar.collapsed .label {
+        display: none;
+      }
+      nav.sidebar.collapsed a.tab {
+        font-size: 0;
+        gap: 0;
+        padding: 0.4rem;
+        justify-content: center;
+      }
+      .content {
+        flex: 1;
+        min-width: 0;
+      }
+      .pager {
+        display: flex;
+        justify-content: space-between;
+        gap: 1rem;
+        margin-top: 1.5rem;
+      }
+      .pager button {
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 0.85rem;
+        font-weight: 600;
+        color: var(--accent);
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 0.55rem 1rem;
+        cursor: pointer;
+        max-width: 48%;
+        text-align: left;
+      }
+      .pager button:hover {
+        border-color: var(--accent);
+      }
+      .pager button:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+      }
+      .pager button:disabled {
+        visibility: hidden;
+      }
+      @media (max-width: 900px) {
+        /* align-items: stretch matters — with flex-start the stacked columns
+           size to their widest child (a long line in a <pre>), which pushes the
+           whole page sideways instead of letting the block scroll internally. */
+        .layout {
+          flex-direction: column;
+          align-items: stretch;
+        }
+        .content {
+          width: 100%;
+        }
+        nav.sidebar {
+          position: static;
+          width: 100%;
+          display: flex;
+          overflow-x: auto;
+          gap: 4px;
+          padding: 0.6rem;
+        }
+        nav.sidebar .label,
+        .sidebar-head {
+          display: none;
+        }
+        nav.sidebar a.tab {
+          flex: none;
+          white-space: nowrap;
+          margin-bottom: 0;
+        }
+        nav.sidebar.collapsed {
+          width: 100%;
+          padding: 0.6rem;
+        }
+        nav.sidebar.collapsed a.tab {
+          font-size: 0.87rem;
+          gap: 0.6rem;
+          padding: 0.5rem 0.65rem;
+          justify-content: flex-start;
+        }
+      }
+
+      section.phase {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        /* The right padding carries the sidenote gutter. With --sidenote-w at
+           0 it collapses back to --card-pad on its own, so this one rule
+           covers both the wide and the narrow layout. */
+        padding: 2rem
+          calc(var(--card-pad) + var(--sidenote-w) + var(--sidenote-gap))
+          1.75rem var(--card-pad);
+        margin-bottom: 2.25rem;
+        scroll-margin-top: 1.25rem;
+      }
+      @media (max-width: 640px) {
+        section.phase {
+          padding: 1.4rem 1.1rem;
+        }
+      }
+
+      /* Sidenote. Floats into the gutter the section's right padding reserves,
+         so it sits beside the paragraph it follows without pushing anything
+         down the page. Below the gutter breakpoint it becomes an ordinary
+         block in the reading column — same markup, no author decision. */
+      .sidenote {
+        float: right;
+        clear: right;
+        width: var(--sidenote-w);
+        margin: 0.35rem calc(-1 * (var(--sidenote-w) + var(--sidenote-gap)))
+          1.1rem 0;
+        padding-left: 0.8rem;
+        border-left: 2px solid var(--accent);
+        font-size: 0.78rem;
+        line-height: 1.55;
+        color: var(--muted);
+      }
+      .sidenote .label {
+        display: block;
+        font-weight: 700;
+        font-size: 0.68rem;
+        text-transform: uppercase;
+        letter-spacing: 0.11em;
+        color: var(--accent);
+        margin-bottom: 0.2rem;
+      }
+      .sidenote > :last-child {
+        margin-bottom: 0;
+      }
+      @media (max-width: 1439px) {
+        .sidenote {
+          float: none;
+          width: auto;
+          margin: 1.25rem 0;
+          padding: 0.7rem 1rem;
+          background: var(--why-bg);
+          border-left: none;
+          border-radius: 8px;
+        }
+      }
+      /* The .js-tabbed class is set on <html> by the head script when
+         data-nav="tabbed". Sections are visible by default, so the document
+         degrades to a plain scrolling page without JavaScript. */
+      .js-tabbed section.phase {
+        display: none;
+      }
+      .js-tabbed section.phase.active {
+        display: block;
+      }
+      /* Where the browser supports hidden="until-found", inactive sections
+         carry it instead, so Ctrl-F still finds their text: the match fires
+         beforematch, the script switches to that tab, and the browser scrolls
+         to the hit. The box has to stay laid out for that to work, so it is
+         collapsed to nothing rather than display: none. */
+      .js-tabbed section.phase[hidden="until-found"] {
+        display: block;
+        padding: 0;
+        margin: 0;
+        border: 0;
+      }
+      html:not(.js-tabbed) .pager {
+        display: none;
+      }
+      .phase-tag {
+        display: inline-block;
+        background: var(--accent-soft);
+        color: var(--accent);
+        font-size: 0.72rem;
+        font-weight: 700;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        border-radius: 4px;
+        padding: 0.2rem 0.6rem;
+        margin-bottom: 0.8rem;
+      }
+
+      .win,
+      .why,
+      .warn {
+        border-radius: 8px;
+        padding: 0.85rem 1.1rem;
+        margin: 1.25rem 0;
+        font-size: 0.95rem;
+      }
+      /* Tinted boxes carry no coloured leading edge: the tint and the
+         coloured label already say which kind of box it is, and a bar down
+         the left of every box reads as decoration. House rule -- check.py
+         reports one if it comes back. */
+      .win {
+        background: var(--win-bg);
+      }
+      .win .label,
+      .why .label,
+      .warn .label {
+        display: block;
+        font-weight: 700;
+        font-size: 0.72rem;
+        text-transform: uppercase;
+        letter-spacing: 0.11em;
+        margin-bottom: 0.25rem;
+      }
+      .win .label {
+        color: var(--win-border);
+      }
+      .why {
+        background: var(--why-bg);
+      }
+      .why .label {
+        color: var(--accent);
+      }
+      .warn {
+        background: var(--warn-bg);
+      }
+      .warn .label {
+        color: var(--warn-border);
+      }
+      .win p:last-child,
+      .why p:last-child,
+      .warn p:last-child {
+        margin-bottom: 0;
+      }
+      .win ol:last-child,
+      .why ol:last-child,
+      .warn ol:last-child,
+      .win ul:last-child,
+      .why ul:last-child,
+      .warn ul:last-child {
+        margin-bottom: 0;
+      }
+
+      /* --- Disclosure -----------------------------------------------------
+         A collapsible block, and deliberately the one component that does not
+         look like a callout. .win/.why/.warn are tinted bands with a 4px left
+         edge and no interactivity; a disclosure is a bordered card with a solid
+         header bar and a button in it, so "this opens" is legible before a word
+         is read. Its own indigo token pair keeps it distinct from the teal
+         accent, the green .win and the amber .warn.
+
+         Native <details>: opens with no JavaScript, keyboard-operable for free,
+         and degrades to a plain visible block if scripts never run. */
+      details.disclose {
+        margin: 1.25rem 0;
+        border: 1px solid var(--disclose-ink);
+        border-radius: 10px;
+        overflow: hidden;
+        background: var(--card);
+        font-size: 0.95rem;
+      }
+      details.disclose > summary {
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 0.55rem;
+        padding: 0.6rem 0.75rem 0.6rem 0.9rem;
+        background: var(--disclose-bg);
+        color: var(--disclose-ink);
+        font-weight: 700;
+        font-size: 0.72rem;
+        text-transform: uppercase;
+        letter-spacing: 0.11em;
+        list-style: none;
+        -webkit-tap-highlight-color: transparent;
+      }
+      /* Safari and older Chrome draw their own triangle. */
+      details.disclose > summary::-webkit-details-marker {
+        display: none;
+      }
+      /* The glyph is swapped rather than rotated: once the summary is a flex
+         container a transform on the marker is unreliable, and two characters
+         say the same thing. */
+      details.disclose > summary::before {
+        content: "\25B8";
+        display: inline-block;
+        font-size: 1.05em;
+        line-height: 1;
+      }
+      details.disclose[open] > summary::before {
+        content: "\25BE";
+      }
+      /* The pill is the attention cue: a solid button that names the action, so
+         a closed block reads as an invitation rather than a heading that
+         happens to be clickable. */
+      details.disclose > summary::after {
+        content: "Show";
+        margin-left: auto;
+        padding: 0.2rem 0.6rem;
+        border-radius: 999px;
+        background: var(--disclose-ink);
+        color: var(--card);
+        font-size: 0.68rem;
+        letter-spacing: 0.09em;
+      }
+      details.disclose[open] > summary::after {
+        content: "Hide";
+      }
+      details.disclose > summary:hover::after {
+        opacity: 0.85;
+      }
+      details.disclose > summary:focus-visible {
+        outline: 2px solid var(--disclose-ink);
+        outline-offset: -2px;
+      }
+      details.disclose .disclose-body {
+        padding: 0.9rem 1.1rem 0.1rem;
+        border-top: 1px solid var(--border);
+      }
+      details.disclose .disclose-body > p:last-child {
+        margin-bottom: 0.8rem;
+      }
+      @media (prefers-reduced-motion: no-preference) {
+        /* Only the hover cue animates. Transitioning background-color here
+           would also animate the theme toggle, so the header bar would fade
+           while the rest of the page switched instantly. */
+        details.disclose > summary::after {
+          transition: opacity 0.15s ease;
+        }
+      }
+
+      /* --- Output capture --------------------------------------------------
+         A place for a reader to paste what a command printed, and keep it.
+         Built entirely from the existing tokens, so it needs no entry in the
+         theme blocks and introduces no new colour. The save/restore
+         script lives at the bottom of this file and no-ops when the document
+         contains no .capture blocks. */
+      .capture {
+        margin: 1.6rem 0 0;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--card);
+        overflow: hidden;
+      }
+      .capture-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        padding: 0.55rem 1rem;
+        background: var(--why-bg);
+        border-bottom: 1px solid var(--border);
+      }
+      .capture-head .label {
+        margin: 0;
+        font-size: 0.72rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .capture-head .count {
+        font-size: 0.78rem;
+        color: var(--muted);
+      }
+      .capture textarea {
+        display: block;
+        width: 100%;
+        box-sizing: border-box;
+        min-height: 10rem;
+        resize: vertical;
+        border: 0;
+        outline: 0;
+        padding: 0.9rem 1.1rem;
+        background: var(--code-bg);
+        color: var(--code-ink);
+        font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas,
+          monospace;
+        font-size: 0.85rem;
+        line-height: 1.5;
+        /* Command output is column-aligned; wrapping destroys the alignment,
+           so scroll instead. */
+        white-space: pre;
+        overflow-wrap: normal;
+        overflow-x: auto;
+      }
+      .capture textarea:focus {
+        box-shadow: inset 0 0 0 2px var(--accent);
+      }
+      .capture-foot {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 0.6rem;
+        padding: 0.6rem 1rem;
+        border-top: 1px solid var(--border);
+      }
+      .capture-foot button {
+        font: inherit;
+        font-size: 0.82rem;
+        padding: 0.35rem 0.9rem;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        background: var(--card);
+        color: var(--ink);
+        cursor: pointer;
+      }
+      .capture-foot button.primary {
+        border-color: var(--accent);
+        color: var(--accent);
+        font-weight: 600;
+      }
+      .capture-foot button:hover {
+        background: var(--accent-soft);
+      }
+      .capture-status {
+        font-size: 0.8rem;
+        color: var(--muted);
+      }
+      /* Green edge is the only "you are done" signal, and it uses the same
+         pair as the .win callout so the meaning carries across the document. */
+      .capture.is-saved {
+        border-color: var(--win-border);
+      }
+      .capture.is-saved .capture-head {
+        background: var(--win-bg);
+      }
+
+      pre {
+        background: var(--code-bg);
+        color: var(--code-ink);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 0.9rem 1.1rem;
+        overflow-x: auto;
+        font-size: 0.83rem;
+        line-height: 1.55;
+        margin: 0.75rem 0 1.25rem;
+      }
+      code,
+      pre {
+        font-family:
+          ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+      }
+      p code,
+      li code,
+      td code {
+        background: var(--code-bg);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        padding: 0.06em 0.35em;
+        font-size: 0.84em;
+        color: var(--code-ink);
+        overflow-wrap: anywhere;
+      }
+      .skill-invoke {
+        color: var(--accent);
+        background: var(--accent-soft);
+        border-color: var(--accent);
+        font-weight: 600;
+      }
+
+      /* Copy button. The .codewrap wrapper and the button inside it are
+         injected by the script at the end of the file, so authors write a
+         plain <pre> and get this for free — and with JavaScript disabled
+         neither exists and the block is untouched. The wrapper carries the
+         <pre>'s vertical margin so the absolute positioning has a box that
+         does not move when the block scrolls sideways. */
+      .codewrap {
+        position: relative;
+        margin: 0.75rem 0 1.25rem;
+      }
+      .codewrap > pre {
+        margin: 0;
+        /* Room for the button so it never sits on top of the first line. */
+        padding-right: 4.25rem;
+      }
+      .copy-btn {
+        position: absolute;
+        top: 0.45rem;
+        right: 0.45rem;
+        background: var(--card);
+        color: var(--muted);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 0.18rem 0.5rem;
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 0.68rem;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        cursor: pointer;
+        opacity: 0;
+      }
+      /* Revealed on hover, on keyboard focus, and while showing "Copied" —
+         and always on touch devices, which never hover. */
+      .codewrap:hover .copy-btn,
+      .copy-btn:focus-visible,
+      .copy-btn.copied {
+        opacity: 1;
+      }
+      @media (hover: none) {
+        .copy-btn {
+          opacity: 1;
+        }
+      }
+      .copy-btn:hover,
+      .copy-btn.copied {
+        color: var(--accent);
+        border-color: var(--accent);
+      }
+      .copy-btn:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+      }
+      @media (prefers-reduced-motion: no-preference) {
+        .copy-btn {
+          transition:
+            opacity 0.12s ease,
+            color 0.12s ease,
+            border-color 0.12s ease;
+        }
+      }
+
+      /* Syntax highlighting. The spans are painted by the highlighter at the
+         end of the file, which marks what it processed with data-hl. A block
+         with no language- class keeps --code-ink and stays monochrome, which
+         is what terminal output and ASCII diagrams want. */
+      [data-hl] {
+        color: var(--tok-plain);
+      }
+      .tok-com {
+        color: var(--tok-com);
+        font-style: italic;
+      }
+      .tok-str {
+        color: var(--tok-str);
+      }
+      .tok-kw {
+        color: var(--tok-kw);
+        font-weight: 600;
+      }
+      .tok-num {
+        color: var(--tok-num);
+      }
+      .tok-fn {
+        color: var(--tok-fn);
+      }
+      .tok-typ {
+        color: var(--tok-typ);
+      }
+      .tok-op {
+        color: var(--tok-op);
+      }
+      .tok-var {
+        color: var(--tok-var);
+      }
+
+      .tablewrap {
+        overflow-x: auto;
+        margin: 0.75rem 0 1.5rem;
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+        font-size: 0.9rem;
+      }
+      th,
+      td {
+        text-align: left;
+        padding: 0.55rem 0.8rem;
+        border-bottom: 1px solid var(--border);
+        vertical-align: top;
+      }
+      th {
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 0.72rem;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        color: var(--muted);
+      }
+      td:first-child {
+        font-weight: 600;
+        white-space: nowrap;
+      }
+      @media (max-width: 640px) {
+        td:first-child {
+          white-space: normal;
+        }
+      }
+
+      ol.steps {
+        padding-left: 1.4rem;
+      }
+      ol.steps > li {
+        margin-bottom: 0.85rem;
+      }
+      ul {
+        padding-left: 1.4rem;
+      }
+      li {
+        margin-bottom: 0.35rem;
+      }
+
+      .flow {
+        display: flex;
+        align-items: stretch;
+        gap: 0.6rem;
+        margin: 1.25rem 0 1.75rem;
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 0.85rem;
+        line-height: 1.45;
+      }
+      .flow-col {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 0.6rem;
+        min-width: 0;
+      }
+      .flow-main {
+        flex: 1.35;
+      }
+      .flow-role {
+        text-transform: uppercase;
+        letter-spacing: 0.11em;
+        font-size: 0.68rem;
+        font-weight: 700;
+        color: var(--muted);
+        text-align: center;
+      }
+      .flow-box {
+        background: var(--why-bg);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 0.85rem 1rem;
+        flex: 1;
+      }
+      .flow-box strong {
+        display: block;
+        color: var(--accent);
+        margin-bottom: 0.3rem;
+      }
+      .flow-box span {
+        color: var(--muted);
+      }
+      .flow-box ol {
+        margin: 0;
+        padding-left: 1.15rem;
+        color: var(--muted);
+      }
+      .flow-box ol li {
+        margin-bottom: 0.25rem;
+      }
+      .flow-arrow {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 0.35rem;
+        min-width: 6rem;
+        max-width: 7rem;
+        text-align: center;
+      }
+      .flow-arrow .lbl {
+        font-size: 0.68rem;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--muted);
+        line-height: 1.35;
+      }
+      .flow-arrow::after {
+        color: var(--accent);
+        font-size: 1.5rem;
+        line-height: 1;
+      }
+      .a1::after {
+        content: "→";
+      }
+      .a2::after {
+        content: "⇄";
+      }
+      @media (max-width: 760px) {
+        .flow {
+          flex-direction: column;
+        }
+        .flow-arrow {
+          min-width: 0;
+          max-width: none;
+        }
+        .a1::after {
+          content: "↓";
+        }
+        .a2::after {
+          content: "⇅";
+        }
+      }
+
+      .phase-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.4rem;
+        margin: -0.4rem 0 1.3rem;
+      }
+      .chip {
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 0.72rem;
+        font-weight: 600;
+        letter-spacing: 0.05em;
+        color: var(--muted);
+        background: var(--code-bg);
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        padding: 0.2rem 0.75rem;
+      }
+      .chip strong {
+        color: var(--accent);
+      }
+
+      .step-h {
+        display: flex;
+        align-items: center;
+        gap: 0.65rem;
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 1rem;
+        font-weight: 700;
+        margin: 2.1rem 0 0.8rem;
+        padding-top: 1.4rem;
+        border-top: 1px dashed var(--border);
+      }
+      .step-h .n {
+        flex: none;
+        width: 1.75rem;
+        height: 1.75rem;
+        border-radius: 50%;
+        background: var(--accent);
+        color: var(--card);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.9rem;
+      }
+
+      .cards {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 0.8rem;
+        margin: 1rem 0 1.5rem;
+      }
+      .card {
+        background: var(--why-bg);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 0.9rem 1rem;
+        font-size: 0.92rem;
+      }
+      .card .card-title {
+        display: block;
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 0.82rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--accent);
+        margin-bottom: 0.4rem;
+      }
+
+      .qa {
+        background: var(--code-bg);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 1.25rem 1.4rem 1.1rem;
+        margin: 2rem 0 1.5rem;
+      }
+      .qa .q {
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 1.05rem;
+        font-weight: 700;
+        margin: 0 0 0.6rem;
+      }
+      .qa .q::before {
+        content: "Q — ";
+        color: var(--accent);
+      }
+      .qa > :last-child {
+        margin-bottom: 0;
+      }
+
+      .choice {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.8rem;
+        margin: 1rem 0 1.5rem;
+      }
+      @media (max-width: 720px) {
+        .choice {
+          grid-template-columns: 1fr;
+        }
+      }
+      .choice-box {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 0.9rem 1rem;
+        font-size: 0.92rem;
+      }
+      .choice-box.a {
+        border-top: 4px solid var(--accent);
+      }
+      .choice-box.b {
+        border-top: 4px solid var(--warn-border);
+      }
+      .choice-box .ct {
+        display: block;
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 0.82rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        margin-bottom: 0.4rem;
+      }
+      .choice-box.a .ct {
+        color: var(--accent);
+      }
+      .choice-box.b .ct {
+        color: var(--warn-border);
+      }
+
+      footer {
+        color: var(--muted);
+        font-size: 0.85rem;
+        border-top: 1px solid var(--border);
+        padding-top: 1.5rem;
+        margin-top: 3rem;
+      }
+      @media (prefers-reduced-motion: no-preference) {
+        html {
+          scroll-behavior: smooth;
+        }
+      }
+      @media print {
+        /* A block someone happened to collapse on screen must still print. */
+        details.disclose > summary::before,
+        details.disclose > summary::after {
+          display: none;
+        }
+        details.disclose:not([open]) > *:not(summary) {
+          display: block;
+        }
+        /* Whatever was pasted must survive to paper; the buttons must not. */
+        .capture-foot {
+          display: none;
+        }
+        .capture textarea {
+          min-height: 0;
+          height: auto;
+          overflow: visible;
+          white-space: pre-wrap;
+        }
+        body {
+          background: #fff;
+        }
+        section.phase {
+          display: block !important;
+          content-visibility: visible !important;
+          border: none;
+          padding: 0;
+          margin-bottom: 1.5rem;
+          break-inside: avoid-page;
+        }
+        .layout {
+          display: block;
+        }
+        nav.sidebar,
+        .pager,
+        .copy-btn,
+        .progress-rail {
+          display: none;
+        }
+        .sidenote {
+          float: none;
+          width: auto;
+          margin: 1rem 0;
+          break-inside: avoid-page;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="progress-rail" aria-hidden="true">
+      <div class="progress-fill" id="progressFill"></div>
+    </div>
+    <button
+      class="theme-toggle"
+      id="themeToggle"
+      type="button"
+      aria-live="polite"
+    >
+      <span id="themeIcon" aria-hidden="true">◐</span>
+      <span id="themeLabel">Dark mode</span>
+    </button>
+    <main>
+      <p class="eyebrow">KNOWLEDGE GRAPH · QUALITY TUTORIAL</p>
+      <h1>Can we trust the knowledge graph? How it is checked, in plain words</h1>
+      <p class="lede">
+        The Solvay SPARK knowledge graph links thousands of programme documents to the
+        systems, business processes and tickets they talk about. People query it by hand,
+        and AI agents query it on their own. This tutorial explains how we check that the
+        graph is correct, complete and up to date, and why its answers come from real
+        documents rather than random text or random connections.
+      </p>
+
+      <div class="meta-strip">
+        <span><strong>Audience</strong> — anyone relying on the graph, no technical background needed</span>
+        <span><strong>Where to see it</strong> — Knowledge Graph page → <em>Quality</em> view</span>
+        <span><strong>Code</strong> — <code>backend/graph/graph_eval.py</code></span>
+      </div>
+
+      <div class="layout">
+        <nav class="sidebar" aria-label="Sections">
+          <div class="sidebar-head">
+            <span class="label">The tutorial</span>
+            <button
+              class="sidebar-toggle"
+              id="sidebarToggle"
+              type="button"
+              aria-expanded="true"
+              aria-label="Minimize sidebar"
+              title="Minimize sidebar"
+            >
+              «
+            </button>
+          </div>
+        </nav>
+        <div class="content">
+
+          <!-- ================================================================ -->
+          <section class="phase" id="in-short" data-nav-num="0" data-nav-label="In short">
+            <span class="phase-tag">In short</span>
+            <h2>Did we evaluate the knowledge graph? The two-minute answer</h2>
+            <p>
+              A short, conversational summary for when a client asks whether the knowledge
+              graph has been evaluated, using the figures from the checks run on
+              28 September 2026. The rest of this tutorial explains each point in detail.
+            </p>
+
+            <h3>Short answer</h3>
+            <p>
+              “Yes. We check the knowledge graph in two ways: the graph itself, and how
+              well it answers questions. Both run from a Quality screen built into the
+              tool, so the numbers aren’t a one-off exercise. We can rerun them whenever
+              the documents change.”
+            </p>
+
+            <h3>How the graph is built (the point that builds trust)</h3>
+            <p>
+              “First, it helps to know the graph isn’t written by an AI. It’s built by
+              fixed rules that find known system names, process codes and ticket numbers
+              in your documents. So it can’t invent a fact. Every link comes from text
+              that’s actually in a document. What <em>can</em> go wrong is a wrong match,
+              a missed match, or the graph falling out of date, so those are what we
+              measure.”
+            </p>
+
+            <h3>Check one: the graph itself</h3>
+            <p>
+              “We check it the way the research literature on knowledge graphs
+              recommends: accuracy, completeness, consistency and freshness.”
+            </p>
+            <ol class="steps">
+              <li><strong>Accuracy</strong> — “every link points to the passages it came from. We checked all 4,537 of them against the real text, and every one holds up.”</li>
+              <li><strong>Completeness</strong> — “all 217 documents in the search index are in the graph, and every parent–child link from your official BPML process workbook is present, 1,846 of 1,846.”</li>
+              <li><strong>Consistency</strong> — “no broken links, no duplicates, no loops in the process hierarchy.”</li>
+              <li><strong>Freshness</strong> — “it confirms the graph was built from the current version of the documents.”</li>
+            </ol>
+
+            <h3>Check two: asking it questions</h3>
+            <p>
+              “People can ask the graph questions in plain English, and an AI turns them
+              into a database query. We test that translation with 28 questions whose
+              correct answers we worked out by hand. It gave the right answer to 24 of the
+              25 questions the graph can answer, and it correctly recognises questions the
+              graph <em>can’t</em> answer, like ‘who approved this process’.”
+            </p>
+
+            <h3>Being candid (clients respect this)</h3>
+            <p>
+              “The checks also found things to fix, which is the point of running them.
+              Four tickets have an inconsistent flag in the graph, and one type of
+              question, ‘list everything’, can come back cut off at 100 rows. Both are
+              known and tracked. The answer key for the question test is also still being
+              reviewed by programme experts.”
+            </p>
+
+            <h3>If they ask “how do I know an AI agent isn’t just making things up?”</h3>
+            <p>
+              “Two safeguards. The agents can’t treat the graph as proof on its own: any
+              claim has to be backed by a quote from a real document, and every quote is
+              checked word for word before an answer is shown. And when an agent traces a
+              connection between two systems, the tool judges whether that route means
+              anything or is just a coincidence of how things are filed, and flags it.”
+            </p>
+
+            <h3>Closing</h3>
+            <p>
+              “There’s a plain-language write-up of all this, including what each measure
+              means, that I’m happy to share.”
+            </p>
+            <div class="why">
+              <span class="label">Keep the figures current</span>
+              <p>
+                The numbers above are from 28 September 2026. Before quoting them, open the
+                Quality view on the Knowledge Graph page for today’s figures.
+              </p>
+            </div>
+          </section>
+
+          <!-- ================================================================ -->
+          <section class="phase" id="start" data-nav-label="Start here">
+            <span class="phase-tag">Start here</span>
+            <h2>The knowledge graph in one minute</h2>
+            <p>
+              Think of the knowledge graph as a very large, very well-organised index card
+              system. Every <strong>thing</strong> the programme talks about gets a card:
+              each document, each IT system (SAP S/4HANA, Salesforce, SOVOS…), each business
+              process step (such as <em>4.10.2 Process Returns</em>), each SPARK ticket, and
+              each business stream (Lead to Cash and the others). Then the cards are
+              <strong>linked</strong>: “this document mentions this system”, “this step sits
+              under that step”, “this document is the specification for that ticket”.
+            </p>
+            <div class="cards">
+              <div class="card">
+                <span class="card-title">2,390 things</span>
+                218 documents, 18 systems, 1,985 process steps, 165 tickets and 4 business streams.
+              </div>
+              <div class="card">
+                <span class="card-title">4,789 links</span>
+                Six kinds of link, such as <em>mentions system</em> and <em>specifies process</em>.
+              </div>
+              <div class="card">
+                <span class="card-title">8,867 passages</span>
+                The paragraphs of each document, so any link can be traced back to the exact
+                text that justifies it.
+              </div>
+            </div>
+            <p>Two kinds of reader use it:</p>
+            <div class="choice">
+              <div class="choice-box a">
+                <span class="ct">People, by hand</span>
+                Exploring the picture on the Knowledge Graph page, or asking a question in
+                plain English on the Cypher view.
+              </div>
+              <div class="choice-box b">
+                <span class="ct">AI agents, on their own</span>
+                The Evidence Agent and the Fit-Gap Copilot look things up in the graph while
+                they research an answer.
+              </div>
+            </div>
+            <div class="why">
+              <span class="label">Why check it at all</span>
+              <p>
+                An index that quietly points to the wrong page is worse than no index: people
+                trust it and stop checking. The Quality view exists so that trust is earned by
+                measurement, and so a problem shows up on a screen before it shows up in a
+                client workshop.
+              </p>
+            </div>
+          </section>
+
+          <!-- ================================================================ -->
+          <section class="phase" id="built" data-nav-label="How the graph is built">
+            <span class="phase-tag">Background</span>
+            <h2>How the graph is built, and why that matters for trust</h2>
+            <p>
+              The single most important fact about this graph: <strong>it is not written by
+              an AI.</strong> It is built by fixed rules that look for known names and codes in
+              the documents, much like a search for exact words.
+            </p>
+            <div class="flow">
+              <div class="flow-col">
+                <div class="flow-role">Input</div>
+                <div class="flow-box">
+                  <strong>Programme documents</strong>
+                  <span>Specifications, workshop notes, spreadsheets, converted to text.</span>
+                </div>
+              </div>
+              <div class="flow-arrow a1"><span class="lbl">searched for</span></div>
+              <div class="flow-col flow-main">
+                <div class="flow-role">Fixed rules</div>
+                <div class="flow-box">
+                  <strong>Known names and codes</strong>
+                  <ol>
+                    <li>A list of 18 systems and 4 business streams</li>
+                    <li>Process codes (O-020-020, 4.10.2.1…)</li>
+                    <li>Ticket numbers (SPARK-22234…)</li>
+                    <li>The official BPML process workbook for the hierarchy</li>
+                  </ol>
+                </div>
+              </div>
+              <div class="flow-arrow a1"><span class="lbl">produce</span></div>
+              <div class="flow-col">
+                <div class="flow-role">Output</div>
+                <div class="flow-box">
+                  <strong>The graph</strong>
+                  <span>Every link records which passages it was found in.</span>
+                </div>
+              </div>
+            </div>
+            <p>This shapes what can and cannot go wrong:</p>
+            <div class="tablewrap">
+              <table>
+                <thead><tr><th>Risk</th><th>Possible here?</th><th>Why</th></tr></thead>
+                <tbody>
+                  <tr><td>Invented facts</td><td>No</td><td>A link only exists where a document actually contains the name or code. Nothing is guessed or summarised.</td></tr>
+                  <tr><td>A wrong match</td><td>Yes, rarely</td><td>A word that merely looks like a system name, e.g. a customer called “Eccles” for SAP ECC. The rules are written to avoid known cases, and tests guard them.</td></tr>
+                  <tr><td>A missed match</td><td>Yes</td><td>A system that is not on the list of 18 is simply not recognised.</td></tr>
+                  <tr><td>Out of date</td><td>Yes</td><td>If documents change and the graph is not rebuilt.</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="win">
+              <span class="label">What this means</span>
+              <p>
+                Because the graph cannot invent anything, its checks focus on the three things
+                that <em>can</em> go wrong: wrong matches, missed matches and staleness. The
+                rest of this tutorial walks through each check in turn.
+              </p>
+            </div>
+          </section>
+
+          <!-- ================================================================ -->
+          <section class="phase" id="view" data-nav-label="The Quality view at a glance">
+            <span class="phase-tag">The tool</span>
+            <h2>The Quality view at a glance</h2>
+            <p>
+              Open the Knowledge Graph page and choose <strong>Quality</strong> in the view
+              switcher at the top. It holds two separate checks:
+            </p>
+            <div class="cards">
+              <div class="card">
+                <span class="card-title">1 · The graph itself</span>
+                Is the graph correct, complete, consistent, well-connected and current? No AI
+                is involved, it costs nothing and takes seconds. It runs when you open the
+                view, and whenever you press <em>Check now</em>.
+              </div>
+              <div class="card">
+                <span class="card-title">2 · Plain-English questions</span>
+                When someone asks the graph a question in English, do they get the right
+                answer? It uses Claude once per question, so it runs only when you press
+                <em>Run question check</em>.
+              </div>
+            </div>
+            <p>Every measurement is shown the same way, with a value, a target and a verdict:</p>
+            <div class="tablewrap">
+              <table>
+                <thead><tr><th>Verdict</th><th>What it means</th></tr></thead>
+                <tbody>
+                  <tr><td>Pass</td><td>Meets its target.</td></tr>
+                  <tr><td>Watch</td><td>Slightly short of the target: worth noticing, not a cause for alarm.</td></tr>
+                  <tr><td>Below</td><td>Clearly short of the target: something to look into.</td></tr>
+                  <tr><td>Info</td><td>A count shown for context, with no right or wrong value.</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="why">
+              <span class="label">Five questions about the graph itself</span>
+              <p>
+                The first check groups its measurements under five questions, the ones used
+                in the research literature on knowledge graph quality: <strong>Accuracy</strong>
+                (is it right?), <strong>Completeness</strong> (is it all there?),
+                <strong>Consistency</strong> (does it contradict itself?),
+                <strong>Structure</strong> (does it hang together?) and
+                <strong>Freshness</strong> (is it current?). The next five sections take
+                them one at a time.
+              </p>
+            </div>
+          </section>
+
+          <!-- ================================================================ -->
+          <section class="phase" id="accuracy" data-nav-label="Accuracy">
+            <span class="phase-tag">Check 1 · The graph itself</span>
+            <h2>Accuracy: is every link backed by real text?</h2>
+            <h3>Cited passages name their target</h3>
+            <p>
+              Every link in the graph carries a small list of the passages it was found in,
+              like a footnote. For example, the link <em>“SOVOS interface specification
+              mentions SAP CPI”</em> cites the two paragraphs where CPI appears.
+            </p>
+            <p>
+              This check goes to <strong>every one of those footnotes</strong>, fetches the
+              paragraph from the same store the search engine uses, and checks that the
+              paragraph really names the thing the link points to.
+            </p>
+            <div class="why">
+              <span class="label">Why check against the search store</span>
+              <p>
+                The graph could agree with itself and still be wrong, for example if the
+                documents were re-indexed and the paragraph numbers moved. Checking against
+                the text that search actually serves catches exactly that.
+              </p>
+            </div>
+            <div class="win">
+              <span class="label">Today</span>
+              <p>
+                <strong>4,537 of 4,537</strong> cited passages name their target: Pass. A
+                further 23 links rest on a document’s <em>file name</em> alone, e.g. a file
+                called “…SPARK-21175…”, and have no passage to check. They are reported
+                separately rather than counted as passes.
+              </p>
+            </div>
+          </section>
+
+          <!-- ================================================================ -->
+          <section class="phase" id="completeness" data-nav-label="Completeness">
+            <span class="phase-tag">Check 1 · The graph itself</span>
+            <h2>Completeness: is everything that should be there, there?</h2>
+            <p>
+              A graph can be perfectly accurate and still leave things out. Three measurements
+              compare it with sources we trust:
+            </p>
+            <div class="tablewrap">
+              <table>
+                <thead><tr><th>Measurement</th><th>In plain words</th><th>Compared with</th><th>Today</th></tr></thead>
+                <tbody>
+                  <tr><td>Indexed documents in the graph</td><td>Is every document that search knows about also in the graph?</td><td>The search index</td><td>217 of 217 · Pass</td></tr>
+                  <tr><td>Process codes found in BPML</td><td>When a document cites a process code, does that code exist in the official process workbook?</td><td>The BPML workbook</td><td>1,855 of 1,985 (93%) · Watch</td></tr>
+                  <tr><td>Hierarchy links present</td><td>Where the workbook says step A sits under step B, does the graph say so too?</td><td>The BPML workbook</td><td>1,846 of 1,846 · Pass</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="why">
+              <span class="label">About the 130 codes not in BPML</span>
+              <p>
+                These are codes that documents mention but the official workbook does not
+                contain: old codes, typing mistakes in documents, or codes from other
+                sources. The graph keeps them, clearly marked “not in BPML”, rather than
+                guessing where they belong. The list itself is worth reviewing with the
+                process owners.
+              </p>
+            </div>
+          </section>
+
+          <!-- ================================================================ -->
+          <section class="phase" id="consistency" data-nav-label="Consistency">
+            <span class="phase-tag">Check 1 · The graph itself</span>
+            <h2>Consistency: does the graph obey its own rules?</h2>
+            <p>
+              A graph has rules, the way a family tree does: a person cannot be their own
+              grandparent, and every child has one set of parents. These measurements check
+              that nothing breaks them.
+            </p>
+            <div class="tablewrap">
+              <table>
+                <thead><tr><th>Measurement</th><th>What it catches</th><th>Today</th></tr></thead>
+                <tbody>
+                  <tr><td>Links between the right kinds of thing</td><td>A “mentions system” link that points at a process instead of a system.</td><td>4,789 of 4,789 · Pass</td></tr>
+                  <tr><td>Links to a missing thing</td><td>A link whose other end does not exist.</td><td>0 · Pass</td></tr>
+                  <tr><td>Duplicate links</td><td>The same fact recorded twice, which would inflate every count.</td><td>0 · Pass</td></tr>
+                  <tr><td>Loops in the process hierarchy</td><td>A step that ends up, through its parents, above itself.</td><td>0 · Pass</td></tr>
+                  <tr><td>Steps with two parents</td><td>A process step filed under two different parents.</td><td>0 · Pass</td></tr>
+                  <tr><td>Contradicting properties</td><td>A ticket marked “has its own specification” with none, or the reverse.</td><td>4 · Below</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="warn">
+              <span class="label">A real finding</span>
+              <p>
+                The four contradictions are genuine: tickets SPARK-18542, 21175, 21266 and
+                21930 each have a specification document named after them, but the graph does
+                not flag them as having one. This had already been noticed for two of them,
+                and the check found the other two. It is a small bookkeeping error in how the
+                graph is built, not an error in the documents, and it is the kind of thing
+                this check exists to surface.
+              </p>
+            </div>
+          </section>
+
+          <!-- ================================================================ -->
+          <section class="phase" id="structure" data-nav-label="Structure">
+            <span class="phase-tag">Check 1 · The graph itself</span>
+            <h2>Structure: does the graph hang together?</h2>
+            <div class="tablewrap">
+              <table>
+                <thead><tr><th>Measurement</th><th>In plain words</th><th>Today</th></tr></thead>
+                <tbody>
+                  <tr><td>Unconnected things</td><td>Cards with no links at all.</td><td>14 · Watch</td></tr>
+                  <tr><td>Things in the main connected part</td><td>Share of cards reachable from one another by following links. A low share means the graph has broken into islands.</td><td>99% · Pass</td></tr>
+                  <tr><td>Hubs</td><td>Cards linked to 40 or more others.</td><td>13 · Info</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <h3>Why hubs matter: the airport problem</h3>
+            <p>
+              Almost every flight in a region connects through one big airport, so “you can fly
+              from A to B” tells you very little: everything connects to everything through
+              the hub. The graph has hubs too. The BPML workbook, for instance, is linked to
+              over 1,500 process steps. A route between two systems that passes through such a
+              hub does <em>not</em> mean the systems exchange data.
+            </p>
+            <p>
+              That is why hubs are counted here, and why the AI agents are told about them
+              (see <a href="#safeguards">How we know it is not making things up</a>).
+            </p>
+            <div class="why">
+              <span class="label">About the 14 unconnected things</span>
+              <p>
+                Ten are documents in which no known system, stream, ticket or process code
+                was found, such as a meeting-notes template, a few spreadsheets and some CRM
+                exports. The other four are process steps that no document cites. Neither is
+                an error, but a steady rise would be worth a look.
+              </p>
+            </div>
+          </section>
+
+          <!-- ================================================================ -->
+          <section class="phase" id="freshness" data-nav-label="Freshness">
+            <span class="phase-tag">Check 1 · The graph itself</span>
+            <h2>Freshness: is the graph built from today’s documents?</h2>
+            <p>
+              Each time the graph is built, it records a fingerprint of everything it was
+              built from: every document, the BPML workbook and the search index. The
+              freshness check recomputes that fingerprint from the files as they are now and
+              compares the two.
+            </p>
+            <div class="tablewrap">
+              <table>
+                <thead><tr><th>Measurement</th><th>In plain words</th><th>Today</th></tr></thead>
+                <tbody>
+                  <tr><td>Graph built from the current documents</td><td>Nothing has been added, removed or edited since the graph was built.</td><td>Yes · Pass</td></tr>
+                  <tr><td>Question copy is current</td><td>The copy of the graph that answers plain-English questions holds this same version.</td><td>Yes · Pass</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="win">
+              <span class="label">What you have now</span>
+              <p>
+                You have seen every measurement of the graph itself. Together they answer
+                “is the graph right, complete, consistent and current?”. The next section
+                turns to the second question: are the <em>answers</em> right?
+              </p>
+            </div>
+          </section>
+
+          <!-- ================================================================ -->
+          <section class="phase" id="questions" data-nav-label="Plain-English questions">
+            <span class="phase-tag">Check 2 · Asking questions</span>
+            <h2>Plain-English questions: does a question get the right answer?</h2>
+            <p>
+              On the Cypher view, anyone can type a question such as <em>“Which documents
+              mention both SOVOS and SAP CPI?”</em>. Claude translates it into a database
+              query (in a language called Cypher), and the query is run against the graph.
+              The risk is not the graph but the <strong>translation</strong>: Claude might
+              misunderstand the question and ask the database for the wrong thing.
+            </p>
+            <h3>How the check works</h3>
+            <div class="step-h"><span class="n">1</span>A set of reference questions with known answers</div>
+            <p>
+              28 questions, each with a <strong>reference query</strong> written and tested
+              by hand, stored in <code>data/graph_eval_questions.json</code>. Three of them
+              are deliberately questions the graph <em>cannot</em> answer, such as “Who
+              approved the returns process?”. Approvals are not in the graph.
+            </p>
+            <div class="step-h"><span class="n">2</span>Claude answers each question as a user would see it</div>
+            <p>The same translation step the Cypher view uses, with no special help.</p>
+            <div class="step-h"><span class="n">3</span>Both queries are run and their results compared</div>
+            <p>
+              What counts is the <strong>result</strong>, not the wording of the query: two
+              differently written queries that return the same rows are both right. This is
+              called <em>execution accuracy</em>, and it is the standard way such systems
+              are scored.
+            </p>
+            <h3>What is measured</h3>
+            <div class="tablewrap">
+              <table>
+                <thead><tr><th>Measurement</th><th>In plain words</th><th>Target</th><th>Today</th></tr></thead>
+                <tbody>
+                  <tr><td>Right answer</td><td>Of the questions the graph can answer, how many got exactly the reference rows.</td><td>80%+</td><td>24 of 25 · Pass</td></tr>
+                  <tr><td>Knew what it could answer</td><td>Did Claude correctly tell apart questions the graph can and cannot answer?</td><td>95%+</td><td>26 of 28 · Watch</td></tr>
+                  <tr><td>Queries that run</td><td>Did the database accept the query at all?</td><td>100%</td><td>25 of 25 · Pass</td></tr>
+                  <tr><td>Right first time</td><td>Accepted without Claude needing to correct its query.</td><td>90%+</td><td>24 of 25 · Pass</td></tr>
+                  <tr><td>Queries that found nothing</td><td>An empty result where there should be rows. Usually a misspelt name.</td><td>5% or less</td><td>0 · Pass</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <h3>How “the same result” is judged</h3>
+            <p>Some questions have one correct shape of answer; others have several. Each question says which rule applies:</p>
+            <div class="tablewrap">
+              <table>
+                <thead><tr><th>Rule</th><th>Used for</th><th>Passes when</th></tr></thead>
+                <tbody>
+                  <tr><td>Same rows</td><td>Most questions, e.g. “how many documents per stream?”</td><td>The same rows come back. Extra columns are fine, and a system can be named by code or by full name.</td></tr>
+                  <tr><td>Values found</td><td>Open questions, e.g. “show me the graph around SOVOS”</td><td>Every item in the reference answer appears somewhere in the answer.</td></tr>
+                  <tr><td>Route length</td><td>“Shortest route between A and B”</td><td>A route of the same length. Several shortest routes can tie.</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="warn">
+              <span class="label">What the first run found</span>
+              <p>
+                One real miss: asked to list <em>all</em> 130 process codes that are not in
+                BPML, Claude’s query stopped at the first 100. Any “list everything” question
+                with more than 100 answers is at risk of coming back incomplete, so this is a
+                known improvement for the translation step. The two “knew what it could
+                answer” misses were questions about what a document <em>says</em>: Claude
+                correctly explained that the graph does not hold document text, but still
+                offered nearby passages instead of declining.
+              </p>
+            </div>
+            <div class="why">
+              <span class="label">The reference answers are reviewed by people</span>
+              <p>
+                A test is only as good as its answer key. The reference answers are marked
+                <em>not yet reviewed</em>, and the Quality view shows a warning, until someone
+                who knows the programme has checked them. When a reference is corrected, the
+                last run can be re-scored without asking Claude again.
+              </p>
+            </div>
+          </section>
+
+          <!-- ================================================================ -->
+          <section class="phase" id="safeguards" data-nav-label="Not random text, not random paths">
+            <span class="phase-tag">The key question</span>
+            <h2>How we know it is not retrieving random text, following random paths or making things up</h2>
+            <p>
+              This is the question that matters most, so here is the whole chain, for people
+              querying by hand and for AI agents. No single safeguard is enough on its own;
+              they are layered so that each one catches what the one before might miss.
+            </p>
+
+            <h3>When a person asks a question</h3>
+            <div class="flow">
+              <div class="flow-col">
+                <div class="flow-role">You</div>
+                <div class="flow-box">
+                  <strong>Ask in English</strong>
+                  <span>“Which documents mention SOVOS?”</span>
+                </div>
+              </div>
+              <div class="flow-arrow a1"><span class="lbl">translated</span></div>
+              <div class="flow-col flow-main">
+                <div class="flow-role">Shown to you before it runs</div>
+                <div class="flow-box">
+                  <strong>The query, its explanation and its assumptions</strong>
+                  <ol>
+                    <li>Checked by the database before it is accepted</li>
+                    <li>Or an honest “the graph cannot answer this”</li>
+                  </ol>
+                </div>
+              </div>
+              <div class="flow-arrow a1"><span class="lbl">run read-only</span></div>
+              <div class="flow-col">
+                <div class="flow-role">Answer</div>
+                <div class="flow-box">
+                  <strong>Rows from the graph</strong>
+                  <span>Each item opens on the graph, and each link leads to its source passages.</span>
+                </div>
+              </div>
+            </div>
+            <div class="tablewrap">
+              <table>
+                <thead><tr><th>The worry</th><th>The safeguard</th></tr></thead>
+                <tbody>
+                  <tr><td>“The answer is made up.”</td><td>The answer is rows read from the graph, not text written by an AI. Claude only writes the question for the database; the database supplies the answer.</td></tr>
+                  <tr><td>“It misunderstood my question.”</td><td>The query and a plain explanation of what it looks for are shown next to the answer, so a misunderstanding is visible. The question check measures how often this happens.</td></tr>
+                  <tr><td>“It answered something it could not know.”</td><td>Claude is required to say when the graph cannot answer, e.g. who approved something, and the question check tests exactly that.</td></tr>
+                  <tr><td>“A link is a random coincidence.”</td><td>Every link names the passages it came from, and the accuracy check confirms all of them against the real text.</td></tr>
+                  <tr><td>“A query could change or damage the data.”</td><td>Queries run in a read-only mode enforced by the database itself. A query that tries to write is refused. Results are capped, and slow queries are stopped after 20 seconds.</td></tr>
+                </tbody>
+              </table>
+            </div>
+
+            <h3>When an AI agent uses the graph</h3>
+            <p>
+              The agents are held to a stricter standard than a person, because nobody watches
+              each step as it happens.
+            </p>
+            <div class="step-h"><span class="n">1</span>The graph can point, but it cannot prove</div>
+            <p>
+              An agent’s claim that rests <em>only</em> on the graph, with no quoted passage,
+              is capped at a low confidence (0.35 out of 1). To be trusted, a claim needs a
+              quotation from a real document. The graph earns a small bonus (+0.10) only when
+              it <em>confirms</em> something a document already says.
+            </p>
+            <div class="step-h"><span class="n">2</span>Every quotation is checked word for word</div>
+            <p>
+              Before an answer is shown, every quote the agent uses is checked against the
+              document it names. A quote that is not found word for word is thrown away, and
+              the Evaluation tab counts how often that happens.
+            </p>
+            <div class="step-h"><span class="n">3</span>Routes through the graph are judged, not trusted</div>
+            <p>When an agent asks “how is system A connected to system B?”, the route it finds is given a verdict:</p>
+            <div class="tablewrap">
+              <table>
+                <thead><tr><th>The route…</th><th>Verdict</th><th>Why</th></tr></thead>
+                <tbody>
+                  <tr><td>passes through a business stream</td><td>Not a real connection</td><td>Two systems in the same stream are like two people in the same department: that does not mean they talk to each other.</td></tr>
+                  <tr><td>uses a classification link (belongs to, sits under)</td><td>Not a real connection</td><td>These record how things are filed, not how data flows.</td></tr>
+                  <tr><td>passes through a hub</td><td>Possibly real, with a warning</td><td>The airport problem: confirm it against an interface specification first.</td></tr>
+                  <tr><td>uses only links found in document text</td><td>Real</td><td>Every step is backed by passages that can be read.</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="step-h"><span class="n">4</span>Every run is scored</div>
+            <p>
+              Each agent run gets its own quality scores: quotes verified, claims without
+              evidence, tools used correctly, guardrails respected. They appear on the
+              agent’s Evaluation tab.
+            </p>
+            <div class="win">
+              <span class="label">The short answer</span>
+              <p>
+                The graph cannot invent facts, because it is built by rules from real text.
+                Every link can be traced to its source passage, and all of them are checked.
+                Answers are database rows, not generated prose. Agents cannot rely on the
+                graph alone, their quotes are verified word for word, and misleading routes
+                are flagged rather than trusted.
+              </p>
+            </div>
+          </section>
+
+          <!-- ================================================================ -->
+          <section class="phase" id="limits" data-nav-label="What the checks cannot tell you">
+            <span class="phase-tag">Honest limits</span>
+            <h2>What the checks cannot tell you</h2>
+            <p>Every measurement has an edge. These are the ones worth knowing:</p>
+            <ol class="steps">
+              <li><strong>A correct match is not always a meaningful one</strong> — a document that names SAP CPI once in passing is linked exactly like the CPI interface specification. The link is true, but its importance varies. The count of mentions on each link helps; judging meaning needs a person reviewing a sample.</li>
+              <li><strong>Only known names are found</strong> — the graph recognises 18 systems. A system missing from that list is invisible to it, however often it is mentioned.</li>
+              <li><strong>The graph holds headings, not text</strong> — it can say <em>which</em> passages mention SOVOS, but not <em>what</em> they say. For that, use Ask RAG or the Evidence Agent, which read the text.</li>
+              <li><strong>Mentions are not truth</strong> — if two documents disagree, the graph records both mentions faithfully. Deciding which document is right is the Evidence Agent’s job, which reports a conflict when it finds one.</li>
+              <li><strong>The question check is a sample</strong> — 28 questions cannot cover every question a person might ask. It is a smoke test for the translation step, not a guarantee.</li>
+            </ol>
+          </section>
+
+          <!-- ================================================================ -->
+          <section class="phase" id="client-questions" data-nav-label="Questions clients ask">
+            <span class="phase-tag">For client conversations</span>
+            <h2>Questions a client is likely to ask</h2>
+            <div class="qa">
+              <p class="q">Can the knowledge graph hallucinate?</p>
+              <p>
+                No. The graph is built by fixed rules from the documents, not generated by an
+                AI, so every link corresponds to a name or code actually present in a
+                document. The part that uses AI, translating an English question into a
+                database query, is shown to you and measured by the question check.
+              </p>
+            </div>
+            <div class="qa">
+              <p class="q">How accurate is it, in numbers?</p>
+              <p>
+                At the last check, all 4,537 passages cited by the graph’s links name what the
+                link points to, and plain-English questions returned the correct answer 24
+                times out of 25. The Quality view always shows the current figures.
+              </p>
+            </div>
+            <div class="qa">
+              <p class="q">Can I trace an answer back to the original document?</p>
+              <p>
+                Yes. Every link records the passages it came from, and every item in an
+                answer can be opened on the graph and followed to its document and section.
+              </p>
+            </div>
+            <div class="qa">
+              <p class="q">What happens when documents are added or changed?</p>
+              <p>
+                The graph is rebuilt from the documents, and the freshness check shows
+                immediately if the graph, or its question copy, is older than the documents.
+              </p>
+            </div>
+            <div class="qa">
+              <p class="q">How do I know an answer is complete?</p>
+              <p>
+                The completeness checks confirm every indexed document is in the graph and
+                every process link from the official workbook is present. For a single
+                answer, the Cypher view says when a result was stopped at the application’s
+                row limit. One known gap remains open: the translation step sometimes caps
+                its own query at 100 rows, so for a “list everything” question, check the
+                query shown beside the answer.
+              </p>
+            </div>
+            <div class="qa">
+              <p class="q">Does it know every system in our landscape?</p>
+              <p>
+                It knows a defined list of 18 systems and 4 business streams. Anything outside
+                that list is not recognised until it is added. This is a deliberate choice:
+                a fixed list cannot mistake a random word for a system.
+              </p>
+            </div>
+            <div class="qa">
+              <p class="q">Can someone, or an AI agent, change or delete our data through it?</p>
+              <p>
+                No. Queries run in a read-only mode enforced by the database itself, not
+                merely by the application, so a query that tries to write is refused.
+              </p>
+            </div>
+            <div class="qa">
+              <p class="q">Is our information sent outside?</p>
+              <p>
+                The graph and its database run locally. To turn an English question into a
+                query, the question and a description of the graph’s structure (the kinds of
+                thing and link, and names such as the system list) are sent to Claude. The
+                query then runs locally.
+              </p>
+            </div>
+            <div class="qa">
+              <p class="q">What if two documents contradict each other?</p>
+              <p>
+                The graph records what each document mentions; it does not decide who is
+                right. The Evidence Agent reads the passages, and when sources disagree it
+                reports the answer as conflicted rather than picking one silently.
+              </p>
+            </div>
+            <div class="qa">
+              <p class="q">Who checks the checks?</p>
+              <p>
+                The checks themselves are covered by automated tests, and the answer key for
+                the question check is reviewed by people who know the programme. Every check
+                run is kept, so a change in quality over time is visible.
+              </p>
+            </div>
+          </section>
+
+          <!-- ================================================================ -->
+          <section class="phase" id="running" data-nav-label="Running and maintaining the checks">
+            <span class="phase-tag">For the team</span>
+            <h2>Running and maintaining the checks</h2>
+            <div class="phase-meta">
+              <span class="chip">Who — <strong>whoever maintains the graph</strong></span>
+            </div>
+            <p>Everything is available on the Quality view. From the command line, in the repository root:</p>
+            <pre class="language-bash">.venv/bin/python -m backend.graph.graph_eval structure   # check the graph itself
+.venv/bin/python -m backend.graph.graph_eval questions   # run the question check (uses Claude)
+.venv/bin/python -m backend.graph.graph_eval rescore     # re-compare the last run, no Claude calls
+.venv/bin/python backend/tests/test_graph_eval.py         # the checks' own tests</pre>
+            <ol class="steps">
+              <li><strong>After rebuilding the graph</strong> — open the Quality view; the structure check shows at once whether anything moved.</li>
+              <li><strong>After changing how questions are translated</strong> — run the question check and compare with the previous run.</li>
+              <li><strong>Reviewing the answer key</strong> — read each reference query in <code>data/graph_eval_questions.json</code>, correct any that are wrong, set <code>"reviewed": true</code>, then re-score.</li>
+              <li><strong>Adding a question</strong> — add it to the same file with its reference query and how it should be compared (same rows, values found or route length).</li>
+            </ol>
+            <div class="win">
+              <span class="label">What you now know</span>
+              <p>
+                What each measurement checks, why the graph cannot invent facts, how every
+                answer can be traced to a source, which safeguards stop agents from trusting
+                random paths, where the checks stop, and how to keep them honest.
+              </p>
+            </div>
+          </section>
+
+          <div class="pager">
+            <button id="pagerPrev" type="button"></button>
+            <button id="pagerNext" type="button"></button>
+          </div>
+
+          <footer>
+            <p>
+              <strong>Keeping this accurate:</strong> the figures quoted are from the checks run
+              on 28 September 2026. The Quality view always shows the current ones. The
+              measurements are defined in <code>backend/graph/graph_eval.py</code>; the agents’
+              safeguards in <code>backend/agents/evidence/paths.py</code> and
+              <code>backend/agents/evidence/scoring.py</code>.
+            </p>
+            <p>
+              Related: <a href="neo4j.md">Querying the graph with Cypher</a> ·
+              <a href="knowledge-graph-neo4j-cypher-tutorial.html">Cypher tutorial</a> ·
+              <a href="divergence-percentage-explainer.html">How the divergence percentage is worked out</a>.
+            </p>
+          </footer>
+        </div>
+      </div>
+    </main>
+
+    <script>
+      (function () {
+        var STORE_THEME = "doc-theme";
+        var STORE_SIDEBAR = "doc-sidebar";
+
+        var root = document.documentElement;
+        var button = document.getElementById("themeToggle");
+        var icon = document.getElementById("themeIcon");
+        var label = document.getElementById("themeLabel");
+        var media = window.matchMedia("(prefers-color-scheme: dark)");
+
+        // light → paper → dark → light. Paper is toggle-only: no OS setting
+        // asks for it, so it can never be the resolved default.
+        var NEXT = { light: "paper", paper: "dark", dark: "light" };
+        var FACE = {
+          paper: { icon: "◑", label: "Paper mode" },
+          dark: { icon: "◐", label: "Dark mode" },
+          light: { icon: "☀", label: "Light mode" },
+        };
+
+        function currentTheme() {
+          var forced = root.getAttribute("data-theme");
+          if (forced === "dark" || forced === "light" || forced === "paper")
+            return forced;
+          return media.matches ? "dark" : "light";
+        }
+
+        // The button describes the mode you'll switch TO.
+        function render() {
+          var face = FACE[NEXT[currentTheme()]] || FACE.dark;
+          icon.textContent = face.icon;
+          label.textContent = face.label;
+        }
+
+        function apply(theme) {
+          root.setAttribute("data-theme", theme);
+          try {
+            localStorage.setItem(STORE_THEME, theme);
+          } catch (e) {
+            /* private browsing — toggle still works for this visit */
+          }
+          render();
+        }
+
+        button.addEventListener("click", function () {
+          apply(NEXT[currentTheme()] || "dark");
+        });
+
+        // A saved choice was already applied by the head script; with none, the
+        // OS preference rules and we track it live.
+        media.addEventListener("change", render);
+        render();
+
+        // --- Reading progress ---
+        // progressAt is reassigned in tabbed mode below; everything else here
+        // is mode-independent, so a document with no sidebar at all still
+        // gets a working rail.
+        var fill = document.getElementById("progressFill");
+        var progressAt = function () {
+          var h = document.documentElement.scrollHeight - window.innerHeight;
+          return h > 0 ? window.scrollY / h : 1;
+        };
+        function setProgress() {
+          if (!fill) return;
+          var f = Math.max(0, Math.min(1, progressAt()));
+          fill.style.width = f * 100 + "%";
+        }
+        var pTicking = false;
+        function reportProgress() {
+          if (pTicking) return;
+          pTicking = true;
+          window.requestAnimationFrame(function () {
+            pTicking = false;
+            setProgress();
+          });
+        }
+        window.addEventListener("scroll", reportProgress);
+        window.addEventListener("resize", reportProgress);
+        setProgress();
+
+        // --- Sidebar navigation ---
+        var sidebar = document.querySelector("nav.sidebar");
+        if (!sidebar) return;
+        var mode = root.classList.contains("js-tabbed") ? "tabbed" : "scroll";
+
+        // --- Sidebar contents, generated from the sections ---
+        // The section ids are the single source: a tab whose href points at
+        // nothing cannot be written, because no one writes the tabs. A section
+        // without an id is skipped rather than becoming a dead link.
+        var phases = Array.prototype.slice.call(
+          document.querySelectorAll(".content section.phase[id]"),
+        );
+        if (phases.length) {
+          Array.prototype.forEach.call(
+            sidebar.querySelectorAll("a.tab"),
+            function (a) {
+              a.parentNode.removeChild(a);
+            },
+          );
+          // data-nav-num renumbers everything after it as well, so putting
+          // 0 on a "read this first" preface leaves the first real step at 1
+          // rather than pushing it to 2.
+          var counter = 1;
+          phases.forEach(function (sec) {
+            var forced = sec.getAttribute("data-nav-num");
+            if (forced !== null && forced !== "" && !isNaN(Number(forced)))
+              counter = Number(forced);
+            var h2 = sec.querySelector("h2");
+            var a = document.createElement("a");
+            a.className = "tab";
+            a.href = "#" + sec.id;
+            var num = document.createElement("span");
+            num.className = "num";
+            num.textContent = forced !== null && forced !== "" ? forced
+              : String(counter);
+            counter += 1;
+            a.appendChild(num);
+            a.appendChild(
+              document.createTextNode(
+                sec.getAttribute("data-nav-label") ||
+                  (h2 ? h2.textContent.trim() : sec.id),
+              ),
+            );
+            sidebar.appendChild(a);
+          });
+        }
+
+        // --- Reading time (opt in) ---
+        // Off unless <html> carries data-readtime="on". The estimate was more
+        // noise than help on documents whose sections are commands to run
+        // rather than prose to read, so it is no longer written by default.
+        // When it is switched on: counted from the prose only, because code
+        // blocks are scanned rather than read and counting them would inflate
+        // every technical section past the point where the number means
+        // anything. A hand-written "Read — …" chip still wins.
+        if (root.getAttribute("data-readtime") === "on") {
+          phases.forEach(function (sec) {
+            var meta = sec.querySelector(".phase-meta");
+            if (meta && /Read\s*—/.test(meta.textContent)) return;
+            var copy = sec.cloneNode(true);
+            Array.prototype.forEach.call(
+              copy.querySelectorAll("pre, .phase-meta, .phase-tag"),
+              function (el) {
+                el.parentNode.removeChild(el);
+              },
+            );
+            var words = copy.textContent.trim().split(/\s+/).filter(Boolean);
+            if (!words.length) return;
+            if (!meta) {
+              meta = document.createElement("div");
+              meta.className = "phase-meta";
+              var h2 = sec.querySelector("h2");
+              if (h2) h2.parentNode.insertBefore(meta, h2.nextSibling);
+              else sec.insertBefore(meta, sec.firstChild);
+            }
+            var chip = document.createElement("span");
+            chip.className = "chip";
+            chip.appendChild(document.createTextNode("Read — "));
+            var strong = document.createElement("strong");
+            strong.textContent = Math.max(1, Math.round(words.length / 200))
+              + " min";
+            chip.appendChild(strong);
+            meta.appendChild(chip);
+          });
+        }
+
+        var tabs = Array.prototype.slice.call(
+          sidebar.querySelectorAll("a.tab"),
+        );
+        var sections = tabs.map(function (t) {
+          return document.querySelector(t.getAttribute("href"));
+        });
+
+        function titleOf(i) {
+          return tabs[i].textContent.replace(/^\s*\d+\s*/, "").trim();
+        }
+        tabs.forEach(function (t, i) {
+          t.title = titleOf(i);
+        });
+
+        function markActive(idx) {
+          tabs.forEach(function (t, i) {
+            t.classList.toggle("active", i === idx);
+            if (i === idx) t.setAttribute("aria-current", "page");
+            else t.removeAttribute("aria-current");
+          });
+        }
+
+        if (mode === "tabbed") {
+          // Only one section is on screen, so scroll depth says nothing about
+          // progress through the document. Count position in the sequence,
+          // with scroll depth filling in the fraction of the current section.
+          progressAt = function () {
+            var h = document.documentElement.scrollHeight - window.innerHeight;
+            var within = h > 0 ? window.scrollY / h : 0;
+            return tabs.length ? (currentIndex() + within) / tabs.length : 1;
+          };
+
+          var prevBtn = document.getElementById("pagerPrev");
+          var nextBtn = document.getElementById("pagerNext");
+
+          // Resolve the hash to a tab index; a hash may also point at an
+          // anchor INSIDE a section, in which case we activate that
+          // section's tab and remember the element to scroll to.
+          function resolveHash() {
+            var h = location.hash;
+            for (var i = 0; i < tabs.length; i++) {
+              if (tabs[i].getAttribute("href") === h)
+                return { idx: i, el: null };
+            }
+            if (h.length > 1) {
+              var el = null;
+              try {
+                el = document.getElementById(h.slice(1));
+              } catch (e) {}
+              if (el) {
+                for (var j = 0; j < sections.length; j++) {
+                  if (sections[j] && sections[j].contains(el))
+                    return { idx: j, el: el };
+                }
+              }
+            }
+            return { idx: 0, el: null };
+          }
+
+          function currentIndex() {
+            return resolveHash().idx;
+          }
+
+          // Ctrl-F cannot see into display: none, so where the browser
+          // supports it, hidden sections use hidden="until-found" instead.
+          // A find hit fires beforematch on the section and the browser drops
+          // the attribute itself; we switch tabs without scrolling to the top,
+          // because the browser is about to scroll to the match.
+          var findable = "onbeforematch" in document.documentElement;
+
+          function showSection(idx, scrollTop) {
+            sections.forEach(function (s, i) {
+              if (!s) return;
+              s.classList.toggle("active", i === idx);
+              if (!findable) return;
+              if (i === idx) s.removeAttribute("hidden");
+              else s.setAttribute("hidden", "until-found");
+            });
+            markActive(idx);
+            if (prevBtn && nextBtn) {
+              prevBtn.disabled = idx === 0;
+              nextBtn.disabled = idx === tabs.length - 1;
+              prevBtn.textContent =
+                idx > 0 ? "← Back: " + titleOf(idx - 1) : "";
+              nextBtn.textContent =
+                idx < tabs.length - 1 ? "Next: " + titleOf(idx + 1) + " →" : "";
+            }
+            if (scrollTop) window.scrollTo(0, 0);
+            setProgress();
+          }
+
+          if (prevBtn)
+            prevBtn.addEventListener("click", function () {
+              var i = currentIndex();
+              if (i > 0) location.hash = tabs[i - 1].getAttribute("href");
+            });
+          if (nextBtn)
+            nextBtn.addEventListener("click", function () {
+              var i = currentIndex();
+              if (i < tabs.length - 1)
+                location.hash = tabs[i + 1].getAttribute("href");
+            });
+
+          function syncToHash(initial) {
+            var r = resolveHash();
+            showSection(r.idx, !initial && !r.el);
+            if (r.el) r.el.scrollIntoView();
+          }
+          window.addEventListener("hashchange", function () {
+            syncToHash(false);
+          });
+          if (findable)
+            sections.forEach(function (s, i) {
+              if (!s) return;
+              s.addEventListener("beforematch", function () {
+                // pushState, not location.hash: no hashchange, so no jump
+                // to the top of the page underneath the find.
+                history.pushState(null, "", tabs[i].getAttribute("href"));
+                showSection(i, false);
+              });
+            });
+          syncToHash(true);
+        } else {
+          // Scroll mode: highlight the section currently under the reader.
+          var ticking = false;
+          function spy() {
+            ticking = false;
+            var line = window.scrollY + 140;
+            var idx = 0;
+            for (var i = 0; i < sections.length; i++) {
+              if (sections[i] && sections[i].offsetTop <= line) idx = i;
+            }
+            markActive(idx);
+            setProgress();
+          }
+          window.addEventListener("scroll", function () {
+            if (!ticking) {
+              ticking = true;
+              window.requestAnimationFrame(spy);
+            }
+          });
+          window.addEventListener("resize", spy);
+          spy();
+        }
+
+        // --- Sidebar minimize toggle ---
+        var sidebarToggle = document.getElementById("sidebarToggle");
+        if (sidebarToggle) {
+          function renderSidebar(collapsed) {
+            sidebar.classList.toggle("collapsed", collapsed);
+            sidebarToggle.textContent = collapsed ? "»" : "«";
+            sidebarToggle.setAttribute("aria-expanded", String(!collapsed));
+            var verb = collapsed ? "Expand sidebar" : "Minimize sidebar";
+            sidebarToggle.setAttribute("aria-label", verb);
+            sidebarToggle.title = verb;
+          }
+
+          var sidebarSaved = null;
+          try {
+            sidebarSaved = localStorage.getItem(STORE_SIDEBAR);
+          } catch (e) {}
+          renderSidebar(sidebarSaved === "collapsed");
+
+          sidebarToggle.addEventListener("click", function () {
+            var collapsed = !sidebar.classList.contains("collapsed");
+            renderSidebar(collapsed);
+            try {
+              localStorage.setItem(
+                STORE_SIDEBAR,
+                collapsed ? "collapsed" : "expanded",
+              );
+            } catch (e) {}
+          });
+        }
+
+        // --- Links off-site open in a new tab ---
+        // Only links to another origin. In-page #hash links, and relative
+        // links to sibling pages in the same documentation set, stay in this
+        // tab — otherwise walking through a set of pages piles up tabs.
+        // Under file:// every relative link resolves to file: and stays too.
+        Array.prototype.forEach.call(
+          document.querySelectorAll("a[href]"),
+          function (a) {
+            if (/^https?:$/.test(a.protocol) && a.host !== location.host) {
+              a.setAttribute("target", "_blank");
+              a.setAttribute("rel", "noopener");
+            }
+          },
+        );
+      })();
+
+      // --- Heading anchors -------------------------------------------------
+      // Every section h2 and h3 gets a "#" link, so a reader can copy a link
+      // to exactly the part they mean. A section's h2 points at the section
+      // id; an h3 keeps its own id or is given one from its text. Runs after
+      // the sidebar is built, so the "#" never leaks into a tab label.
+      (function () {
+        var used = {};
+        Array.prototype.forEach.call(
+          document.querySelectorAll("[id]"),
+          function (el) {
+            used[el.id] = true;
+          },
+        );
+        function slug(text) {
+          var base =
+            text
+              .toLowerCase()
+              .replace(/[^a-z0-9]+/g, "-")
+              .replace(/^-+|-+$/g, "") || "section";
+          var id = base;
+          for (var n = 2; used[id]; n++) id = base + "-" + n;
+          used[id] = true;
+          return id;
+        }
+        function addAnchor(h, id) {
+          var a = document.createElement("a");
+          a.className = "heading-anchor";
+          a.href = "#" + id;
+          a.textContent = "#";
+          a.setAttribute("aria-label", "Link to this heading");
+          h.appendChild(a);
+        }
+        Array.prototype.forEach.call(
+          document.querySelectorAll("section.phase[id] > h2"),
+          function (h) {
+            addAnchor(h, h.parentNode.id);
+          },
+        );
+        Array.prototype.forEach.call(
+          document.querySelectorAll("section.phase h3"),
+          function (h) {
+            if (!h.id) h.id = slug(h.textContent);
+            addAnchor(h, h.id);
+          },
+        );
+        // A link to a generated id arrived before that id existed, so the
+        // navigation script could not resolve it. Replay it now.
+        var target = location.hash.length > 1 &&
+          document.getElementById(decodeURIComponent(location.hash.slice(1)));
+        if (target && target.tagName === "H3") {
+          if (document.documentElement.classList.contains("js-tabbed"))
+            window.dispatchEvent(new HashChangeEvent("hashchange"));
+          else target.scrollIntoView();
+        }
+      })();
+
+      // --- Syntax highlighting -------------------------------------------
+      // A self-contained tokenizer: no library, no network request, nothing
+      // to keep up to date. It highlights any <pre> or <code> that carries a
+      // language-* class and leaves everything else alone, so unmarked blocks
+      // stay monochrome — the right result for terminal output and diagrams.
+      //
+      // To add a language, add one def() entry. To highlight nothing, delete
+      // this whole IIFE; the document degrades to plain <pre> blocks.
+      (function () {
+        // Sticky (/y) regexes only ever match at the current offset, which is
+        // what lets the scanner below try rules in priority order.
+        var WS = /\s+/y;
+        var PUNC = /[(){}\[\].,;:@#$\\]+/y;
+        var OP = /[-+*/%=!<>&|^~?]+/y;
+        var NUM =
+          /(?:0[xXbBoO][0-9a-fA-F_]+|\d[\d_]*(?:\.[\d_]+)?(?:[eE][+-]?\d+)?)(?:[A-Za-z_][A-Za-z0-9_]*)?/y;
+        var IDENT = /[A-Za-z_$][A-Za-z0-9_$]*/y;
+        var CALL = /\s*\(/y;
+
+        var C_LINE = { c: "com", re: /\/\/[^\n]*/y };
+        var C_HASH = { c: "com", re: /#[^\n]*/y };
+        var C_DASH = { c: "com", re: /--[^\n]*/y };
+        var C_BLOCK = { c: "com", re: /\/\*[\s\S]*?(?:\*\/|$)/y };
+        // Built by concatenation so the HTML parser never sees a bare comment
+        // opener inside this script element.
+        var C_HTML = {
+          c: "com",
+          re: new RegExp("<!" + "--[\\s\\S]*?(?:--" + ">|$)", "y"),
+        };
+
+        var S_DQ = { c: "str", re: /"(?:\\[\s\S]|[^"\\\n])*"?/y };
+        var S_SQ = { c: "str", re: /'(?:\\[\s\S]|[^'\\\n])*'?/y };
+        var S_BT = { c: "str", re: /`(?:\\[\s\S]|[^`\\])*`?/y };
+        var S_PY = {
+          c: "str",
+          re: /(?:[rRbBuUfF]{1,3})?(?:"""[\s\S]*?(?:"""|$)|'''[\s\S]*?(?:'''|$)|"(?:\\[\s\S]|[^"\\\n])*"?|'(?:\\[\s\S]|[^'\\\n])*'?)/y,
+        };
+        var V_DOLLAR = {
+          c: "var",
+          re: /\$(?:\{[^}\n]*\}|[A-Za-z_][A-Za-z0-9_]*|[0-9?*@#!$-])/y,
+        };
+        var V_AT = { c: "var", re: /@[A-Za-z_][A-Za-z0-9_.]*/y };
+
+        function words(s) {
+          var o = {},
+            a = String(s || "").split(/\s+/);
+          for (var i = 0; i < a.length; i++) if (a[i]) o[a[i]] = 1;
+          return o;
+        }
+
+        var LANGS = {};
+        // rules order: whitespace, comments, strings, language extras, then
+        // the numeric/identifier/punctuation fallbacks every language shares.
+        function def(names, o) {
+          var spec = {
+            ci: !!o.ci,
+            caps: o.caps !== false,
+            noCall: !!o.noCall,
+            kw: words(o.kw),
+            lit: words(o.lit),
+            typ: words(o.typ),
+            vars: words(o.vars),
+            rules: [{ c: null, re: WS }].concat(o.rules || []).concat(
+              o.bare
+                ? []
+                : [
+                    { c: "num", re: NUM },
+                    { c: "ident", re: IDENT },
+                    { c: null, re: PUNC },
+                    { c: "op", re: OP },
+                  ],
+            ),
+          };
+          var list = names.split(" ");
+          for (var i = 0; i < list.length; i++) LANGS[list[i]] = spec;
+        }
+
+        // --- Language definitions ---
+        // Keyword lists for case-insensitive languages (ci: true) must be
+        // written in lower case; lookups are lowercased before matching.
+
+        def("python", {
+          rules: [C_HASH, S_PY, V_AT],
+          kw: "and as assert async await break class continue def del elif else except finally for from global if import in is lambda match case nonlocal not or pass raise return try while with yield",
+          lit: "True False None NotImplemented Ellipsis",
+          vars: "self cls",
+          typ: "int str float bool bytes list dict set tuple frozenset object type len range print open enumerate zip map filter sum min max abs round sorted reversed isinstance issubclass getattr setattr hasattr super property staticmethod classmethod Exception ValueError TypeError KeyError IndexError AttributeError RuntimeError StopIteration NotImplementedError",
+        });
+
+        def("javascript", {
+          rules: [C_LINE, C_BLOCK, S_DQ, S_SQ, S_BT],
+          kw: "async await break case catch class const continue debugger default delete do else export extends finally for from function get if import in instanceof let new of return set static super switch this throw try typeof var void while with yield",
+          lit: "true false null undefined NaN Infinity",
+          typ: "Array Object String Number Boolean Promise Map Set WeakMap WeakSet Symbol Proxy Reflect JSON Math Date RegExp Error TypeError console window document process globalThis require module exports",
+        });
+
+        def("typescript", {
+          rules: [C_LINE, C_BLOCK, S_DQ, S_SQ, S_BT, V_AT],
+          kw: "abstract any as asserts async await bigint boolean break case catch class const constructor continue declare default delete do else enum export extends finally for from function get if implements import in infer instanceof interface is keyof let namespace never new number object of override private protected public readonly return satisfies set static string super switch symbol this throw try type typeof unique unknown var void while yield",
+          lit: "true false null undefined NaN Infinity",
+          typ: "Array Object String Number Boolean Promise Map Set Record Partial Pick Omit Readonly Awaited ReturnType Symbol JSON Math Date RegExp Error console window document process",
+        });
+
+        def("java", {
+          rules: [C_LINE, C_BLOCK, S_DQ, S_SQ, V_AT],
+          kw: "abstract assert break case catch class const continue default do else enum extends final finally for goto if implements import instanceof interface native new package permits private protected public record return sealed static strictfp super switch synchronized this throw throws transient try var void volatile while yield",
+          lit: "true false null",
+          typ: "boolean byte char double float int long short String Integer Long Double Float Boolean Character Object List Map Set ArrayList HashMap HashSet Optional Stream Collectors System Exception RuntimeException Thread",
+        });
+
+        def("kotlin", {
+          rules: [C_LINE, C_BLOCK, S_DQ, S_SQ, V_AT],
+          kw: "abstract actual annotation as break by catch class companion const constructor continue crossinline data do else enum expect external final finally for fun get if import in infix init inline inner interface internal is lateinit noinline object open operator out override package private protected public reified return sealed set suspend tailrec this throw try typealias val var vararg when where while",
+          lit: "true false null",
+          typ: "String Int Long Short Byte Double Float Boolean Char List Map Set MutableList MutableMap MutableSet Array Unit Any Nothing Pair Triple Sequence Flow",
+        });
+
+        def("go", {
+          rules: [C_LINE, C_BLOCK, S_DQ, S_BT, S_SQ],
+          kw: "break case chan const continue default defer else fallthrough for func go goto if import interface map package range return select struct switch type var",
+          lit: "true false nil iota",
+          typ: "string bool byte rune error any int int8 int16 int32 int64 uint uint8 uint16 uint32 uint64 uintptr float32 float64 complex64 complex128 make new len cap append copy delete panic recover close print println",
+        });
+
+        def("rust", {
+          rules: [C_LINE, C_BLOCK, S_DQ, S_SQ, V_AT],
+          kw: "as async await break const continue crate dyn else enum extern fn for if impl in let loop match mod move mut pub ref return static struct super trait type unsafe use where while",
+          lit: "true false None Some Ok Err self Self",
+          typ: "i8 i16 i32 i64 i128 isize u8 u16 u32 u64 u128 usize f32 f64 bool char str String Vec VecDeque Option Result Box Rc Arc RefCell Mutex HashMap HashSet BTreeMap Iterator",
+        });
+
+        def("cpp", {
+          rules: [
+            C_LINE,
+            C_BLOCK,
+            { c: "var", re: /^[ \t]*#[A-Za-z]+/y, bol: true },
+            S_DQ,
+            S_SQ,
+          ],
+          kw: "alignas alignof asm auto break case catch class concept const consteval constexpr const_cast continue co_await co_return co_yield decltype default delete do dynamic_cast else enum explicit export extern for friend goto if inline mutable namespace new noexcept operator private protected public register reinterpret_cast requires return sizeof static static_assert static_cast struct switch template this thread_local throw try typedef typeid typename union using virtual volatile while",
+          lit: "true false nullptr NULL",
+          typ: "bool char short int long float double void signed unsigned wchar_t char8_t char16_t char32_t size_t ssize_t ptrdiff_t int8_t int16_t int32_t int64_t uint8_t uint16_t uint32_t uint64_t std string wstring vector array map unordered_map set unordered_set pair tuple optional variant shared_ptr unique_ptr weak_ptr",
+        });
+
+        def("csharp", {
+          rules: [C_LINE, C_BLOCK, S_DQ, S_SQ, V_AT],
+          kw: "abstract as async await base break case catch checked class const continue default delegate do else enum event explicit extern finally fixed for foreach get goto if implicit in init interface internal is lock namespace new operator out override params partial private protected public readonly record ref return sealed set sizeof stackalloc static struct switch this throw try typeof unchecked unsafe using var virtual void volatile where while with yield",
+          lit: "true false null",
+          typ: "bool byte sbyte char decimal double float int uint long ulong short ushort object string dynamic Console List Dictionary HashSet Task Func Action Nullable Exception IEnumerable IQueryable LINQ DateTime Guid",
+        });
+
+        def("php", {
+          rules: [C_LINE, C_HASH, C_BLOCK, S_DQ, S_SQ, V_DOLLAR],
+          kw: "abstract and array as break callable case catch class clone const continue declare default do echo else elseif empty enum extends final finally fn for foreach function global goto if implements include include_once instanceof insteadof interface isset list match namespace new or print private protected public readonly require require_once return static switch throw trait try unset use var while xor yield",
+          lit: "true false null TRUE FALSE NULL",
+          typ: "int float string bool array object mixed void never self parent Exception ArrayObject Closure Generator",
+        });
+
+        def("ruby", {
+          rules: [
+            C_HASH,
+            S_DQ,
+            S_SQ,
+            { c: "var", re: /[@$]{1,2}[A-Za-z_]\w*/y },
+          ],
+          kw: "alias and begin break case class def defined? do else elsif end ensure for if in module next not or redo rescue retry return self super then undef unless until when while yield require require_relative attr_accessor attr_reader attr_writer include extend private protected public",
+          lit: "true false nil",
+          typ: "String Symbol Integer Float Array Hash Range Struct Proc Time File Dir Kernel Comparable Enumerable StandardError puts print p raise lambda",
+        });
+
+        def("swift", {
+          rules: [C_LINE, C_BLOCK, S_DQ, V_AT],
+          kw: "actor as associatedtype async await break case catch class continue default defer deinit do else enum extension fallthrough fileprivate final for func guard if import in indirect init inout internal is lazy let mutating open operator private protocol public repeat rethrows return self static struct subscript super switch throw throws try typealias var weak where while",
+          lit: "true false nil",
+          typ: "Int Int8 Int16 Int32 Int64 UInt Double Float String Character Bool Array Dictionary Set Optional Any AnyObject Result Data URL Date UUID Error Codable Equatable Hashable",
+        });
+
+        def("sql", {
+          ci: true,
+          caps: false,
+          rules: [C_DASH, C_BLOCK, S_SQ, S_DQ, { c: "str", re: /`[^`\n]*`?/y }],
+          kw: "add all alter analyze and as asc begin between by cascade case cast check column commit constraint create cross database default delete desc distinct do drop else end escape except exists explain foreign from full grant group having if ilike in index inner insert intersect into is join key left like limit not null nulls offset on only or order outer over partition primary procedure references rename replace restrict returning revoke right rollback row rows schema select set similar table temporary then to transaction trigger truncate union unique unlogged update using vacuum values view when where window with",
+          lit: "true false null",
+          typ: "bigint bigserial boolean bytea char character date decimal double float int integer interval json jsonb money numeric real serial smallint text time timestamp timestamptz uuid varchar array precision",
+        });
+
+        def("bash", {
+          noCall: true,
+          caps: false,
+          rules: [
+            C_HASH,
+            S_DQ,
+            S_SQ,
+            V_DOLLAR,
+            { c: "typ", re: /--?[A-Za-z][A-Za-z0-9-]*/y, aws: true },
+            // Paths, so the slashes in ~/.claude/skills don't read as operators.
+            { c: null, re: /[~.]?(?:\/[\w.@%+-]*)+/y },
+          ],
+          kw: "if then elif else fi for while until do done case esac function in select return break continue local export readonly declare typeset source alias unalias unset trap eval exec shift set shopt",
+          lit: "true false",
+          typ: "echo printf read cd pwd ls cp mv rm mkdir rmdir touch cat less head tail grep egrep sed awk sort uniq wc cut tr find xargs tee chmod chown ln df du ps kill sudo ssh scp rsync curl wget tar zip unzip git gh npm npx pnpm yarn node deno python python3 pip pip3 uv poetry go cargo rustc java mvn gradle docker podman kubectl helm terraform make cmake jq yq open which env date sleep exit test",
+        });
+
+        def("json", {
+          caps: false,
+          rules: [
+            { c: "fn", re: /"(?:\\[\s\S]|[^"\\])*"(?=\s*:)/y },
+            S_DQ,
+            C_LINE,
+          ],
+          lit: "true false null",
+        });
+
+        def("yaml", {
+          caps: false,
+          noCall: true,
+          rules: [
+            C_HASH,
+            { c: "fn", re: /[A-Za-z_][A-Za-z0-9_. /-]*(?=\s*:(?:\s|$))/y },
+            S_DQ,
+            S_SQ,
+            { c: "var", re: /[&*][A-Za-z_][\w-]*|!!?[\w/-]+/y },
+            // Bare scalars like ubuntu-latest: one token, not word-dash-word.
+            { c: null, re: /[A-Za-z_][\w.]*(?:-[\w.]+)+/y },
+          ],
+          lit: "true false null yes no on off ~",
+        });
+
+        def("markup", {
+          bare: true,
+          rules: [
+            C_HTML,
+            { c: "kw", re: /<[!?][A-Za-z][\w-]*/y },
+            { c: "fn", re: /<\/?[A-Za-z][\w:.-]*/y },
+            { c: "op", re: /\/?>/y },
+            S_DQ,
+            S_SQ,
+            { c: "typ", re: /[A-Za-z_:@#[][\w:.\]-]*(?=\s*=)/y },
+            { c: "var", re: /&[\w#]+;/y },
+            { c: null, re: /[^<>"'&]+/y },
+          ],
+        });
+
+        def("css", {
+          bare: true,
+          rules: [
+            C_BLOCK,
+            { c: "kw", re: /@[\w-]+/y },
+            S_DQ,
+            S_SQ,
+            { c: "var", re: /--[\w-]+/y },
+            { c: "num", re: /#[0-9a-fA-F]{3,8}\b/y },
+            { c: "typ", re: /[.#][A-Za-z_][\w-]*|::?[A-Za-z-]+/y },
+            { c: "fn", re: /[-A-Za-z][\w-]*(?=\s*:)/y },
+            { c: "num", re: /(?:\d+\.?\d*|\.\d+)(?:%|[A-Za-z]+)?/y },
+            { c: null, re: /[A-Za-z_][\w-]*/y },
+            { c: null, re: PUNC },
+            { c: "op", re: OP },
+          ],
+        });
+
+        def("abap", {
+          ci: true,
+          caps: false,
+          noCall: true,
+          rules: [
+            { c: "com", re: /[*][^\n]*/y, bol: true },
+            { c: "com", re: /"[^\n]*/y },
+            S_SQ,
+            { c: "str", re: /\|(?:\\[\s\S]|[^|\\\n])*\|?/y },
+            { c: "var", re: /@?[A-Za-z_][A-Za-z0-9_]*(?:-[A-Za-z0-9_]+)+/y },
+          ],
+          kw: "append assign at begin binary by call case catch change changing check class clear close collect commit concatenate condense constants continue create data define delete describe do else elseif end endcase endclass enddo endform endfunction endif endloop endmethod endmodule endselect endtry endwhile events exceptions exit export exporting field for form format free from function get if implementation import importing in include index inheriting initial insert interface into is key leave like line load local locale loop message method methods modify module move new not of on open or others parameters perform private protected public raise raising read receiving redefinition ref refresh replace report return returning rollback screen search select set shift skip sort split start structure submit subtract sum table tables text then to transfer translate try type types uline up update using value when where while with work write",
+          lit: "abap_true abap_false abap_undefined space",
+          typ: "char string int i f p n d t x xstring c decfloat16 decfloat34 utclong abap_bool sy syst standard sorted hashed",
+        });
+
+        def("plaintext text txt none log console output diff", { bare: true });
+
+        var ALIAS = {
+          js: "javascript",
+          jsx: "javascript",
+          mjs: "javascript",
+          cjs: "javascript",
+          node: "javascript",
+          ts: "typescript",
+          tsx: "typescript",
+          py: "python",
+          py3: "python",
+          rb: "ruby",
+          rs: "rust",
+          kt: "kotlin",
+          kts: "kotlin",
+          golang: "go",
+          c: "cpp",
+          "c++": "cpp",
+          h: "cpp",
+          hpp: "cpp",
+          objc: "cpp",
+          cs: "csharp",
+          "c#": "csharp",
+          sh: "bash",
+          shell: "bash",
+          zsh: "bash",
+          ksh: "bash",
+          sql92: "sql",
+          psql: "sql",
+          mysql: "sql",
+          plsql: "sql",
+          yml: "yaml",
+          jsonc: "json",
+          json5: "json",
+          html: "markup",
+          htm: "markup",
+          xml: "markup",
+          svg: "markup",
+          vue: "markup",
+          xhtml: "markup",
+          scss: "css",
+          sass: "css",
+          less: "css",
+        };
+
+        function esc(s) {
+          return s
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;");
+        }
+
+        function classify(word, spec, src, end) {
+          var key = spec.ci ? word.toLowerCase() : word;
+          if (spec.kw[key]) return "kw";
+          if (spec.lit[key]) return "num";
+          if (spec.vars[key]) return "var";
+          // Checked before the type list so a builtin being *called*
+          // (range(n), make(m)) reads as a call, not as a type name.
+          if (!spec.noCall) {
+            CALL.lastIndex = end;
+            if (CALL.exec(src)) return "fn";
+          }
+          if (spec.typ[key]) return "typ";
+          // Conventional CamelCase for types in the C-family languages.
+          if (spec.caps && /^[A-Z]/.test(word) && /[a-z]/.test(word))
+            return "typ";
+          return null;
+        }
+
+        function paint(src, spec) {
+          var out = "",
+            i = 0,
+            n = src.length,
+            rules = spec.rules;
+          while (i < n) {
+            var hit = false;
+            for (var r = 0; r < rules.length; r++) {
+              var rule = rules[r];
+              if (rule.bol && i !== 0 && src.charAt(i - 1) !== "\n") continue;
+              if (rule.aws && i !== 0 && !/\s/.test(src.charAt(i - 1)))
+                continue;
+              rule.re.lastIndex = i;
+              var m = rule.re.exec(src);
+              if (!m || !m[0]) continue;
+              var cls = rule.c;
+              if (cls === "ident")
+                cls = classify(m[0], spec, src, i + m[0].length);
+              out += cls
+                ? '<span class="tok-' + cls + '">' + esc(m[0]) + "</span>"
+                : esc(m[0]);
+              i += m[0].length;
+              hit = true;
+              break;
+            }
+            // No rule matched this character — emit it verbatim and move on,
+            // so an unexpected byte can never stall the scanner.
+            if (!hit) {
+              out += esc(src.charAt(i));
+              i++;
+            }
+          }
+          return out;
+        }
+
+        Array.prototype.forEach.call(
+          document.querySelectorAll('pre[class*="lang"], code[class*="lang"]'),
+          function (el) {
+            // A <pre class="language-x"><code>…</code></pre> is handled once,
+            // by whichever of the two carries the class.
+            if (el.tagName === "PRE" && el.querySelector("code")) return;
+            var m = /(?:^|\s)(?:language|lang)-([\w+#.-]+)/.exec(
+              el.className || "",
+            );
+            if (!m) return;
+            var name = m[1].toLowerCase();
+            name = ALIAS[name] || name;
+            var spec = LANGS[name];
+            if (!spec) return;
+            el.innerHTML = paint(el.textContent, spec);
+            el.setAttribute("data-hl", name);
+            if (el.tagName === "CODE" && el.parentNode.tagName === "PRE")
+              el.parentNode.setAttribute("data-hl", name);
+          },
+        );
+      })();
+
+      // --- Copy buttons ----------------------------------------------------
+      // Every <pre> gets wrapped in .codewrap with a copy button. Doing it
+      // here rather than in the markup means authors never write the wrapper,
+      // and a document with JavaScript off keeps plain, unwrapped blocks.
+      //
+      // Runs after the highlighter on purpose: highlighting rewrites innerHTML
+      // but leaves textContent identical, so what gets copied is the original
+      // source either way — but wrapping first would put the button inside the
+      // node the highlighter overwrites.
+      (function () {
+        var COPY = "Copy";
+
+        function write(text) {
+          if (navigator.clipboard && navigator.clipboard.writeText)
+            return navigator.clipboard.writeText(text);
+          // Fallback for browsers that withhold the async clipboard API on
+          // file:// pages — these documents are usually opened from disk.
+          return new Promise(function (resolve, reject) {
+            var ta = document.createElement("textarea");
+            ta.value = text;
+            ta.setAttribute("readonly", "");
+            ta.style.position = "fixed";
+            ta.style.top = "-1000px";
+            document.body.appendChild(ta);
+            ta.select();
+            var ok = false;
+            try {
+              ok = document.execCommand("copy");
+            } catch (e) {
+              ok = false;
+            }
+            document.body.removeChild(ta);
+            if (ok) resolve();
+            else reject();
+          });
+        }
+
+        // A <pre> renders without the newline that follows its opening tag,
+        // but textContent keeps it — drop it so the copy matches what is on
+        // screen. Leading indentation on the first real line is preserved.
+        function source(pre) {
+          return pre.textContent.replace(/^\n/, "").replace(/\s+$/, "");
+        }
+
+        Array.prototype.forEach.call(
+          document.querySelectorAll("pre"),
+          function (pre) {
+            // Already wrapped by hand? Leave it alone rather than nesting a
+            // second wrapper and a second button around it.
+            var parent = pre.parentNode;
+            if (parent && parent.classList.contains("codewrap")) return;
+
+            var wrap = document.createElement("div");
+            wrap.className = "codewrap";
+            parent.insertBefore(wrap, pre);
+            wrap.appendChild(pre);
+
+            var btn = document.createElement("button");
+            btn.className = "copy-btn";
+            btn.type = "button";
+            btn.textContent = COPY;
+            btn.setAttribute("aria-label", "Copy code to clipboard");
+            wrap.appendChild(btn);
+
+            var timer = null;
+            function flash(msg) {
+              btn.textContent = msg;
+              btn.classList.add("copied");
+              clearTimeout(timer);
+              timer = setTimeout(function () {
+                btn.textContent = COPY;
+                btn.classList.remove("copied");
+                // Leave focus alone; blurring here would trap keyboard users.
+              }, 1600);
+            }
+
+            btn.addEventListener("click", function () {
+              write(source(pre)).then(
+                function () {
+                  flash("Copied");
+                },
+                function () {
+                  flash("Failed");
+                },
+              );
+            });
+          },
+        );
+      })();
+
+      // --- Output capture -------------------------------------------------
+      // Gives every .capture[data-capture] block a textarea that remembers
+      // what was typed into it. Does nothing at all when the document has no
+      // .capture blocks, so it costs an unused page one querySelectorAll.
+      //
+      // Storage is localStorage, which means: this browser, this machine,
+      // never uploaded. It can also throw outright (private window, site data
+      // blocked, thumbnail capture), so every read and write is guarded and
+      // the page still renders correctly with nothing stored.
+      (function () {
+        var boxes = [].slice.call(
+          document.querySelectorAll(".capture[data-capture]"),
+        );
+        if (!boxes.length) return;
+
+        // Set data-capture-store on <html> to give a document its own bucket.
+        // Two documents opened from the same origin share localStorage, so
+        // leaving the default makes the second one overwrite the first.
+        var STORE =
+          document.documentElement.getAttribute("data-capture-store") ||
+          "doc-captures";
+
+        function readAll() {
+          try {
+            return JSON.parse(localStorage.getItem(STORE) || "{}") || {};
+          } catch (e) {
+            return {};
+          }
+        }
+        function writeAll(data) {
+          try {
+            localStorage.setItem(STORE, JSON.stringify(data));
+            return true;
+          } catch (e) {
+            return false;
+          }
+        }
+        function stamp() {
+          var d = new Date();
+          return (
+            ("0" + d.getHours()).slice(-2) +
+            ":" +
+            ("0" + d.getMinutes()).slice(-2)
+          );
+        }
+        function label(box) {
+          var el = box.querySelector(".capture-head .label");
+          return el
+            ? el.textContent.replace(/^Output\s*[\u2014-]\s*/, "").trim()
+            : box.getAttribute("data-capture");
+        }
+        function describe(box, saved) {
+          var ta = box.querySelector("textarea");
+          var count = box.querySelector(".count");
+          var n = ta.value.length;
+          if (count) count.textContent = n ? n.toLocaleString() + " characters" : "";
+          box.classList.toggle("is-saved", !!saved && n > 0);
+        }
+
+        var data = readAll();
+
+        boxes.forEach(function (box) {
+          var key = box.getAttribute("data-capture");
+          var ta = box.querySelector("textarea");
+          var status = box.querySelector(".capture-status");
+          var entry = data[key];
+
+          if (entry && typeof entry.text === "string") {
+            ta.value = entry.text;
+            if (status) status.textContent = entry.at ? "Saved " + entry.at : "Saved";
+            describe(box, true);
+          } else {
+            describe(box, false);
+          }
+
+          ta.addEventListener("input", function () {
+            if (status) status.textContent = "Unsaved changes";
+            box.classList.remove("is-saved");
+            describe(box, false);
+          });
+
+          var saveBtn = box.querySelector('[data-act="save"]');
+          if (saveBtn)
+            saveBtn.addEventListener("click", function () {
+              var all = readAll();
+              var at = stamp();
+              all[key] = { text: ta.value, at: at, label: label(box) };
+              if (writeAll(all)) {
+                if (status)
+                  status.textContent = ta.value.trim()
+                    ? "Saved " + at
+                    : "Saved (empty)";
+                describe(box, true);
+              } else if (status) {
+                status.textContent = "Could not save - browser storage is blocked";
+              }
+            });
+
+          var clearBtn = box.querySelector('[data-act="clear"]');
+          if (clearBtn)
+            clearBtn.addEventListener("click", function () {
+              ta.value = "";
+              var all = readAll();
+              delete all[key];
+              writeAll(all);
+              if (status) status.textContent = "Cleared";
+              describe(box, false);
+            });
+        });
+
+        // --- Optional collector -----------------------------------------
+        // Present only if the document includes the .capture[data-collect]
+        // block. Assembles every box into one pasteable lump, marking the
+        // ones left empty so "skipped" stays distinguishable from "blank".
+        var collectBtn = document.getElementById("collectBtn");
+        var collectBox = document.getElementById("collectBox");
+        var collectStatus = document.getElementById("collectStatus");
+        var collectCount = document.getElementById("collectCount");
+        if (!collectBox) return;
+
+        function rule() {
+          return new Array(61).join("=");
+        }
+        function gather() {
+          var lines = ["Captured " + new Date().toString(), ""];
+          var filled = 0;
+          boxes.forEach(function (box) {
+            var ta = box.querySelector("textarea");
+            lines.push(rule(), label(box), rule());
+            if (ta.value.trim()) {
+              lines.push(ta.value.replace(/\s+$/, ""));
+              filled++;
+            } else {
+              lines.push("(not filled in)");
+            }
+            lines.push("");
+          });
+          collectBox.value = lines.join("\n");
+          if (collectCount)
+            collectCount.textContent =
+              filled + " of " + boxes.length + " filled in";
+          if (collectStatus)
+            collectStatus.textContent =
+              filled === boxes.length
+                ? "All boxes have content."
+                : boxes.length - filled + " still empty.";
+        }
+        if (collectBtn) collectBtn.addEventListener("click", gather);
+
+        var copyBtn = document.getElementById("copyAllBtn");
+        if (copyBtn)
+          copyBtn.addEventListener("click", function () {
+            if (!collectBox.value) gather();
+            function done(ok) {
+              if (!collectStatus) return;
+              collectStatus.textContent = ok
+                ? "Copied to clipboard."
+                : "Could not copy - select the text above and copy manually.";
+            }
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+              navigator.clipboard.writeText(collectBox.value).then(
+                function () {
+                  done(true);
+                },
+                function () {
+                  done(false);
+                },
+              );
+            } else {
+              collectBox.removeAttribute("readonly");
+              collectBox.select();
+              var ok = false;
+              try {
+                ok = document.execCommand("copy");
+              } catch (e) {
+                ok = false;
+              }
+              collectBox.setAttribute("readonly", "readonly");
+              done(ok);
+            }
+          });
+
+        // Two presses, because this throws away work and there is no undo.
+        var wipeBtn = document.getElementById("wipeBtn");
+        if (wipeBtn) {
+          var wipeLabel = wipeBtn.textContent;
+          wipeBtn.addEventListener("click", function () {
+            if (wipeBtn.getAttribute("data-armed") !== "1") {
+              wipeBtn.setAttribute("data-armed", "1");
+              wipeBtn.textContent = "Press again to erase";
+              if (collectStatus) collectStatus.textContent = "This cannot be undone.";
+              setTimeout(function () {
+                wipeBtn.removeAttribute("data-armed");
+                wipeBtn.textContent = wipeLabel;
+              }, 5000);
+              return;
+            }
+            try {
+              localStorage.removeItem(STORE);
+            } catch (e) {}
+            boxes.forEach(function (box) {
+              box.querySelector("textarea").value = "";
+              var st = box.querySelector(".capture-status");
+              if (st) st.textContent = "";
+              describe(box, false);
+            });
+            collectBox.value = "";
+            if (collectCount) collectCount.textContent = "";
+            if (collectStatus) collectStatus.textContent = "All saved output erased.";
+            wipeBtn.removeAttribute("data-armed");
+            wipeBtn.textContent = wipeLabel;
+          });
+        }
+      })();
+    </script>
+  </body>
+</html>
