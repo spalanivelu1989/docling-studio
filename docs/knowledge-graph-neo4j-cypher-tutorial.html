@@ -2001,9 +2001,9 @@ CREATE (a)-[x:MENTIONS_SYSTEM]-&gt;(b) SET x = r.p;</pre>
               button, and from the command line:
             </p>
             <pre class="language-bash">docker compose -f compose.neo4j.yml up -d        # or: podman compose ...
-.venv/bin/python kg_neo4j_load.py                # load if stale
-.venv/bin/python kg_neo4j_load.py --force        # reload regardless
-.venv/bin/python kg_neo4j_load.py --status</pre>
+.venv/bin/python -m backend.graph.kg_neo4j_load                # load if stale
+.venv/bin/python -m backend.graph.kg_neo4j_load --force        # reload regardless
+.venv/bin/python -m backend.graph.kg_neo4j_load --status</pre>
             <div class="why">
               <span class="label">Why CREATE and not MERGE</span>
               <p>
@@ -2345,13 +2345,13 @@ response = client.beta.messages.parse(
               <table>
                 <thead><tr><th>Task</th><th>How</th></tr></thead>
                 <tbody>
-                  <tr><td>Start everything</td><td><code>./run.sh</code> starts Neo4j (if Docker/Podman is up) and the app, which loads the graph in the background</td></tr>
-                  <tr><td>After a Mac restart</td><td><code>podman machine start</code>, then <code>./run.sh</code></td></tr>
+                  <tr><td>Start everything</td><td><code>./scripts/run.sh</code> starts Neo4j (if Docker/Podman is up) and the app, which loads the graph in the background</td></tr>
+                  <tr><td>After a Mac restart</td><td><code>podman machine start</code>, then <code>./scripts/run.sh</code></td></tr>
                   <tr><td>Rebuild the graph</td><td><strong>Rescan</strong> on the graph page, or <code>POST /api/graph/rebuild</code>; Neo4j reloads automatically</td></tr>
                   <tr><td>Is Neo4j current?</td><td>The Cypher view's status chip, <code>GET /api/graph/neo4j/status</code>, or <code>kg_neo4j_load.py --status</code></td></tr>
                   <tr><td>Reset Neo4j entirely</td><td><code>docker compose -f compose.neo4j.yml down -v</code> (deletes the volume), then <code>up -d</code>; the app reloads it</td></tr>
                   <tr><td>Logs</td><td><code>docker logs docling-neo4j</code></td></tr>
-                  <tr><td>Tests</td><td><code>.venv/bin/python test_neo4j.py</code> &mdash; batches, live counts, refused writes, row cap, every example, and the generator (with Claude stubbed out)</td></tr>
+                  <tr><td>Tests</td><td><code>.venv/bin/python backend/tests/test_neo4j.py</code> &mdash; batches, live counts, refused writes, row cap, every example, and the generator (with Claude stubbed out)</td></tr>
                 </tbody>
               </table>
             </div>

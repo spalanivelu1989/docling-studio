@@ -69,7 +69,7 @@ that the wider version would not be true.
 
 The request asked for an "Overall Quality Score" and a "Safety Score" without
 saying what either is. Both are computed as **stated arithmetic**, following the
-rule `evidence/scoring.py` already sets out for the Evidence Agent's support
+rule `backend/agents/evidence/scoring.py` already sets out for the Evidence Agent's support
 score — *arithmetic over the evidence, never the model's opinion*:
 
 ```
@@ -121,8 +121,8 @@ Nothing to turn on. With `ANTHROPIC_API_KEY` set and Ragas installed, every
 finished answer is judged.
 
 ```bash
-python evaluation.py status      # what scoring is configured to do
-python evaluation.py selftest    # score one good and one bad answer
+python -m backend.rag.evaluation status      # what scoring is configured to do
+python -m backend.rag.evaluation selftest    # score one good and one bad answer
 ```
 
 `selftest` is the one to run after any change to a rubric or a weight. It
@@ -252,7 +252,7 @@ questions by meaning with bge-m3 and an average-linkage tree; documents, with
 how often each is retrieved and how often the judge found its excerpts
 useful; and every unsupported claim, grouped the same way.
 
-**Experiments.** Every run of `python evaluation.py experiment` is now kept in
+**Experiments.** Every run of `python -m backend.rag.evaluation experiment` is now kept in
 Postgres (`eval_experiments`, `eval_experiment_items`) with each question's
 working, as well as going to Langfuse — and runs without Langfuse at all. Two
 runs are compared question by question: a move under 0.05 counts as
@@ -264,7 +264,7 @@ differ, and warns when it is more than one.
 **Judge trust.** Agreement with people is Cohen's kappa over reviewed answers,
 withheld until there are 20 — a kappa over six answers is noise. Stability is
 the change between the last two scores of the same answer, from a new
-`ask_evaluation_history` table; `python evaluation.py rescore --sample 10`
+`ask_evaluation_history` table; `python -m backend.rag.evaluation rescore --sample 10`
 produces it, and is safe to schedule. The two context-relevance judges' ratings
 were already kept apart, so their agreement is free. The review queue puts
 disagreements first, then split relevance judges and unstable re-scores, then a
@@ -302,8 +302,8 @@ crowding each other out of the top eight.
 Eleven scores per answer, attached to the answer's own trace.
 
 ```bash
-python evaluation.py configs      # declare the names, types and 0..1 ranges
-python evaluation.py dashboard    # upload docs/langfuse-rag-quality-dashboard.json
+python -m backend.rag.evaluation configs      # declare the names, types and 0..1 ranges
+python -m backend.rag.evaluation dashboard    # upload docs/langfuse-rag-quality-dashboard.json
 ```
 
 Scores, **not** trace metadata. The request asked for metadata; metadata is an
@@ -340,10 +340,10 @@ compute correctness at all.
 read out of the corpus by hand. They become a Langfuse dataset:
 
 ```bash
-python evaluation.py questions            # check the parse first
-python evaluation.py dataset              # push all 27
-python evaluation.py experiment --mode hybrid --k 8
-python evaluation.py experiment --mode vector --k 8   # then compare in Langfuse
+python -m backend.rag.evaluation questions            # check the parse first
+python -m backend.rag.evaluation dataset              # push all 27
+python -m backend.rag.evaluation experiment --mode hybrid --k 8
+python -m backend.rag.evaluation experiment --mode vector --k 8   # then compare in Langfuse
 ```
 
 The questions are parsed out of the document rather than copied into a second
@@ -464,8 +464,8 @@ scores at all.
 ## Tests
 
 ```bash
-python test_evaluation.py                 # 47, no model calls, no Langfuse writes
-python test_quality.py                    # the workspace's arithmetic, no model calls
+python backend/tests/test_evaluation.py                 # 47, no model calls, no Langfuse writes
+python backend/tests/test_quality.py                    # the workspace's arithmetic, no model calls
 node frontend/test/quality-page.mjs       # the page and quality.py agree
 node frontend/test/rag-quality.mjs        # the four files agree on the metric names
 ```

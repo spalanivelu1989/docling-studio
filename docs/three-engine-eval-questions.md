@@ -760,7 +760,7 @@ and `SPARK Imagine _ L2C-WS022 _ Returnable Packaging - Transcript_docx.md`
 identical-pair trap exists again for `L2C-WS002`, and three near-identical
 `WS015` pricing decks make a softer version of it.
 
-**Why it discriminates.** This is what `evidence/independence.py` exists for:
+**Why it discriminates.** This is what `backend/agents/evidence/independence.py` exists for:
 it groups documents by embedding centroid and collapses each group to one
 source, so two copies cannot corroborate each other. The question is a direct
 test of whether that fires — and whether the answer *says* it fired.

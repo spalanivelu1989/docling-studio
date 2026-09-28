@@ -34,9 +34,9 @@ const repo = (...p) => readFileSync(join(here, "..", "..", ...p), "utf8");
 
 const page = read("src", "pages", "EvidencePage.tsx");
 const api = read("src", "api.ts");
-const agent = repo("evidence", "agent.py");
-const memory = repo("fitgap", "memory.py");
-const app = repo("app.py");
+const agent = repo("backend", "agents", "evidence", "agent.py");
+const memory = repo("backend", "agents", "fitgap", "memory.py");
+const app = repo("backend", "api", "app.py");
 const drawer = read("src", "components", "AgentLogDrawer.tsx");
 
 let failed = 0;

@@ -1927,9 +1927,9 @@ ORDER BY via_documents DESC</pre>
               Any node works, not just this one. The id is whatever the Knowledge Graph
               page shows in the detail drawer:
             </p>
-            <pre class="language-bash">.venv/bin/python kg_neo4j_export.py --ego system:S4HANA
-.venv/bin/python kg_neo4j_export.py --ego proc:O-020-090-010
-.venv/bin/python kg_neo4j_export.py --ego spec:SPARK-22877</pre>
+            <pre class="language-bash">.venv/bin/python -m backend.graph.kg_neo4j_export --ego system:S4HANA
+.venv/bin/python -m backend.graph.kg_neo4j_export --ego proc:O-020-090-010
+.venv/bin/python -m backend.graph.kg_neo4j_export --ego spec:SPARK-22877</pre>
 
             <h3>Open either one in arrows.app</h3>
             <p>
@@ -1980,7 +1980,7 @@ ORDER BY via_documents DESC</pre>
               never leave a stale number behind. After
               <code>POST /api/graph/rebuild</code>:
             </p>
-            <pre class="language-bash">.venv/bin/python kg_neo4j_export.py
+            <pre class="language-bash">.venv/bin/python -m backend.graph.kg_neo4j_export
 plantuml -tpng docs/kg-neo4j-*.puml</pre>
 
             <details class="disclose">
@@ -2030,7 +2030,7 @@ plantuml -tpng docs/kg-neo4j-*.puml</pre>
               </p>
               <p>
                 Salesforce and SOVOS are exactly this case: their shortest route is four
-                hops via <code>stream:L2C</code>, and <code>evidence/paths.py</code>
+                hops via <code>stream:L2C</code>, and <code>backend/agents/evidence/paths.py</code>
                 rejects it for that reason.
               </p>
             </div>

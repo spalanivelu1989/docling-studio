@@ -36,10 +36,10 @@ const appTsx = read("src", "App.tsx");
 const api = read("src", "api.ts");
 const scorecard = read("src", "components", "QualityScorecard.tsx");
 const drawer = read("src", "components", "MetricDetailDrawer.tsx");
-const qualityPy = repo("quality.py");
-const storePy = repo("ask_store.py");
-const appPy = repo("app.py");
-const evaluationPy = repo("evaluation.py");
+const qualityPy = repo("backend", "rag", "quality.py");
+const storePy = repo("backend", "rag", "ask_store.py");
+const appPy = repo("backend", "api", "app.py");
+const evaluationPy = repo("backend", "rag", "evaluation.py");
 
 let failed = 0;
 function check(name, ok, detail) {

@@ -29,7 +29,7 @@ const pages = {
 };
 const drawer = read("src", "components", "AgentTraceDrawer.tsx");
 const api = read("src", "api.ts");
-const backend = readFileSync(join(here, "..", "..", "fitgap", "trace.py"), "utf8");
+const backend = readFileSync(join(here, "..", "..", "backend", "agents", "fitgap", "trace.py"), "utf8");
 
 let failed = 0;
 function check(name, ok, detail) {

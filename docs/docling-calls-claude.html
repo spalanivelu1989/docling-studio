@@ -1594,7 +1594,7 @@ print(result.document.export_to_markdown())</pre>
             <pre class="language-bash">ANTHROPIC_API_KEY=sk-ant-...
 # CLAUDE_VLM_MODEL=claude-opus-5</pre>
             <p>Then run the folder conversion with Claude as the vision model:</p>
-            <pre class="language-bash">.venv/bin/python folder_to_md.py solvay-spark --vlm-provider claude</pre>
+            <pre class="language-bash">.venv/bin/python -m backend.ingestion.folder_to_md solvay-spark --vlm-provider claude</pre>
             <p>
               In the web app, switch on <strong>Read images &amp; diagrams with
               AI</strong> and choose <strong>Claude (Anthropic API)</strong> in

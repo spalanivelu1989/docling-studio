@@ -102,7 +102,7 @@ The agent only sees the corpus through these tools. Wrap existing functions; ref
 | `graph_entity(text_or_code)` | `knowledge_graph.py` entity resolution | Node id, type, label, aliases |
 | `graph_neighbors(node_id, hops=1..2)` | `knowledge_graph.py` | Adjacent nodes/edges: tickets, systems, streams, BPML codes |
 | `graph_path(a, b)` | `knowledge_graph.py` BFS | Hop-by-hop path |
-| `submit_entry(entry)` | `fitgap/agent.py` | Validates against the Pydantic schema (§5); rejects malformed output with the error so the agent can fix it |
+| `submit_entry(entry)` | `backend/agents/fitgap/agent.py` | Validates against the Pydantic schema (§5); rejects malformed output with the error so the agent can fix it |
 
 Tool budget per step: at most 12 calls, and at most 40k input tokens. On budget exhaustion the agent must submit `UNKNOWN` with a reason, not a guess.
 
@@ -116,7 +116,7 @@ Tool budget per step: at most 12 calls, and at most 40k input tokens. On budget 
 
 ## 5. Data contracts
 
-Use Pydantic models in `fitgap/schemas.py`; generate the JSON Schema for the tool definition from them.
+Use Pydantic models in `backend/agents/fitgap/schemas.py`; generate the JSON Schema for the tool definition from them.
 
 ```python
 class Evidence(BaseModel):
@@ -275,7 +275,7 @@ Export 30 entries, stratified by class and confidence, to XLSX with columns for 
 
 | # | Deliverable | Accept when |
 |---|---|---|
-| M0 | Repo read-through note: actual function names and signatures in `rag.py` and `knowledge_graph.py`, graph node and edge types, BPML sheet location and columns, fit-register columns | A short `fitgap/NOTES.md` exists and is confirmed with the user |
+| M0 | Repo read-through note: actual function names and signatures in `rag.py` and `knowledge_graph.py`, graph node and edge types, BPML sheet location and columns, fit-register columns | A short `backend/agents/fitgap/NOTES.md` exists and is confirmed with the user |
 | M1 | `bpml.py`, `schemas.py`, `tools.py` (retrieval-only refactor of `rag.py` with no behaviour change to `/api/ask`) | Existing Ask and Graph flows still work; tool unit tests pass |
 | M2 | Mode A agent + verifier on a 10-step L2C subtree | 100% evidence validity; entries viewable as JSON |
 | M3 | Evaluation harness E1–E3 with holdout | `reports/eval_*.md` produced with both holdout and non-holdout numbers |
@@ -312,7 +312,7 @@ Work in milestones M0 to M6 from section 11. Start with M0 only:
    whether any graph edges are derived from folder or file names.
 2. Locate BPML_ProcessesHierarchyExtended (xlsx or its .md conversion) and the three
    fit registers; show their columns and 5 sample rows each, and how FIT/GAP is encoded.
-3. Write fitgap/NOTES.md with these findings, any mismatch with the handover spec,
+3. Write backend/agents/fitgap/NOTES.md with these findings, any mismatch with the handover spec,
    and a proposed 10-step L2C subtree for M2 (steps that have both FIT and GAP labels
    in the registers).
 Then stop and show me NOTES.md. Do not start M1 until I confirm.

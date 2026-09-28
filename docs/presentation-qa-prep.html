@@ -1430,7 +1430,7 @@
                   <tr><td>Knowledge graph</td><td>2,389 nodes, 4,780 edges, 5 node types, 11 relationship types</td><td><code>knowledge_graph.json</code></td></tr>
                   <tr><td>Models</td><td>Answers and agents on <code>claude-opus-5</code>; the evaluation judge and the web search on <code>claude-sonnet-5</code>; the scope filter on <code>claude-haiku-4-5</code></td><td>environment defaults</td></tr>
                   <tr><td>Guardrails</td><td>Scope check on all four surfaces (Ask RAG and the three agents): an off-topic question gets "I don't have the information." in ~2 s, with nothing searched. Web search at most 2 per run, only sap.com and europa.eu. Contact details removed from all outputs: the corpus holds 116 e-mail addresses and 21 phone numbers</td><td><code>guardrails/</code>, <code>test_guardrails.py</code> (27 tests)</td></tr>
-                  <tr><td>Agent limits</td><td>Evidence Agent 14 tool calls / 60k input tokens per turn; InsightLens 12 calls / 40k; each capped at 4× cumulatively</td><td><code>evidence/agent.py</code>, <code>fitgap/agent.py</code></td></tr>
+                  <tr><td>Agent limits</td><td>Evidence Agent 14 tool calls / 60k input tokens per turn; InsightLens 12 calls / 40k; each capped at 4× cumulatively</td><td><code>backend/agents/evidence/agent.py</code>, <code>backend/agents/fitgap/agent.py</code></td></tr>
                   <tr><td>Evaluation</td><td>12 Ragas judges per answer; 27 ground-truthed questions for offline runs; 12 live answers scored so far, mean overall 0.75</td><td><code>evaluation.py</code>, <code>ask_evaluations</code></td></tr>
                   <tr><td>Judge stability</td><td>Same answer scored twice moves ±0.01–0.04</td><td>re-score history</td></tr>
                   <tr><td>Human calibration</td><td>0 of the 20 reviewed answers needed before judge–human agreement is reported</td><td><code>ask_reviews</code></td></tr>
@@ -1472,8 +1472,8 @@
                   <tbody>
                     <tr><td>Ask RAG</td><td>Retrieve → generate with citations (no agent loop)</td><td><code>rag.py</code></td></tr>
                     <tr><td>Evidence Agent</td><td>Single ReAct-style tool loop over the corpus and the graph, then a deterministic verifier and scorer</td><td><code>evidence/</code></td></tr>
-                    <tr><td>InsightLens</td><td><strong>Map-reduce</strong>: one bounded agent run per BPML step, several in parallel on a thread pool, then one synthesis pass</td><td><code>fitgap/orchestrator.py</code></td></tr>
-                    <tr><td>Fit-Gap Copilot</td><td><strong>Two-pass pipeline</strong>: Read (attachments only) → Compare (corpus + graph + BPML), then deterministic gates and scoring</td><td><code>rollout/orchestrator.py</code></td></tr>
+                    <tr><td>InsightLens</td><td><strong>Map-reduce</strong>: one bounded agent run per BPML step, several in parallel on a thread pool, then one synthesis pass</td><td><code>backend/agents/fitgap/orchestrator.py</code></td></tr>
+                    <tr><td>Fit-Gap Copilot</td><td><strong>Two-pass pipeline</strong>: Read (attachments only) → Compare (corpus + graph + BPML), then deterministic gates and scoring</td><td><code>backend/agents/rollout/orchestrator.py</code></td></tr>
                   </tbody>
                 </table>
               </div>
@@ -1832,7 +1832,7 @@
                   step by step, including what the documents never said.</li>
                 <li><strong>Compare:</strong> now given the corpus, graph and BPML hierarchy, it produces deviations on a
                   16-code taxonomy and rates seven dimensions from 0 to 4.</li>
-                <li><strong>Gates and arithmetic:</strong> the quality gates repair the output, and <code>rollout/scoring.py</code>
+                <li><strong>Gates and arithmetic:</strong> the quality gates repair the output, and <code>backend/agents/rollout/scoring.py</code>
                   computes the alignment scores from the rated register.</li>
               </ol>
               <p>Documents are uploaded with a <strong>role</strong> (Country As-Is, Global Template, SAP Best

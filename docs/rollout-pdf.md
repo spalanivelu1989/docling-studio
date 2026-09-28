@@ -60,7 +60,7 @@ case wrong in the other. `REQUIRES_DECISION` is seventeen characters and as wide
 as twenty-three lowercase ones; `Harmonization` is thirteen and wider than
 fourteen. Both broke.
 
-`_CHAR_WIDTH` in `rollout/pdf.py` is a real measurement: every character
+`_CHAR_WIDTH` in `backend/agents/rollout/pdf.py` is a real measurement: every character
 rendered at 7.8pt through WeasyPrint and divided by the width of a lowercase
 "n". It predicts real width to within 1%. Regenerate it the same way if the
 font stack ever changes.
@@ -97,7 +97,7 @@ separator and asking whether the result occurs verbatim in the source:
 Estimating is what got this wrong four times running. The test measures.
 
 ```
-$ python rollout/test_rollout.py
+$ python backend/tests/test_rollout.py
 70/70 passed
 ```
 

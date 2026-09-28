@@ -191,7 +191,7 @@ The practical consequence: **two systems are only ever connected through a docum
 that names both.** If no single document mentions both, there is no two-hop route, and
 anything longer runs through a stream hub — which is co-membership, not an integration.
 Salesforce and SOVOS are exactly this case: their shortest route is four hops via
-`stream:L2C`, and `evidence/paths.py` rejects it for that reason.
+`stream:L2C`, and `backend/agents/evidence/paths.py` rejects it for that reason.
 
 `subprocess_of` is the only relation joining two nodes of the same type, and the only
 one that forms a chain rather than a star.

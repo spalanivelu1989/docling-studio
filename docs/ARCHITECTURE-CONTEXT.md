@@ -62,8 +62,8 @@ front end. No auth, no multi-tenancy, localhost only.
 | `rag.py` | **RAG engine**: index, hybrid search, answer. Also a CLI |
 | `knowledge_graph.py` | **Graph engine**: extraction, BFS, query, answer synthesis |
 | `knowledge_graph.json` | Cached extracted graph (~410 KB), rebuilt on demand |
-| `fitgap/` | **InsightLens**: one bounded agent run per BPML step → a proposed register entry. Calls both engines through `fitgap/tools.py`; never merges them |
-| `evidence/` | **Evidence Agent**: any question, both engines, answered as scored claims. Reuses `fitgap/tools.py`; adds provenance, near-duplicate and hub-artefact judgement |
+| `fitgap/` | **InsightLens**: one bounded agent run per BPML step → a proposed register entry. Calls both engines through `backend/agents/fitgap/tools.py`; never merges them |
+| `evidence/` | **Evidence Agent**: any question, both engines, answered as scored claims. Reuses `backend/agents/fitgap/tools.py`; adds provenance, near-duplicate and hub-artefact judgement |
 | `folder_to_md.py`, `pptx_to_md.py` | Batch CLI wrappers |
 | `frontend/src/pages/*.tsx` | React SPA pages (10 pages) |
 | `frontend/src/data/evalQuestions.ts` | The 16 corpus-grounded evaluation questions, shared by the Fit-Gap and Evidence pages |
@@ -160,11 +160,11 @@ the fused score, so the Ask page can show *why* a chunk was retrieved.
 
 ### 5.6 CLI
 ```
-python rag.py index solvay-spark/pkg/markdown [--force] [--rebuild]
-python rag.py search "Who validated 7.1.12.3?" [-k N] [--mode hybrid|vector|keyword]
-python rag.py ask    "…"
-python rag.py chunks <file.md>      # inspect chunking, no API calls
-python rag.py clear | reset
+python -m backend.rag.rag index solvay-spark/pkg/markdown [--force] [--rebuild]
+python -m backend.rag.rag search "Who validated 7.1.12.3?" [-k N] [--mode hybrid|vector|keyword]
+python -m backend.rag.rag ask    "…"
+python -m backend.rag.rag chunks <file.md>      # inspect chunking, no API calls
+python -m backend.rag.rag clear | reset
 ```
 
 ---
@@ -231,7 +231,7 @@ the rest dim to opacity 0.12) and an automatic bounding-box pan/zoom onto the an
 ## 6b. The two agents over the two engines
 
 Added after the sections above. Neither is a fourth store: both read the corpus
-only through `fitgap/tools.py`, which wraps `rag.search()` and
+only through `backend/agents/fitgap/tools.py`, which wraps `rag.search()` and
 `knowledge_graph` as Claude tool-use tools. **The two engines still never call
 each other** — an agent is the only thing that sees both.
 
@@ -263,8 +263,8 @@ The model proposes a score; the server recomputes it and keeps its own.
 
 **Evaluation.** `docs/three-engine-eval-questions.md` holds 16 corpus-grounded
 questions with verified ground truth, loaded into both agent pages as a picker
-(`frontend/src/data/evalQuestions.ts`). `fitgap/test_fitgap.py` (32 tests) and
-`evidence/test_evidence.py` (30 tests) cover the verifier, the rubric
+(`frontend/src/data/evalQuestions.ts`). `backend/tests/test_fitgap.py` (32 tests) and
+`backend/tests/test_evidence.py` (30 tests) cover the verifier, the rubric
 arithmetic, BPML parsing, holdout masking, provenance, duplicates and hubs.
 
 ---
@@ -316,7 +316,7 @@ marked + DOMPurify (Markdown), Framer Motion, Lucide. Build with
 | `CLAUDE_VLM_MODEL`, `OPENAI_API_KEY`, `OPENAI_VLM_MODEL` | optional vision overrides |
 | `COHERE_API_KEY` | **unused leftover** |
 
-Run: `./run.sh` → `.venv/bin/uvicorn app:app --port 8000 --reload`.
+Run: `./scripts/run.sh` → `.venv/bin/uvicorn backend.api.app:app --port 8000 --reload`.
 External runtime dependencies: PostgreSQL 5433 with the `vector` extension, Ollama serving
 `bge-m3`, Tesseract, LibreOffice + `pdftoppm`, and (optionally) MLX/Qwen3-VL locally.
 

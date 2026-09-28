@@ -7,15 +7,15 @@ page, from Neo4j Browser, or from any Neo4j driver.
 
 ## Start it
 
-`./run.sh` starts the Neo4j container along with the app, when Docker or Podman is
+`./scripts/run.sh` starts the Neo4j container along with the app, when Docker or Podman is
 running and `NEO4J_PASSWORD` is set in `.env`. The app then loads the graph into
 Neo4j in the background. To do it by hand:
 
 ```bash
 docker compose -f compose.neo4j.yml up -d        # or: podman compose ...
-.venv/bin/python kg_neo4j_load.py                # load (skipped if already current)
-.venv/bin/python kg_neo4j_load.py --force        # reload regardless
-.venv/bin/python kg_neo4j_load.py --status
+.venv/bin/python -m backend.graph.kg_neo4j_load                # load (skipped if already current)
+.venv/bin/python -m backend.graph.kg_neo4j_load --force        # reload regardless
+.venv/bin/python -m backend.graph.kg_neo4j_load --status
 ```
 
 `.env` needs:
@@ -132,7 +132,7 @@ local copy that the next load replaces entirely.
 ## Tests
 
 ```bash
-.venv/bin/python test_neo4j.py
+.venv/bin/python backend/tests/test_neo4j.py
 ```
 
 The first four tests check the write batches and need nothing running. The rest

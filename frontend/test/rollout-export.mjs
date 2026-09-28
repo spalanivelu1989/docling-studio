@@ -27,8 +27,8 @@ const repo = (...p) => readFileSync(join(here, "..", "..", ...p), "utf8");
 
 const page = read("src", "pages", "RolloutPage.tsx");
 const api = read("src", "api.ts");
-const app = repo("app.py");
-const pdf = repo("rollout", "pdf.py");
+const app = repo("backend", "api", "app.py");
+const pdf = repo("backend", "agents", "rollout", "pdf.py");
 
 let failed = 0;
 function check(name, ok, detail) {

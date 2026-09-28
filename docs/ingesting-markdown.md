@@ -40,14 +40,14 @@ mkdir -p solvay-spark/sap/markdown
 cp /Users/senthilpalanivelu/Desktop/sap_best_practice/markdown/*.md solvay-spark/sap/markdown/
 
 # 2. Chunk, embed and store them
-.venv/bin/python rag.py index solvay-spark/sap/markdown --category SAP
+.venv/bin/python -m backend.rag.rag index solvay-spark/sap/markdown --category SAP
 
 # 3. Rebuild the graph so it sees them too
 curl -s -X POST -o /dev/null -w "graph rebuilt (%{size_download} bytes)\n" \
   http://127.0.0.1:8000/api/graph/rebuild
 
 # 4. Check
-.venv/bin/python rag.py categories
+.venv/bin/python -m backend.rag.rag categories
 ```
 
 Substitute your own source folder and code. A category code is letters, digits
@@ -77,7 +77,7 @@ The graph applies the same rule, which is what keeps the two stores agreeing.
 ### 2. Index
 
 ```bash
-.venv/bin/python rag.py index solvay-spark/sap/markdown --category SAP
+.venv/bin/python -m backend.rag.rag index solvay-spark/sap/markdown --category SAP
 ```
 
 This chunks each file (~500 tokens, split on headings), embeds every chunk with
@@ -119,7 +119,7 @@ so the next page load is not the thing that pays for it.
 ### 4. Check
 
 ```bash
-.venv/bin/python rag.py categories
+.venv/bin/python -m backend.rag.rag categories
 ```
 
 ```
@@ -265,7 +265,7 @@ and an unchanged file is skipped without an embedding call.
 
 ```bash
 cp /path/to/more/*.md solvay-spark/sap/markdown/
-.venv/bin/python rag.py index solvay-spark/sap/markdown --category SAP
+.venv/bin/python -m backend.rag.rag index solvay-spark/sap/markdown --category SAP
 ```
 
 Deleting a file from the folder removes it from the index on the next run —
@@ -278,7 +278,7 @@ Rebuild the graph afterwards either way.
 You can index an external folder directly:
 
 ```bash
-.venv/bin/python rag.py index ~/Desktop/sap_best_practice/markdown --category SAP
+.venv/bin/python -m backend.rag.rag index ~/Desktop/sap_best_practice/markdown --category SAP
 ```
 
 Three consequences, all of them quiet:
@@ -298,7 +298,7 @@ you wanted.
 ### Changing one document's category
 
 ```bash
-.venv/bin/python rag.py retag solvay-spark/sap/markdown/BKP1_CRM.md DR
+.venv/bin/python -m backend.rag.rag retag solvay-spark/sap/markdown/BKP1_CRM.md DR
 ```
 
 Nothing is re-embedded — the category is deliberately outside the fingerprint,
@@ -309,7 +309,7 @@ to whatever the folder implies.
 ### Removing a category
 
 ```bash
-.venv/bin/python rag.py clear --category SAP     # drop its rows from the corpus
+.venv/bin/python -m backend.rag.rag clear --category SAP     # drop its rows from the corpus
 rm -rf solvay-spark/sap                          # drop the files
 curl -s -X POST -o /dev/null http://127.0.0.1:8000/api/graph/rebuild
 ```

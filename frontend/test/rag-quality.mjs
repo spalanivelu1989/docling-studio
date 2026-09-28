@@ -37,10 +37,10 @@ const card = read("src", "components", "QualityScorecard.tsx");
 const drawer = read("src", "components", "AskHistoryDrawer.tsx");
 const page = read("src", "pages", "AskPage.tsx");
 const api = read("src", "api.ts");
-const evaluation = repo("evaluation.py");
-const store = repo("ask_store.py");
-const app = repo("app.py");
-const rag = repo("rag.py");
+const evaluation = repo("backend", "rag", "evaluation.py");
+const store = repo("backend", "rag", "ask_store.py");
+const app = repo("backend", "api", "app.py");
+const rag = repo("backend", "rag", "rag.py");
 
 let failed = 0;
 function check(name, ok, detail) {
