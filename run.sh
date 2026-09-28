@@ -24,11 +24,19 @@ fi
 
 # Neo4j, for Cypher over the knowledge graph (docs/neo4j.md). Optional: the app
 # loads the graph into it once it answers, and runs without it when it does not.
+# On this Mac `docker` talks to a Podman VM, which does not survive a reboot:
+# start it first when Podman is installed and its machine is not answering.
+start_podman_machine() {
+  command -v podman >/dev/null 2>&1 || return 0
+  podman info >/dev/null 2>&1 && return 0
+  echo "Podman: machine is not running -- starting it."
+  podman machine start >/dev/null 2>&1
+}
 if curl -sf -m 2 http://127.0.0.1:7474 >/dev/null 2>&1; then
   echo "Neo4j: already running on 127.0.0.1:7474."
 elif ! grep -q '^NEO4J_PASSWORD=.' .env 2>/dev/null; then
   echo "Neo4j: NEO4J_PASSWORD is not set in .env -- Cypher is off (see docs/neo4j.md)."
-elif command -v docker >/dev/null 2>&1 && docker compose -f compose.neo4j.yml up -d >/dev/null 2>&1; then
+elif command -v docker >/dev/null 2>&1 && start_podman_machine && docker compose -f compose.neo4j.yml up -d >/dev/null 2>&1; then
   echo "Neo4j: started (compose.neo4j.yml); the graph loads into it once it answers."
 else
   echo "Neo4j: could not start the container (is Docker/Podman running?) -- Cypher is off."
