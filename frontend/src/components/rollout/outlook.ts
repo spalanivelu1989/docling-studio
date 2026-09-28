@@ -1,4 +1,4 @@
-/** Standardisation outlook: each deviation's harmonization potential as one of
+/** Harmonization potential: each deviation's outlook as one of
  *  five levels a client can act on, rather than a percentage that suggests more
  *  precision than the rule behind it has.
  *

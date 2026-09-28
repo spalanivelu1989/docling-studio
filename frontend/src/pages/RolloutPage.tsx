@@ -736,7 +736,7 @@ function PastAnalysis({ run, showModel = true }: { run: RolloutRunDetail; showMo
       {scores && (
         <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: "wrap" }}>
           <ScoreTile label="GT alignment" value={scores.gt_alignment} band={scores.gt_band} accent={sem.fit} />
-          <ScoreTile label="Standardisation outlook" value={scores.harmonization_potential}
+          <ScoreTile label="Harmonization potential" value={scores.harmonization_potential}
                      band={scores.harmonization_band} accent={sem.localization} />
         </Stack>
       )}

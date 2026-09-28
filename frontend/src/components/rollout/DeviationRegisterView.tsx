@@ -276,7 +276,7 @@ export default function DeviationRegisterView({
                     // Computed from the disposition, localization state and GT fit; the
                     // working is shown so a reader can check it. Older runs carry the
                     // agent's own figure and say so.
-                    { l: "Standardisation outlook", v: OUTLOOK[outlookOf(gap)].label, mono: false,
+                    { l: "Harmonization potential", v: OUTLOOK[outlookOf(gap)].label, mono: false,
                       note: `${gap.harmonization_potential}% · ${gap.harmonization_terms?.formula
                         ?? "agent's estimate (run predates the computed rule)"}` },
                     { l: "Evidence confidence", v: gap.evidence_confidence, mono: false },

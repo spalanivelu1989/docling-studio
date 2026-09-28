@@ -131,7 +131,7 @@ def build(run: dict) -> dict:
             {"what": "SAP BP fit",
              "value": "n/a" if d.get("sap_bp_fit_rating") is None else f"{d.get('sap_bp_fit_rating')}/4",
              "how": "rated by the agent" if d.get("sap_bp_fit_rating") is not None else "no SAP source rated"},
-            {"what": "Standardisation outlook", "value": terms.get("value", d.get("harmonization_potential")),
+            {"what": "Harmonization potential", "value": terms.get("value", d.get("harmonization_potential")),
              "how": terms.get("formula") or "the agent's estimate (run predates the computed rule)"},
             {"what": "Workshop", "value": d.get("workshop_bucket"),
              "how": d.get("why_discussed") or "assigned by the agent"},
@@ -239,7 +239,7 @@ def _trail(run: dict, calls: list[dict], log: list[dict], claims: list[dict]) ->
     if scores:
         out.append({"seq": None, "kind": "scoring", "title": "Scores computed from the ratings",
                     "text": (f"GT alignment {scores.get('gt_alignment')}/100 from the seven dimension ratings "
-                             f"and their fixed weights; Standardisation outlook "
+                             f"and their fixed weights; Harmonization potential "
                              f"{scores.get('harmonization_potential')} from each deviation's disposition, "
                              f"localization state and GT fit. "
                              + (scores.get("harmonization_rule") or "")).strip()})

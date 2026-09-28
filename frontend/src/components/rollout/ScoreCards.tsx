@@ -107,7 +107,7 @@ export default function ScoreCards({ analysis, scores, subject, types, onTab }: 
   if (rated.length > 1) gtLines.push(<>Strongest: <B>{rated[rated.length - 1].label}</B> at {rated[rated.length - 1].percent}%</>);
   gtLines.push(<><B>{plural(c.fit_areas, "step")}</B> already fit the template as {c.fit_areas === 1 ? "it is" : "they are"}</>);
 
-  // --- standardisation outlook (harmonization potential): the levels, not the
+  // --- harmonization potential: the levels, not the
   // dispositions, so the card says what the client can expect of each gap.
   const hLines: ReactNode[] = devs.length
     ? outlookCounts(devs).map(({ key, n }) => (
@@ -185,7 +185,7 @@ export default function ScoreCards({ analysis, scores, subject, types, onTab }: 
                gridTemplateColumns: { xs: "1fr", sm: "repeat(2, minmax(0, 1fr))", md: "repeat(3, minmax(0, 1fr))", xl: "repeat(5, minmax(0, 1fr))" } }}>
       <Card label="Alignment to the Global Template" value={pct(gt)} unit={gt === null ? undefined : "%"} colour={gtColour} bar={gt}
             band={scores.gt_band} lines={gtLines} onOpen={() => onTab("dimensions")} open="Open dimensions" />
-      <Card label="Standardisation outlook" value={pct(scores.harmonization_potential)}
+      <Card label="Harmonization potential" value={pct(scores.harmonization_potential)}
             unit={scores.harmonization_potential === null ? undefined : "%"}
             colour={scores.harmonization_potential === null ? theme.palette.text.disabled : theme.palette.info.main}
             bar={scores.harmonization_potential} band={scores.harmonization_band} lines={hLines}

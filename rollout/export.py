@@ -134,7 +134,7 @@ def to_markdown(run: dict) -> str:
       f"{scores.get('sap_bp_band', '') or scores.get('sap_bp_note', '')} |")
     w(f"| Localization-adjusted alignment | {_pct(scores.get('localization_adjusted'))} | "
       f"{scores.get('localization_share', 0)}% of weighted divergence is confirmed localization |")
-    w(f"| Standardisation outlook (harmonization potential) | {_pct(scores.get('harmonization_potential'))} | "
+    w(f"| Harmonization potential | {_pct(scores.get('harmonization_potential'))} | "
       f"{scores.get('harmonization_band', '')} |")
     w("")
     if scores.get("pattern"):
@@ -143,7 +143,7 @@ def to_markdown(run: dict) -> str:
     w(f"*{scores.get('formula', '')}*")
     w("")
     if scores.get("harmonization_rule"):
-        w(f"*Standardisation outlook: {scores['harmonization_rule']}*")
+        w(f"*Harmonization potential: {scores['harmonization_rule']}*")
         w("")
     w(f"{_n(len(asis.get('steps') or []), 'step')} · {counts.get('fit_areas', 0)} fit · "
       f"{_n(counts.get('deviations', 0), 'deviation')} · "
