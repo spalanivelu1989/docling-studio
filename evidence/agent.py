@@ -21,6 +21,7 @@ import pydantic
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import agent_eval  # noqa: E402
 import knowledge_graph  # noqa: E402
 import tracing  # noqa: E402
 from fitgap import tools as ftools  # noqa: E402
@@ -485,6 +486,7 @@ def run(question: str, holdout: bool = False,
                         limits=[scope_guard.refusal_detail(verdict)],
                         seconds=round(time.time() - started, 2))
         refused.end(output={"state": "refused", "category": verdict.category})
+        agent_eval.push(refused.trace_id, agent_eval.refused, verdict=verdict.to_dict())
         yield "answer", answer.model_dump()
         return
 
@@ -547,12 +549,17 @@ def run(question: str, holdout: bool = False,
     in_tokens = out_tokens = last_in = 0
     engines: dict[str, int] = {}
     submitted: Answer | None = None
+    # For agent_eval: every call as it happened, and the loop's own troubles.
+    call_log: list[dict] = []
+    rejections = 0
+    budget_hit = False
 
     try:
         while submitted is None:
             over = (calls >= MAX_TOOL_CALLS or last_in >= MAX_INPUT_TOKENS
                     or in_tokens >= MAX_TOTAL_INPUT_TOKENS)
             if over:
+                budget_hit = True
                 why = ("tool budget" if calls >= MAX_TOOL_CALLS else
                        "one turn's input" if last_in >= MAX_INPUT_TOKENS else "total input")
                 yield "note", {"kind": "budget",
@@ -627,6 +634,7 @@ def run(question: str, holdout: bool = False,
                                        "text": _errors(exc),
                                        "detail": {"errors": len(exc.errors())}}
                         calls += 1
+                        rejections += 1
                     continue
 
                 calls += 1
@@ -667,6 +675,7 @@ def run(question: str, holdout: bool = False,
                     "warning": result.get("duplicate_warning") or (
                         result.get("warning") if result.get("meaningful") is False else None),
                 }
+                call_log.append(event)
                 if on_event:
                     on_event("tool_call", event)
                 yield "tool_call", event
@@ -677,6 +686,7 @@ def run(question: str, holdout: bool = False,
             if submitted is None and over and not any(r.get("is_error") for r in results):
                 break
 
+        raw = submitted.model_dump() if submitted is not None else None
         if submitted is None:
             submitted = Answer(
                 question=question, state="not_in_corpus",
@@ -684,9 +694,15 @@ def run(question: str, holdout: bool = False,
                 open_questions=["Re-run this question."])
 
         final = finalise(submitted, session, engines, calls, in_tokens, out_tokens, started)
+        as_written = final.model_dump()
         # After verification, which checks each quote against the document as
         # written; before anything leaves -- the page, the history, memory.
-        final = Answer.model_validate(contact.redact_obj(final.model_dump()))
+        final = Answer.model_validate(contact.redact_obj(as_written))
+        agent_eval.push(
+            run.trace_id, agent_eval.evidence,
+            question=question, verdict=verdict.to_dict(), submitted=raw,
+            final=as_written, redacted=final.model_dump(), calls=call_log,
+            rejections=rejections, budget_hit=budget_hit)
         if use_memory:
             # After finalise, so only verified evidence can be written down, and
             # best-effort, so a memory server that has gone away cannot turn an

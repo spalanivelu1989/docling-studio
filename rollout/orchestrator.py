@@ -15,6 +15,7 @@ import time
 import uuid
 from typing import Callable, Iterator
 
+import agent_eval
 import rag
 import tracing
 import uploads
@@ -261,6 +262,8 @@ def run(req: RunRequest) -> Iterator[Event]:
             store.fail_run(conn, run_id, "the agent did not submit an As-Is model")
             run.update(level="WARNING", status_message="no As-Is model was submitted")
             run.end(output={"error": "the agent did not submit an As-Is model"})
+            agent_eval.push(run.trace_id, agent_eval.rollout_incomplete, verdict=verdict.to_dict(),
+                            calls=list(calls_log), why="no As-Is model was submitted")
             yield "error", {"message": ("The agent did not produce an As-Is model. The attached "
                                         "documentation may not describe a process.")}
             return
@@ -291,6 +294,8 @@ def run(req: RunRequest) -> Iterator[Event]:
             store.fail_run(conn, run_id, "the agent did not submit an analysis")
             run.update(level="WARNING", status_message="no analysis was submitted")
             run.end(output={"error": "the agent did not submit an analysis"})
+            agent_eval.push(run.trace_id, agent_eval.rollout_incomplete, verdict=verdict.to_dict(),
+                            calls=list(calls_log), why="no analysis was submitted")
             yield "error", {"message": "The agent did not submit an analysis."}
             return
         yield "stage", {"stage": "compare", "status": "done",
@@ -337,6 +342,14 @@ def run(req: RunRequest) -> Iterator[Event]:
                          sources=trace)
 
         run.end(output=_headline(analysis, scores, gate_summary, record["scope_label"]))
+        # The run as the store now holds it, so the scores are computed from
+        # exactly what the lineage page will later show.
+        agent_eval.push(
+            run.trace_id, agent_eval.rollout_run, verdict=verdict.to_dict(),
+            min_sap=agent.min_sap_searches(subject, asis, sess),
+            run={**record, "calls": list(calls_log), "log": list(log),
+                 "asis": asis.model_dump(), "analysis": analysis.model_dump(),
+                 "gates": gate_summary, "sources": trace})
 
         counts = scores.get("counts") or {}
         yield "log", entry("answer", {

@@ -843,6 +843,31 @@ Two things worth knowing:
   trace is worth keeping. Point this at a Langfuse project you would be
   willing to show the corpus to.
 
+### Agent quality scores
+
+Every Evidence Agent and Fit-Gap Copilot run also writes a set of scores onto
+its trace (`agent_eval.py`). They are counted from what the run already
+checked -- quote verification, the quality gates, the claim lineage, the
+guardrails -- so they cost no model call and need no labelled data:
+
+| Metric | Scores |
+|---|---|
+| Groundedness | `citation_validity`, `claims_unsupported` |
+| Tool use | `tool_error_rate`, `redundant_tool_calls`, `required_tools_met`, `submitted_first_try`, `budget_exhausted`, `tool_calls` |
+| Task | `task_completed`; Fit-Gap Copilot also `gate_hard_issues`, `gate_soft_issues` |
+| Topic adherence | `topic_adherence` (Fit-Gap Copilot), `web_query_on_topic` |
+| Guardrails | `scope_refused`, `scope_guard_fail_open`, `contact_in_output`, `contact_leak`, `web_gate_blocks`, `web_query_leak_attempts` |
+
+The names are the same for both agents; filter on the trace tag
+(`evidence-agent`, `rollout-agent`) to separate them. Goal accuracy against a
+reference answer and whether a quote really supports its claim need a dataset
+or a judge, and are not scored yet.
+
+```bash
+python agent_eval.py configs           # declare the score names in Langfuse, once
+.venv/bin/python test_agent_eval.py
+```
+
 ## Scoring the answers (Ragas)
 
 Every Ask RAG answer is judged automatically. Twelve judges run against the

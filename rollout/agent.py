@@ -666,10 +666,17 @@ def compare(req: RunRequest, scope, asis: AsIsModel, sess: tools.Session,
     return _run(system_compare(subject), user, "compare", sess, "submit_analysis",
                 Analysis, on_tool, on_note, step_ids=[s.step_id for s in asis.steps],
                 need_advisory=subject.localization,
-                # One SAP search per stage of the process, capped: six covers the
-                # stages of a returns process and leaves the template its budget.
-                min_sap_searches=(min(6, max(3, len(asis.steps) // 2))
-                                  if subject.score_b and tools.sap_bp_indexed(sess) else 0))
+                min_sap_searches=min_sap_searches(subject, asis, sess))
+
+
+def min_sap_searches(subject, asis: AsIsModel, sess: tools.Session) -> int:
+    """How many SAP Best Practice searches the comparison owes. One per stage of
+    the process, capped: six covers the stages of a returns process and leaves
+    the template its budget. Also read by agent_eval, which scores whether the
+    run met it, so the rule lives in one place."""
+    if not (subject.score_b and tools.sap_bp_indexed(sess)):
+        return 0
+    return min(6, max(3, len(asis.steps) // 2))
 
 
 def _step_line(s) -> str:

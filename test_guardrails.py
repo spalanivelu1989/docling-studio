@@ -164,7 +164,7 @@ def test_the_evidence_agent_refuses_without_starting_a_run():
     fake.Anthropic = _NoModel
     real_mod = sys.modules.get("anthropic")
     real_trace = ev_agent.tracing.start_run
-    ev_agent.tracing.start_run = lambda *a, **k: types.SimpleNamespace(end=lambda **kw: None)
+    ev_agent.tracing.start_run = lambda *a, **k: types.SimpleNamespace(trace_id="", end=lambda **kw: None)
     sys.modules["anthropic"] = fake
     try:
         events = list(ev_agent.run(q))
