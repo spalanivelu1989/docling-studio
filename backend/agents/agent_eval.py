@@ -164,9 +164,13 @@ SHARES = frozenset({"citation_validity", "tool_error_rate", "topic_adherence",
                     "web_query_on_topic"})
 
 
-def passed(s: Score) -> bool | None:
-    """Whether the score meets its target, or None when it has none."""
-    spec = SCORES[s.name]
+def passed(s: Score, specs: dict[str, Spec] | None = None) -> bool | None:
+    """Whether the score meets its target, or None when it has none.
+
+    `specs` defaults to the agents' SCORES; the knowledge graph's checks
+    (backend/graph/graph_eval.py) pass their own, so both are judged by the
+    same rules and reported in the same shape."""
+    spec = (specs or SCORES)[s.name]
     if spec.good == "min":
         return s.value >= spec.target
     if spec.good == "max":
@@ -174,35 +178,38 @@ def passed(s: Score) -> bool | None:
     return None
 
 
-def status(s: Score) -> str | None:
+def status(s: Score, specs: dict[str, Spec] | None = None) -> str | None:
     """"pass", "watch" or "below" against the target and watch line, or None
     when the score has no target."""
-    ok = passed(s)
+    ok = passed(s, specs)
     if ok is None:
         return None
     if ok:
         return "pass"
-    spec = SCORES[s.name]
+    spec = (specs or SCORES)[s.name]
     if spec.watch is not None and (s.value >= spec.watch if spec.good == "min"
                                    else s.value <= spec.watch):
         return "watch"
     return "below"
 
 
-def report(scores: list[Score], trace_url: str = "") -> dict:
+def report(scores: list[Score], trace_url: str = "", *, specs: dict[str, Spec] | None = None,
+           shares: frozenset[str] | None = None, metrics: tuple[str, ...] | None = None) -> dict:
     """The run's evaluation as the page shows it and the run row stores it:
-    each score with its label, metric, target and verdict, in metric order."""
-    order = {m: i for i, m in enumerate(METRICS)}
-    names = list(SCORES)
+    each score with its label, metric, target and verdict, in metric order.
+    `specs`, `shares` and `metrics` default to the agents' own."""
+    specs, shares, metrics = specs or SCORES, shares or SHARES, metrics or METRICS
+    order = {m: i for i, m in enumerate(metrics)}
+    names = list(specs)
     rows = []
-    for s in sorted(scores, key=lambda s: (order[SCORES[s.name].metric], names.index(s.name))):
-        spec = SCORES[s.name]
+    for s in sorted(scores, key=lambda s: (order[specs[s.name].metric], names.index(s.name))):
+        spec = specs[s.name]
         rows.append({"name": s.name, "label": spec.label, "metric": spec.metric,
                      "description": spec.description, "value": s.value,
-                     "kind": "boolean" if spec.boolean else "share" if s.name in SHARES else "count",
+                     "kind": "boolean" if spec.boolean else "share" if s.name in shares else "count",
                      "comment": s.comment,
                      "good": spec.good, "target": spec.target, "watch": spec.watch,
-                     "passed": passed(s), "status": status(s)})
+                     "passed": passed(s, specs), "status": status(s, specs)})
     judged = [r for r in rows if r["status"] is not None]
     return {"scores": rows, "passed": sum(1 for r in judged if r["status"] == "pass"),
             "watch": sum(1 for r in judged if r["status"] == "watch"),
@@ -468,7 +475,7 @@ def rollout_incomplete(verdict: dict | None, calls: list[dict], why: str) -> lis
 # --- Langfuse -------------------------------------------------------------------
 
 
-def push(trace_id: str, scores: list[Score]) -> None:
+def push(trace_id: str, scores: list[Score], specs: dict[str, Spec] | None = None) -> None:
     """Write the scores to the trace on a background thread, so the network
     cannot hold up the run they describe.
 
@@ -479,28 +486,29 @@ def push(trace_id: str, scores: list[Score]) -> None:
 
     def work() -> None:
         try:
-            _push(trace_id, scores)
+            _push(trace_id, scores, specs)
         except Exception as exc:
             logger.warning("agent_eval: pushing scores to trace %s failed: %s", trace_id, exc)
 
     threading.Thread(target=work, name="agent-eval-push", daemon=True).start()
 
 
-def _push(trace_id: str, scores: list[Score]) -> int:
+def _push(trace_id: str, scores: list[Score], specs: dict[str, Spec] | None = None) -> int:
     from backend.core import tracing
     from backend.rag.evaluation import score_id
 
+    specs = specs or SCORES
     lf = tracing.client()
     if lf is None:
         return 0
     written = 0
     for s in scores:
-        if s.name not in SCORES:
+        if s.name not in specs:
             logger.warning("agent_eval: unknown score %r not written", s.name)
             continue
         try:
             lf.create_score(name=s.name, value=s.value, trace_id=trace_id,
-                            data_type="BOOLEAN" if SCORES[s.name].boolean else "NUMERIC",
+                            data_type="BOOLEAN" if specs[s.name].boolean else "NUMERIC",
                             comment=s.comment[:1000] or None,
                             score_id=score_id(trace_id, s.name))
             written += 1
@@ -513,21 +521,22 @@ def _push(trace_id: str, scores: list[Score]) -> int:
     return written
 
 
-def push_configs() -> int:
+def push_configs(specs: dict[str, Spec] | None = None, shares: frozenset[str] | None = None) -> int:
     """Declare each score's name, type and description to the Langfuse project.
     Existing configs are kept: Langfuse does not allow them to be edited."""
     from backend.rag.evaluation import _api
 
+    specs, shares = specs or SCORES, shares or SHARES
     existing = {c["name"] for c in (_api("GET", "/api/public/score-configs?limit=100")
                                     or {}).get("data", [])}
     made = 0
-    for name, spec in SCORES.items():
+    for name, spec in specs.items():
         if name in existing:
             print(f"  kept   {name}")
             continue
         body: dict[str, Any] = {"name": name, "description": spec.description,
                                 "dataType": "BOOLEAN" if spec.boolean else "NUMERIC"}
-        if name in SHARES:
+        if name in shares:
             body.update(minValue=0, maxValue=1)
         _api("POST", "/api/public/score-configs", body)
         print(f"  made   {name}")

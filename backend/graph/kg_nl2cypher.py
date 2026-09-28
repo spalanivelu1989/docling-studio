@@ -277,6 +277,9 @@ def generate(question: str) -> dict[str, Any]:
                             metadata={"model": MODEL, "effort": EFFORT,
                                       "schema_hash": hashlib.sha256(schema.encode()).hexdigest()[:12]},
                             tags=["cypher"])
+    # Read before end(), which lets go of the trace. The question check
+    # (graph_eval.py) scores each generation on its own trace.
+    trace_id = run.trace_id
     try:
         with run.current():
             client = _client()
@@ -338,6 +341,7 @@ def generate(question: str) -> dict[str, Any]:
         "corrections": [a["error"] for a in attempts if a["error"]],
         "seconds": round(time.time() - started, 1),
         "usage": usage,
+        "trace_id": trace_id,
     }
     run.end(output={**{k: out[k] for k in ("cypher", "valid", "attempts", "answerable")}, "model": served_by})
     return out

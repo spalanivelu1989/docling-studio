@@ -768,6 +768,34 @@ Users can explore the ontology visually via an interactive D3 force-directed can
 
 **Cypher.** The graph is also loaded into a local Neo4j (`compose.neo4j.yml`, started by `./scripts/run.sh`) and can be queried with Cypher — in the **Cypher** view on the Knowledge Graph page, in Neo4j Browser at <http://localhost:7474>, or through `POST /api/graph/cypher` (read-only, enforced by Neo4j). `knowledge_graph.json` stays the source of truth; the Neo4j copy is replaced whenever the graph is rebuilt. See [docs/neo4j.md](docs/neo4j.md).
 
+### Graph quality
+
+The **Quality** view on the Knowledge Graph page shows two checks
+(`backend/graph/graph_eval.py`), with the same Pass / Watch / Below scores as the
+agents' Evaluation tabs.
+
+- **The graph itself.** This check calls no model and takes seconds. It runs when the view first opens, and again when you press **Check now**:
+  - **Accuracy:** every passage an edge cites really names the edge's target.
+  - **Completeness:** indexed documents in the graph; process codes found in BPML; hierarchy links present.
+  - **Consistency:** relations between the right node types; no dangling or duplicate edges, hierarchy loops, two-parent processes or contradicting properties.
+  - **Structure:** isolated nodes, the largest connected part, hubs.
+  - **Freshness:** the graph and its Neo4j copy are built from the current corpus.
+- **Plain-English questions.** Claude writes a Cypher query for each question in
+  `data/graph_eval_questions.json`, and its rows are compared with a reference
+  query's (execution accuracy). It makes one model call per question, so it runs
+  only on request. The reference queries are marked `"reviewed": false` until
+  someone who knows the programme has checked them.
+
+Each run is kept in Postgres and scored on its trace, like the agents.
+
+```bash
+.venv/bin/python -m backend.graph.graph_eval structure   # check the graph now
+.venv/bin/python -m backend.graph.graph_eval questions   # run the question check (calls Claude)
+.venv/bin/python -m backend.graph.graph_eval rescore     # re-compare the last run, no model calls
+.venv/bin/python -m backend.graph.graph_eval configs     # declare the score names, once
+.venv/bin/python backend/tests/test_graph_eval.py
+```
+
 ### How Our Graph Algorithm Works Compared to Neo4j
 
 When you ask a natural-language question in the Knowledge Graph tab, **no SQL or Cypher query is written or executed** (Cypher is available separately, in the Cypher view). 

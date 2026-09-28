@@ -1,1 +1,0 @@
-import{S as e}from"./graphlib-D0X301T2.js";var t=4;function n(n){return e(n,t)}export{n as t};

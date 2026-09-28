@@ -97,6 +97,18 @@ def _sources_fingerprint(files: list[tuple[Path, str, str]]) -> str:
     return hashlib.sha256("\n".join(parts).encode()).hexdigest()
 
 
+def current_fingerprint(files: list[tuple[Path, str, str]] | None = None) -> str:
+    """The fingerprint the corpus graph would be built under right now: every
+    input file, the BPML workbook, and the retrieval index. Chunk ids are the
+    index's row ids, which a re-index renumbers, so a graph whose passage layer
+    points at the old ids counts as out of date too. Compared with the cached
+    graph's stats.sources, it says whether the graph is current."""
+    import hashlib
+
+    fingerprint = _sources_fingerprint(collect_files() if files is None else files)
+    return hashlib.sha256(f"{fingerprint}\nindex:{_index_signature()}".encode()).hexdigest()
+
+
 def _display_size(type_: str, degree: int) -> float:
     """Node radius, grown by how connected the node is within the graph shown."""
     if type_ == "stream":
@@ -609,13 +621,8 @@ def extract_graph(
     graph of one uploaded file lands in the same taxonomy as the corpus graph
     and the two can be compared node for node."""
     files_to_process = collect_files() if files is None else list(files)
-    fingerprint = _sources_fingerprint(files_to_process)
-    if files is None:
-        # Chunk ids are the index's row ids, which a re-index renumbers; a graph
-        # whose passage layer points at the old ids has to be rebuilt.
-        import hashlib
-
-        fingerprint = hashlib.sha256(f"{fingerprint}\nindex:{_index_signature()}".encode()).hexdigest()
+    fingerprint = (current_fingerprint(files_to_process) if files is None
+                   else _sources_fingerprint(files_to_process))
     if not force and cache and CACHE_FILE.is_file():
         try:
             with open(CACHE_FILE, "r", encoding="utf-8") as f:

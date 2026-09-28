@@ -338,7 +338,60 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ query, limit, params }),
     }).then((r) => json<CypherResult>(r)),
+  /** The latest graph-itself check and question check (graph_eval.py). */
+  graphQuality: () => fetch("/api/graph/quality").then((r) => json<GraphQuality>(r)),
+  /** Check the graph itself now: no model call, a few seconds. */
+  checkGraphStructure: () =>
+    fetch("/api/graph/quality/structure", { method: "POST" }).then((r) => json<GraphQualityRun>(r)),
+  /** Start the plain-English question check; it runs in the background. */
+  startGraphQuestions: () =>
+    fetch("/api/graph/quality/questions", { method: "POST" }).then((r) => json<{ id: string }>(r)),
 };
+
+/** One stored run of a knowledge graph quality check. */
+export interface GraphQualityRun {
+  id: string;
+  status: "running" | "done" | "failed" | "abandoned";
+  started_at: string;
+  finished_at: string | null;
+  error: string;
+  report?: AgentEvaluation;
+  seconds?: number;
+  /** Question check only. */
+  total?: number;
+  results?: GraphQuestionResult[];
+  reviewed?: boolean;
+}
+
+/** One plain-English question, as the question check answered it. */
+export interface GraphQuestionResult {
+  id: string;
+  question: string;
+  expected_answerable: boolean;
+  /** What Claude judged; null when generation failed. */
+  answerable: boolean | null;
+  answerability_correct: boolean;
+  cypher?: string;
+  reference: string;
+  compare: string;
+  valid: boolean;
+  attempts: number;
+  /** null for a question the graph cannot answer. */
+  matched: boolean | null;
+  why?: string;
+  reference_rows?: number;
+  answer_rows?: number;
+  error?: string;
+  note?: string;
+  seconds: number;
+}
+
+export interface GraphQuality {
+  structure: GraphQualityRun | null;
+  questions: GraphQualityRun | null;
+  /** Whether someone has checked the reference answers. */
+  reviewed: boolean;
+}
 
 export interface Neo4jStatus {
   configured: boolean;

@@ -18,6 +18,7 @@ import {
 import { alpha, useTheme } from "@mui/material/styles";
 import ModelView from "../components/ModelView";
 import CypherView from "../components/CypherView";
+import GraphQualityView from "../components/GraphQualityView";
 import { clearAdornment, clearOnEscape } from "../components/ClearAdornment";
 import ProcessFlowView from "../components/ProcessFlowView";
 import * as d3 from "d3";
@@ -55,6 +56,7 @@ import {
   ZoomIn,
   ZoomOut,
   Terminal,
+  Gauge,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -174,7 +176,7 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
   // ontology it was meant to build, with each label and relationship marked
   // built / partial / absent. The model is fetched the first time it is asked
   // for -- most visits never open it.
-  const [viewMode, setViewMode] = useState<"graph" | "model" | "process" | "cypher">("graph");
+  const [viewMode, setViewMode] = useState<"graph" | "model" | "process" | "cypher" | "quality">("graph");
   const [model, setModel] = useState<GraphModel | null>(null);
   const [modelError, setModelError] = useState<string | null>(null);
   const [selectedModelNode, setSelectedModelNode] = useState<ModelNode | null>(null);
@@ -1278,7 +1280,7 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
             borderColor: "divider",
           }}
         >
-          {(["graph", "process", "model", "cypher"] as const).map((mode) => {
+          {(["graph", "process", "model", "cypher", "quality"] as const).map((mode) => {
             const active = viewMode === mode;
             return (
               <Button
@@ -1293,6 +1295,8 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
                     <GitBranch size={13} />
                   ) : mode === "cypher" ? (
                     <Terminal size={13} />
+                  ) : mode === "quality" ? (
+                    <Gauge size={13} />
                   ) : (
                     <Layers size={13} />
                   )
@@ -1315,7 +1319,7 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
                   transition: "all 0.15s ease",
                 }}
               >
-                {mode === "graph" ? "Graph" : mode === "process" ? "Process" : mode === "cypher" ? "Cypher" : "Model"}
+                {mode === "graph" ? "Graph" : mode === "process" ? "Process" : mode === "cypher" ? "Cypher" : mode === "quality" ? "Quality" : "Model"}
               </Button>
             );
           })}
@@ -2123,6 +2127,14 @@ export default function KnowledgeGraphPage({ active, onNavigate, incomingQuery }
           <Box sx={{ position: "absolute", inset: 0, bgcolor: "background.default", zIndex: 5,
                      display: "flex", flexDirection: "column" }}>
             <CypherView onFocusNode={focusGraphNode} />
+          </Box>
+        )}
+
+        {/* Graph quality: the graph's own checks and the question check. */}
+        {viewMode === "quality" && (
+          <Box sx={{ position: "absolute", inset: 0, bgcolor: "background.default", zIndex: 5,
+                     display: "flex", flexDirection: "column" }}>
+            <GraphQualityView />
           </Box>
         )}
 

@@ -19,6 +19,8 @@
 import { Box, Chip, Paper, Stack, Tooltip, Typography, alpha, useTheme } from "@mui/material";
 import { CircleAlert, CircleCheck, CircleMinus, CircleX } from "lucide-react";
 
+import type { ReactNode } from "react";
+
 import type { AgentEvaluation, AgentScore } from "../api";
 
 const RADIUS = "4px";
@@ -114,10 +116,16 @@ function Row({ s }: { s: AgentScore }) {
   );
 }
 
-export default function AgentEvaluationView({ evaluation, running, agent }: {
+export default function AgentEvaluationView({ evaluation, running, agent, metrics, subtitle, footnote, empty }: {
   evaluation: AgentEvaluation | Record<string, never> | null | undefined;
   running?: boolean;
-  agent: "evidence" | "rollout";
+  /** Picks the agents' wording. Other callers (the knowledge graph's Quality
+   *  view) pass their own `metrics`, `subtitle`, `footnote` and `empty`. */
+  agent?: "evidence" | "rollout";
+  metrics?: { name: string; asks: string }[];
+  subtitle?: ReactNode;
+  footnote?: ReactNode;
+  empty?: ReactNode;
 }) {
   const theme = useTheme();
   const scores = evaluation && "scores" in evaluation ? evaluation.scores : [];
@@ -126,9 +134,9 @@ export default function AgentEvaluationView({ evaluation, running, agent }: {
     return (
       <Paper variant="outlined" sx={{ p: 3, borderRadius: RADIUS }}>
         <Typography sx={{ fontSize: 13.5, color: "text.secondary" }}>
-          {running
+          {empty ?? (running
             ? "The evaluation appears when the run finishes."
-            : "This run was recorded before evaluation was kept. Run it again to see its scores."}
+            : "This run was recorded before evaluation was kept. Run it again to see its scores.")}
         </Typography>
       </Paper>
     );
@@ -155,14 +163,14 @@ export default function AgentEvaluationView({ evaluation, running, agent }: {
                 : "No check with a target applies to this run"}
             </Typography>
             <Typography sx={{ fontSize: 12.5, color: "text.secondary", mt: 0.5 }}>
-              Counted from the run's own checks: no judge model, so it costs nothing and runs on
-              every {agent === "evidence" ? "investigation" : "analysis"}.
+              {subtitle ?? <>Counted from the run's own checks: no judge model, so it costs nothing and runs on
+                every {agent === "evidence" ? "investigation" : "analysis"}.</>}
             </Typography>
           </Box>
         </Stack>
       </Paper>
 
-      {METRICS.map(({ name, asks }) => {
+      {(metrics ?? METRICS).map(({ name, asks }) => {
         const rows = scores.filter((s) => s.metric === name);
         if (!rows.length) return null;
         const judged = rows.filter((s) => statusOf(s) !== null);
@@ -204,10 +212,10 @@ export default function AgentEvaluationView({ evaluation, running, agent }: {
       })}
 
       <Typography sx={{ fontSize: 12, color: "text.secondary", px: 0.5 }}>
-        Not measured here: whether each quote really supports its claim, and whether the
-        {agent === "evidence" ? " answer" : " analysis"} matches a known-correct one. Those need a
-        judge model or a reference answer.
-        {agent === "rollout" && " The workshop's accept and reject decisions are the running check on the second."}
+        {footnote ?? <>Not measured here: whether each quote really supports its claim, and whether the
+          {agent === "evidence" ? " answer" : " analysis"} matches a known-correct one. Those need a
+          judge model or a reference answer.
+          {agent === "rollout" && " The workshop's accept and reject decisions are the running check on the second."}</>}
       </Typography>
     </Stack>
   );

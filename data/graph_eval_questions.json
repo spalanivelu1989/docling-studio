@@ -1,0 +1,198 @@
+{
+ "about": "Reference answers for the Knowledge Graph question check (backend/graph/graph_eval.py). Each answerable question has a reference Cypher query; the check runs the query Claude writes and this one, and compares the results. 'compare' says how: 'rows' = the same rows, extra columns allowed; 'values' = every value of the reference appears somewhere in the result (for open-ended questions); 'length' = a path of the same number of hops (several shortest routes can tie). 'reviewed' is false until someone who knows the programme has checked the reference.",
+ "reviewed": false,
+ "questions": [
+  {
+   "id": "Q1",
+   "question": "Which systems are mentioned most often, and in how many documents?",
+   "answerable": true,
+   "compare": "rows",
+   "cypher": "MATCH (d:Document)-[:MENTIONS_SYSTEM]->(s:System) RETURN s.label AS system, count(DISTINCT d) AS documents ORDER BY documents DESC"
+  },
+  {
+   "id": "Q2",
+   "question": "Which documents mention both SOVOS and SAP CPI, and in which passages?",
+   "answerable": true,
+   "compare": "values",
+   "cypher": "MATCH (d:Document)-[:MENTIONS_SYSTEM]->(:System {code: 'SOVOS'}), (d)-[:MENTIONS_SYSTEM]->(:System {code: 'CPI'}) RETURN DISTINCT d.filename AS document"
+  },
+  {
+   "id": "Q3",
+   "question": "Which third-party systems appear in the DR documents?",
+   "answerable": true,
+   "compare": "rows",
+   "cypher": "MATCH (d:Document {category: 'DR'})-[:MENTIONS_SYSTEM]->(s:System {kind: 'third_party'}) RETURN DISTINCT s.label AS system"
+  },
+  {
+   "id": "Q4",
+   "question": "Which documents mention Salesforce but not SAP S/4HANA?",
+   "answerable": true,
+   "compare": "rows",
+   "cypher": "MATCH (d:Document)-[:MENTIONS_SYSTEM]->(:System {code: 'Salesforce'}) WHERE NOT (d)-[:MENTIONS_SYSTEM]->(:System {code: 'S4HANA'}) RETURN d.filename AS document"
+  },
+  {
+   "id": "Q5",
+   "question": "Which passages mention SAP S/4HANA and Salesforce together?",
+   "answerable": true,
+   "compare": "rows",
+   "cypher": "MATCH (c:Chunk)-[:MENTIONS]->(:System {code: 'S4HANA'}), (c)-[:MENTIONS]->(:System {code: 'Salesforce'}) RETURN c.chunk_key AS chunk"
+  },
+  {
+   "id": "Q6",
+   "question": "How many documents mention each legacy ERP system (ECC, WP1, PF1, M3)?",
+   "answerable": true,
+   "compare": "rows",
+   "cypher": "MATCH (s:System) WHERE s.code IN ['ECC', 'WP1', 'PF1', 'M3'] OPTIONAL MATCH (d:Document)-[:MENTIONS_SYSTEM]->(s) RETURN s.code AS system, count(DISTINCT d) AS documents"
+  },
+  {
+   "id": "Q7",
+   "question": "Which specifications implement a SPARK ticket, and which systems do they name?",
+   "answerable": true,
+   "compare": "values",
+   "cypher": "MATCH (d:Document)-[:IMPLEMENTS_TICKET]->(t:Spec) RETURN DISTINCT t.ticket AS ticket, d.filename AS document"
+  },
+  {
+   "id": "Q8",
+   "question": "Which documents reference SPARK-22234?",
+   "answerable": true,
+   "compare": "rows",
+   "cypher": "MATCH (d:Document)-[:REFERENCES_TICKET|IMPLEMENTS_TICKET]->(:Spec {ticket: 'SPARK-22234'}) RETURN DISTINCT d.filename AS document"
+  },
+  {
+   "id": "Q9",
+   "question": "Which SPARK tickets are referenced by more than three documents?",
+   "answerable": true,
+   "compare": "rows",
+   "cypher": "MATCH (d:Document)-[:REFERENCES_TICKET|IMPLEMENTS_TICKET]->(t:Spec) WITH t, count(DISTINCT d) AS documents WHERE documents > 3 RETURN t.ticket AS ticket, documents",
+   "note": "No ticket is referenced by more than three documents (the most is three), so the right answer is none. A weak check: any query that returns nothing passes it."
+  },
+  {
+   "id": "Q10",
+   "question": "Which interface specifications mention SAP CPI?",
+   "answerable": true,
+   "compare": "values",
+   "cypher": "MATCH (d:Document)-[:IMPLEMENTS_TICKET]->(:Spec), (d)-[:MENTIONS_SYSTEM]->(:System {code: 'CPI'}) RETURN DISTINCT d.filename AS document"
+  },
+  {
+   "id": "Q11",
+   "question": "Show the process hierarchy from 4.10.2.2 up to its value chain.",
+   "answerable": true,
+   "compare": "values",
+   "cypher": "MATCH (:Process {code: '4.10.2.2'})-[:SUBPROCESS_OF*0..]->(p:Process) RETURN p.code AS code"
+  },
+  {
+   "id": "Q12",
+   "question": "What are the child steps of 4.10.2 Process Returns?",
+   "answerable": true,
+   "compare": "rows",
+   "cypher": "MATCH (c:Process)-[:SUBPROCESS_OF]->(:Process {code: '4.10.2'}) RETURN c.code AS code, c.description AS step"
+  },
+  {
+   "id": "Q13",
+   "question": "Which process steps under Lead to Cash are specified by the most documents?",
+   "answerable": true,
+   "compare": "values",
+   "cypher": "MATCH (d:Document)-[:SPECIFIES_PROCESS]->(p:Process)-[:SUBPROCESS_OF*1..]->(:Process {code: '4.0'}) WITH p, count(DISTINCT d) AS documents ORDER BY documents DESC LIMIT 5 RETURN p.code AS code"
+  },
+  {
+   "id": "Q14",
+   "question": "Which process codes do documents cite that are not in the BPML workbook?",
+   "answerable": true,
+   "compare": "values",
+   "cypher": "MATCH (:Document)-[:SPECIFIES_PROCESS]->(p:Process {in_bpml: false}) RETURN DISTINCT p.code AS code"
+  },
+  {
+   "id": "Q15",
+   "question": "Which documents specify process O-020-090?",
+   "answerable": true,
+   "compare": "rows",
+   "cypher": "MATCH (d:Document)-[:SPECIFIES_PROCESS]->(:Process {code: 'O-020-090'}) RETURN d.filename AS document"
+  },
+  {
+   "id": "Q16",
+   "question": "How many documents belong to each business stream?",
+   "answerable": true,
+   "compare": "rows",
+   "cypher": "MATCH (s:Stream) OPTIONAL MATCH (d:Document)-[:BELONGS_TO]->(s) RETURN s.code AS stream, count(DISTINCT d) AS documents"
+  },
+  {
+   "id": "Q17",
+   "question": "Which documents belong to both Lead to Cash and Record to Report?",
+   "answerable": true,
+   "compare": "rows",
+   "cypher": "MATCH (d:Document)-[:BELONGS_TO]->(:Stream {code: 'L2C'}), (d)-[:BELONGS_TO]->(:Stream {code: 'R2R'}) RETURN d.filename AS document"
+  },
+  {
+   "id": "Q18",
+   "question": "Which systems are mentioned in Procure to Pay documents?",
+   "answerable": true,
+   "compare": "rows",
+   "cypher": "MATCH (d:Document)-[:BELONGS_TO]->(:Stream {code: 'P2P'}), (d)-[:MENTIONS_SYSTEM]->(s:System) RETURN DISTINCT s.label AS system"
+  },
+  {
+   "id": "Q19",
+   "question": "How many documents are in each category and format?",
+   "answerable": true,
+   "compare": "rows",
+   "cypher": "MATCH (d:Document) RETURN d.category AS category, d.format AS format, count(d) AS documents"
+  },
+  {
+   "id": "Q20",
+   "question": "What is the shortest route between Solvay@eCommerce and SAP S/4HANA?",
+   "answerable": true,
+   "compare": "length",
+   "cypher": "MATCH p = shortestPath((:System {code: 'eCommerce'})-[*..6]-(:System {code: 'S4HANA'})) RETURN p"
+  },
+  {
+   "id": "Q21",
+   "question": "Which documents connect SAP GTS and SAP EWM?",
+   "answerable": true,
+   "compare": "rows",
+   "cypher": "MATCH (d:Document)-[:MENTIONS_SYSTEM]->(:System {code: 'GTS'}), (d)-[:MENTIONS_SYSTEM]->(:System {code: 'EWM'}) RETURN d.filename AS document"
+  },
+  {
+   "id": "Q22",
+   "question": "Show me the graph around the SOVOS system.",
+   "answerable": true,
+   "compare": "values",
+   "cypher": "MATCH (d:Document)-[:MENTIONS_SYSTEM]->(:System {code: 'SOVOS'}) RETURN DISTINCT d.filename AS document"
+  },
+  {
+   "id": "Q23",
+   "question": "Which passages in the SOVOS specification mention the digital signature?",
+   "answerable": false,
+   "note": "The graph keeps each passage's heading, not its text, so which passages mention a phrase is a question for Ask RAG. The right answer here is that the graph cannot say."
+  },
+  {
+   "id": "Q24",
+   "question": "Which chunks mention both a SPARK ticket and SAP CPI?",
+   "answerable": true,
+   "compare": "rows",
+   "cypher": "MATCH (c:Chunk)-[:MENTIONS]->(:Spec), (c)-[:MENTIONS]->(:System {code: 'CPI'}) RETURN DISTINCT c.chunk_key AS chunk"
+  },
+  {
+   "id": "Q25",
+   "question": "For each system, which document mentions it most, and where?",
+   "answerable": true,
+   "compare": "values",
+   "cypher": "MATCH (d:Document)-[r:MENTIONS_SYSTEM]->(s:System) WITH s, d, r ORDER BY r.mentions DESC WITH s, collect(d)[0] AS top RETURN s.code AS system, top.filename AS document"
+  },
+  {
+   "id": "Q26",
+   "question": "How many unique relationships are present in the knowledge graph and list each relationship name?",
+   "answerable": true,
+   "compare": "rows",
+   "cypher": "MATCH ()-[r]->() RETURN type(r) AS relationship, count(*) AS relationships"
+  },
+  {
+   "id": "Q27",
+   "question": "What does the SOVOS specification say about the digital signature?",
+   "answerable": false
+  },
+  {
+   "id": "Q28",
+   "question": "Who approved the returns process?",
+   "answerable": false
+  }
+ ]
+}

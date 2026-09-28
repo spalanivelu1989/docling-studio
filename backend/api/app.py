@@ -469,6 +469,43 @@ def neo4j_status() -> dict:
     return {**kg_neo4j_load.status(), "questions": kg_nl2cypher.QUESTIONS}
 
 
+@app.get("/api/graph/quality")
+def graph_quality() -> dict:
+    """The latest check of the graph itself and the latest plain-English
+    question check (backend/graph/graph_eval.py). Either may be null."""
+    from backend.graph import graph_eval
+
+    try:
+        return {"structure": graph_eval.latest("structure"),
+                "questions": graph_eval.latest("questions"),
+                "reviewed": graph_eval.load_questions().get("reviewed", False)}
+    except Exception as exc:
+        raise HTTPException(503, f"Graph quality is unavailable: {type(exc).__name__}: {exc}") from None
+
+
+@app.post("/api/graph/quality/structure")
+def graph_quality_structure() -> dict:
+    """Check the graph itself now. No model is called; it takes seconds."""
+    from backend.graph import graph_eval
+
+    return graph_eval.run_structure()
+
+
+@app.post("/api/graph/quality/questions")
+def graph_quality_questions() -> dict:
+    """Start the plain-English question check in the background. It asks Claude
+    once per question, so it only ever runs when someone asks for it."""
+    from backend.graph import graph_eval, kg_neo4j_load
+
+    ok, why = kg_neo4j_load.configured()
+    if not ok:
+        raise HTTPException(503, why)
+    try:
+        return {"id": graph_eval.start_questions()}
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from None
+
+
 @app.post("/api/graph/neo4j/sync")
 def neo4j_sync(force: bool = False) -> dict:
     """Load the graph into Neo4j now (it replaces what is there)."""
