@@ -35,7 +35,7 @@ from .schemas import SUBJECTS, Analysis, AsIsModel, Evidence, RunRequest, Subjec
 QUOTE_MAX = next(m.max_length for m in Evidence.model_fields["quote"].metadata if hasattr(m, "max_length"))
 HEADLINE_MAX = next(m.max_length for m in Analysis.model_fields["headline"].metadata if hasattr(m, "max_length"))
 
-MODEL = os.environ.get("ROLLOUT_MODEL") or os.environ.get("RAG_ANSWER_MODEL", "claude-opus-5")
+MODEL = os.environ.get("FITGAP_COPILOT_MODEL") or os.environ.get("RAG_ANSWER_MODEL", "claude-opus-5")
 # The comparison reads two sides now -- the template and SAP Best Practice --
 # so it is given room for the second side's searches.
 MAX_TOOL_CALLS = {"asis": int(os.environ.get("ROLLOUT_MAX_TOOL_CALLS_ASIS", "20")),
